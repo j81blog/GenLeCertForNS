@@ -7,6 +7,8 @@
 	Display the detailed information about this script
 .PARAMETER CleanNS
 	Cleanup the NetScaler configuration made within this script, for when somewhere it gone wrong
+.PARAMETER RemoveTestCertificates
+	Tries to remove all the Test certificates signed by the "Fake LE Intermediate X1" staging intermediate
 .PARAMETER NSManagementURL
 	Management URL, used to connect to the NetScaler
 .PARAMETER NSUserName
@@ -18,12 +20,12 @@
 	C:\PS> $Credential = Get-Credential
 .PARAMETER NSCsVipName
 	Name of the HTTP NetScaler Content Switch used for the domain validation
-	.PARAMETER NSCsVipBinding
+.PARAMETER NSCsVipBinding
 	NetScaler Content Switch binding used for the validation
 .PARAMETER NSSvcName
 	NetScaler Load Balance service name
 .PARAMETER NSSvcDestination
-	IP Address used for the NetScaler Service (leave default 1.2.3.4, only change when already used
+	IP Address used for the NetScaler Service (leave default 1.2.3.4), only change when already used
 .PARAMETER NSLbName
 	NetScaler Load Balance VIP name
 .PARAMETER NSRspName
@@ -56,19 +58,22 @@
 .PARAMETER ns10x
 	When using v10x, some nitro functions will not work propperly, run the script with this parameter.
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "nsroot" -NSUserName "P@ssw0rd" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
+	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
 	Generate a (Production)certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler. Also Cleaning the vault on the NetScaler the content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "nsroot" -NSUserName "P@ssw0rd" -Verbose
+	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
 	Cleaning left over configuration from this schript when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
+.EXAMPLE
+	.\GenLeCertForNS.ps1 -RemoveTestCertificates -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
+	Remob=ving ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v0.8.1
+	Version   : v0.9.1.beta2
 	Author    : John Billekens
 	Requires  : PowerShell v3 and up
 	            NetScaler 11.x and up
 	            Run As Administrator
-	            ACMESharp (can be installed via this script)
+	            ACMESharp 0.9.1.326 (can be installed via this script)
 .LINK
 	https://blog.j81.nl
 #>
@@ -81,25 +86,33 @@ param(
 		
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$true)]
 		[switch]$CleanNS,
+
+		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
+		[alias("RemTestCert")]
+		[switch]$RemoveTestCertificates,
 		
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$true)]
+		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$true)]
 		[ValidateNotNullOrEmpty()]
 		[alias("URL")]
 		[string]$NSManagementURL,
 		
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 		[alias("User", "Username")]
 		[string]$NSUserName,
 		
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 		[alias("Password")]
 		[string]$NSPassword,
 
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 		[ValidateScript({
 			if ($_ -is [System.Management.Automation.PSCredential]) {
 				$true
@@ -185,6 +198,7 @@ param(
 
 #requires -version 3.0
 #requires -runasadministrator
+$ScriptVersion = "v0.9.1.beta2"
 
 #region Functions
 
@@ -373,16 +387,36 @@ function Connect-NetScaler {
 	} catch [Exception] {
 		throw $_
 	}
-
 	$session = [PSObject]@{
 		ManagementURL=[string]$ManagementURL;
 		WebSession=[Microsoft.PowerShell.Commands.WebRequestSession]$saveSession;
+		Username=$Credential.UserName;
+		Version="UNKNOWN";
 	}
 
+	try {
+		Write-Verbose -Message "Trying to retreive the NetScaler version"
+		$params = @{
+			Uri = "$ManagementURL/nitro/v1/config/nsversion"
+			Method = 'GET'
+			WebSession = $Session.WebSession
+			ContentType = 'application/json'
+			ErrorVariable = 'restError'
+			Verbose = $false
+		}
+		$response = Invoke-RestMethod @params
+		Write-Verbose -Message "Response:`n$(ConvertTo-Json -InputObject $response | Out-String)"
+		$version = $response.nsversion.version.Split(",")[0]
+		if (-not ([string]::IsNullOrWhiteSpace($version))) {
+			$session.version = $version
+		}
+	} catch {
+		Write-Verbose -Message "Error. See response: `n$($response | Format-List -Property * | Out-String)"
+	}
 	$Script:NSSession = $session
 	
 	if($PassThru){
-			return $session
+		return $session
 	}
 }
 
@@ -400,13 +434,15 @@ if($Help){
 
 #region Script variables
 
+Write-Verbose "Script version: $ScriptVersion"
 if ($ns10x){
-	Write-Verbose "ns10x parameter userd, some options are now disabled."
+	Write-Verbose "ns10x parameter used, some options are now disabled."
 }
-Write-Verbose "Generating Session GUID"
-[string]$SessionGUID = [guid]::NewGuid()
 Write-Verbose "Setting session DATE/TIME variable"
-[string]$SessionDateTime = (Get-Date).ToString("yyyyMMddHHmm")
+[datetime]$ScriptDateTime = Get-Date
+[string]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
+Write-Verbose "Session DATE/TIME variable value: `"$SessionDateTime`""
+
 if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	Write-Verbose "Using NSCredential"
 } elseif ((-not([string]::IsNullOrWhiteSpace($NSUserName))) -and (-not([string]::IsNullOrWhiteSpace($NSPassword)))){
@@ -416,7 +452,7 @@ if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	Write-Verbose "No valid username/password or credential specified. Enter a username and password, e.g. `"nsroot`""
 	[pscredential]$NSCredential = Get-Credential -Message "NetScaler username and password:"
 }
-Write-Verbose "Starting new session ($SessionGUID)"
+Write-Verbose "Starting new session"
 if(-not ([string]::IsNullOrWhiteSpace($SAN))){
 	[string[]]$SAN = @($SAN.Split(","))
 }
@@ -424,23 +460,24 @@ if(-not ([string]::IsNullOrWhiteSpace($SAN))){
 #endregion Script variables
 
 #region Load Module
-if (-not ($CleanNS)) {
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Load ACMESharp Modules"
 	if (-not(Get-Module ACMESharp)){
 		try {
 			$ACMEVersions = (get-Module -Name ACMESharp -ListAvailable).Version
 			$ACMEUpdateRequired = $false
 			ForEach ($ACMEVersion in $ACMEVersions) {
-				if (($ACMEVersion.Minor -eq 8) -and ($ACMEVersion.Build -eq 1) -and (-not $ACMEUpdateRequired)) {
-					Write-Verbose "v0.8.1 of ACMESharp is installed, continuing"
+				if (($ACMEVersion.Minor -eq 9) -and ($ACMEVersion.Build -eq 1) -and (-not $ACMEUpdateRequired)) {
+					Write-Verbose "v0.9.1 of ACMESharp is installed, continuing"
 				} else {
-					Write-Verbose "v0.8.1 of ACMESharp is NOT installed, update/downgrade required"
+					Write-Verbose "v0.9.1 of ACMESharp is NOT installed, update/downgrade required"
 					$ACMEUpdateRequired = $true
 				}
 			}
 			if ($ACMEUpdateRequired) {
 				Write-Verbose "Trying to update the ACMESharp modules"
-				Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.8.1 -Force -ErrorAction SilentlyContinue
+				Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1 -Force -ErrorAction SilentlyContinue
 			}
 			Write-Verbose "Try loading module ACMESharp"
 			Import-Module ACMESharp -ErrorAction Stop
@@ -448,7 +485,7 @@ if (-not ($CleanNS)) {
 			Write-Verbose "Checking for PackageManagement"
 			if ([string]::IsNullOrWhiteSpace($(Get-Module -ListAvailable -Name PackageManagement))) {
 				Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
-				Write-Warning "Visit `"https://www.microsoft.com/en-us/download/details.aspx?id=51451`" to download Package Management"
+				Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
 				Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
 				Start "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
 				Exit (1)
@@ -465,10 +502,10 @@ if (-not ($CleanNS)) {
 					}
 					Write-Verbose "Installing ACMESharp"
 					try {
-						Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.8.1 -Force -AllowClobber
+						Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1.326 -Force -AllowClobber
 					} catch {
 						Write-Verbose "Installing ACMESharp again but without the -AllowClobber option"
-						Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.8.1 -Force
+						Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1.326 -Force
 					}
 					if (-not ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq $installationPolicy)){
 						Write-Verbose "Returning the PSGallery PSRepository InstallationPolicy to previous value"
@@ -479,17 +516,112 @@ if (-not ($CleanNS)) {
 				} catch {
 					Write-Verbose "Error Details: $($_.Exception.Message)"
 					Write-Error "Error while loading and/or installing module"
+					Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
+					Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
+					Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
+					Start "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
 					Exit (1)
 				}
 			}
-		
 		}
 	}
 }
+
 #endregion Load Module
 
+#region NetScaler Check
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
+	Write-Verbose "Login to NetScaler and save session to global variable"
+	Write-Host -ForeGroundColor White "`r`nNetScaler:"
+	$NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
+	Write-Host -ForeGroundColor White -NoNewLine "- URL: "
+	Write-Host -ForeGroundColor Green "$NSManagementURL"
+	Write-Host -ForeGroundColor White -NoNewLine "- Username: "
+	Write-Host -ForeGroundColor Green "$($NSSession.Username)"
+	Write-Host -ForeGroundColor White -NoNewLine "- Version: "
+	Write-Host -ForeGroundColor Green "$($NSSession.Version)"
+	try {
+		Write-Verbose "Verifying Content Switch"
+		$response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
+	} catch {
+		$ExcepMessage = $_.Exception.Message
+		Write-Verbose "Error Details: $ExcepMessage"
+	} finally {
+		if (($response.errorcode -eq "0") -and `
+				($response.csvserver.type -eq "CONTENT") -and `
+				($response.csvserver.curstate -eq "UP") -and `
+				($response.csvserver.servicetype -eq "HTTP") -and `
+				($response.csvserver.port -eq "80") ) {
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+			Write-Host -ForeGroundColor Green "`"$NSCsVipName`" -> Found"
+			Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+			Write-Host -ForeGroundColor Green "OK`r`n"
+		} elseif ($ExcepMessage -like "*(404) Not Found*") {
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+			Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exists!`r`n"
+			Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
+			Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+			Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
+			Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+			Write-Host -ForeGroundColor Red "FAILED!`r`n"
+			Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+			Exit (1)
+		}  elseif ($ExcepMessage -like "*The remote server returned an error*") {
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+			Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
+			Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
+			Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+			Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+			Write-Host -ForeGroundColor Red "FAILED!`r`n"
+			Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+			Exit (1)
+		} elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+			Write-Host -ForeGroundColor Red "ERROR: Content Switch is $($response.csvserver.servicetype) and NOT HTTP`r`n"
+			if (-not ([string]::IsNullOrWhiteSpace($ExcepMessage))){
+				Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
+				Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+			}
+			Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
+			Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+			Write-Host -ForeGroundColor Red "FAILED!`r`n"
+			Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+			Exit (1)
+		} else {
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+			Write-Host -ForeGroundColor Green "Found"
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch state: "
+			if ($response.csvserver.curstate -eq "UP") {
+				Write-Host -ForeGroundColor Green "UP"
+			} else {
+				Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
+			}
+			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch type: "
+			if ($response.csvserver.type -eq "CONTENT") {
+				Write-Host -ForeGroundColor Green "CONTENT"
+			} else {
+				Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
+			}
+			if (-not ([string]::IsNullOrWhiteSpace($ExcepMessage))){
+				Write-Host -ForeGroundColor White -NoNewLine "`r`n- Error message: "
+				Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+			}
+			Write-Host -ForeGroundColor White -NoNewLine "- Data: "
+			$response.csvserver  | Format-List -Property * | Out-String
+			Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+			Write-Host -ForeGroundColor Red "FAILED!`r`n"
+			Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+			Exit (1)
+		}
+	}
+}
+
+#endregion NetScaler Check
+
 #region Vault
-if (-not ($CleanNS)) {
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	if ($Production) {
 		$VaultName = ":sys"
 		$BaseService = "LetsEncrypt"
@@ -501,44 +633,52 @@ if (-not ($CleanNS)) {
 	}
 	try {
 		Write-Verbose "Get ACMEVault `"$VaultName`"" 
-		$VaultData = Get-ACMEVault -VaultProfile $VaultName
+		$VaultData = ACMESharp\Get-ACMEVault -VaultProfile $VaultName
 	} catch {
 		Write-Verbose "`"$VaultName`" Vault not available, initialize"
 		$CleanVault = $true
 	}
 	if ($CleanVault) {
 		Write-Verbose "Initializing Vault"
-		Initialize-ACMEVault -VaultProfile $VaultName -Force
+		ACMESharp\Initialize-ACMEVault -VaultProfile $VaultName -Force
 		Write-Verbose "Finished initializing"
-		$VaultData = Get-ACMEVault -VaultProfile $VaultName
+		$VaultData = ACMESharp\Get-ACMEVault -VaultProfile $VaultName
 	}
 	Write-Verbose "Configure vault `"$VaultName`" for `"$BaseService`""
-	Set-ACMEVault -VaultProfile $VaultName -BaseService $BaseService
+	ACMESharp\Set-ACMEVault -VaultProfile $VaultName -BaseService $BaseService
 }
+
 #endregion Vault
 
 #region Registration
-if (-not ($CleanNS)) {
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
+	Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
+	Write-Host -ForeGroundColor White "By running this script you agree with the terms specified by Let's Encrypt."
 	try {
 		Write-Verbose "Retreive existing Registration"
-		$Registration = Get-ACMERegistration -VaultProfile $VaultName
-		if ($Registration.Contacts -contains "mailto:$EmailAddress"){
+		$Registration = ACMESharp\Get-ACMERegistration -VaultProfile $VaultName
+		if ($Registration.Contacts -contains "mailto:$($EmailAddress)"){
 			Write-Verbose "Existing registration found, no changes necessary"
 		} else {
 			Write-Verbose "Current registration `"$($Registration.Contacts)`" is not equal to `"$EmailAddress`", setting new registration"
-			$Registration = New-ACMERegistration -VaultProfile $VaultName -Contacts mailto:$EmailAddress -AcceptTos
+			$Registration = ACMESharp\New-ACMERegistration -VaultProfile $VaultName -Contacts "mailto:$($EmailAddress)" -AcceptTos
 		}
 	} catch {
 		Write-Verbose "Setting new registration to `"$EmailAddress`""
-		$Registration = New-ACMERegistration -VaultProfile $VaultName -Contacts mailto:$EmailAddress -AcceptTos
+		
+		$Registration = ACMESharp\New-ACMERegistration -VaultProfile $VaultName -Contacts "mailto:$($EmailAddress)" -AcceptTos
 	}
+	Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($Registration.TosLinkUri)`n`n`n"
 }
+
 #endregion Registration
 
 #region DNS
 
 #region Primary DNS
-if (-not ($CleanNS)) {
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Validating DNS record(s)"
 	$DNSObjects = @()
 	
@@ -563,48 +703,54 @@ if (-not ($CleanNS)) {
 		}
 	} catch {
 		Write-Verbose "Error Details: $($_.Exception.Message)"
-		Write-Verbose "Error while retreiving IP Address"
+		Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
+		Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter.`n"
 		throw "Error while retreiving IP Address, does not exists?"
 	}
 	
-	
 	try {
-		Write-Verbose "Start validation process for `"$CN`""
-		$IdentifierAlias = "$($CN)-$($SessionGUID)"
-		$Identifier = New-ACMEIdentifier -Dns $CN -Alias $IdentifierAlias -VaultProfile $VaultName
+		Write-Verbose "Find pre-existing registration for `"$CN`""
+		$IdentifierAlias = "DNS-$($CN)"
+		$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
 	} catch {
 		try {
-			Write-Verbose "Posibly it already exists, retreiving data"
-			$Identifier = Get-ACMEIdentifier -IdentifierRef $CN -VaultProfile $VaultName
+			Write-Verbose "Registration does not exist, registering `"$CN`""
+			$Identifier = ACMESharp\New-ACMEIdentifier -Dns $CN -Alias $IdentifierAlias -VaultProfile $VaultName
 		} catch {
-			Write-Verbose "Record is invalid"
+			Write-Verbose "Registration is invalid"
 			$Identifier = [PSCustomObject]@{
 				Status = "invalid"
 				Expires = $null
 			}
 		}
 	}
+	
 	try {
-		Write-Verbose "Extracting data, checking validation"
-		$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
-		$result = $response  | Select-Object status,expires
-		$Identifier = [PSCustomObject]@{
-			Status = $result.status
-			Expires = $result.expires
+		if ($Identifier.Uri) {
+			Write-Verbose "Extracting data, checking validation"
+			$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
+			#$result = $response  | Select-Object status,expires
+			if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
+				$httpIdentifier = ($response | select -expand Challenges | Where-Object {$_.type -eq "http-01"})
+			}
+		} else {
+			Write-Verbose "No URI available to check..."
 		}
 	}catch{
-		Write-Verbose "Someting went wrong with the validation: $($result | Format-Table | Out-String)"
+		Write-Verbose "Someting went wrong with the validation:`n$($response | Format-Table | Out-String)"
 	}
+
 	Write-Verbose "Checking if current validation is still valid"
-	if (($Identifier.status -eq "valid") -and ($([datetime]$Identifier.Expires - $(Get-Date)).TotalDays -gt 0.3)) {
-		Write-Verbose "`"$CN`" is valid"
+	if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
+		Write-Verbose "Registration for `"$CN`" is still valid"
 		$Validation = $true
+		Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
 	} else {
-		Write-Verbose "`"$CN`" is NOT valid"
+		Write-Verbose "Registration for `"$CN`" is NOT valid, validation required"
 		$Validation = $false
+		Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
 	}
-	Write-Verbose "Validation response: $($result | Format-Table | Out-String)"
-	Write-Verbose "Storing values"
+	Write-Verbose "Storing values for reference"
 	$DNSObjects += [PSCustomObject]@{
 		DNSName = $CN
 		IPAddress = $PrimaryIP
@@ -614,13 +760,14 @@ if (-not ($CleanNS)) {
 		DNSValid = $Validation
 		Alias = $IdentifierAlias
 	}
+	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-Table | Out-String)"
 }
-Write-Verbose "$($DNSObjects | Format-Table | Out-String)"
 
 #endregion Primary DNS
 
 #region SAN
-if (-not ($CleanNS)) {
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Checking if SAN entries are available"
 	if ([string]::IsNullOrWhiteSpace($SAN)) {
 		Write-Verbose "No SAN entries found"
@@ -645,9 +792,11 @@ if (-not ($CleanNS)) {
 				}
 				
 			} catch {
-				Write-Verbose "Error while retreiving IP Address"
-				Write-Host -ForeGroundColor Red "Error while retreiving IP Address, does not exists?"
-				$SANIP = $null
+				Write-Verbose "Error Details: $($_.Exception.Message)"
+				Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
+				Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
+				Write-Host -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped`n"
+				$SANIP = "Skipped"
 			}
 			if ([string]::IsNullOrWhiteSpace($SANIP)) {
 				Write-Verbose "No valid entry found for DNSName:`"$DNSRecord`""
@@ -656,8 +805,11 @@ if (-not ($CleanNS)) {
 			} else {
 				Write-Verbose "Valid entry found"
 				$SANStatus = $true
-				if ($DisableIPCheck) {
+				if ($SANIP -eq "NoIPCheck") {
 					Write-Verbose "IP address checking was disabled"
+					$SANMatch = $true
+				} elseif ($SANIP -eq "Skipped") {
+					Write-Verbose "IP address checking failed, `"$DNSRecord`" will be skipped"
 					$SANMatch = $true
 				} else {
 					Write-Verbose "All IP Adressess must match, checking"
@@ -670,73 +822,79 @@ if (-not ($CleanNS)) {
 					}
 				}
 			}
-			try {
-				Write-Verbose "Start validation process for `"$DNSRecord`""
-				$IdentifierAlias = "$($DNSRecord)-$($SessionGUID)"
-				$Identifier = New-ACMEIdentifier -Dns $DNSRecord -Alias $IdentifierAlias -VaultProfile $VaultName
-			} catch {
+			if (-not($SANIP -eq "Skipped")) {
 				try {
-					Write-Verbose "Posibly it already exists, retreiving data"
-					$Identifier = Get-ACMEIdentifier -IdentifierRef $DNSRecord -VaultProfile $VaultName
+					Write-Verbose "Find pre-existing registration for `"$DNSRecord`""
+					$IdentifierAlias = "DNS-$($DNSRecord)"
+					$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
 				} catch {
-					Write-Verbose "Record is invalid"
-					$Identifier = [PSCustomObject]@{
-						Status = "invalid"
-						Expires = $null
+					try {
+						Write-Verbose "Registration does not exist, registering `"$DNSRecord`""
+						$Identifier = ACMESharp\New-ACMEIdentifier -Dns $DNSRecord -Alias $IdentifierAlias -VaultProfile $VaultName
+					} catch {
+						Write-Verbose "Registration is invalid"
+						$Identifier = [PSCustomObject]@{
+							Status = "invalid"
+							Expires = $null
+						}
 					}
 				}
-			}
-			try {
-				if ($Identifier.Uri) {
-					Write-Verbose "Extracting data, checking validation"
-					$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
-					$result = $response  | Select-Object status,expires
-					$Identifier = [PSCustomObject]@{
-						Status = $result.status
-						Expires = $result.expires
+				try {
+					if ($Identifier.Uri) {
+						Write-Verbose "Extracting data, checking validation"
+						$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
+						#$result = $response  | Select-Object status,expires
+						if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
+							$httpIdentifier = ($response | select -expand Challenges | Where-Object {$_.type -eq "http-01"})
+						}
+					} else {
+						Write-Verbose "No URI available to check..."
 					}
+				}catch{
+					Write-Verbose "Someting went wrong with the validation: $($response | Format-Table | Out-String)"
+				}
+				if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
+					Write-Verbose "Registration for `"$DNSRecord`" is still valid"
+					$Validation = $true
+					Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
 				} else {
-					Write-Verbose "Nothing to extract, probably a new request"
+					Write-Verbose "Registration for `"$DNSRecord`" is NOT valid, validation required"
+					$Validation = $false
+					Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
 				}
-			}catch{
-				Write-Verbose "Someting went wrong with the validation: $($result | Format-Table | Out-String)"
-			}
-			Write-Verbose "Checking if current validation is still valid"
-			if (($Identifier.status -eq "valid") -and ($([datetime]$Identifier.Expires - $(Get-Date)).TotalDays -gt 0.3)) {
-				Write-Verbose "`"$DNSRecord`" is valid"
-				$Validation = $true
-			} else {
-				Write-Verbose "`"$DNSRecord`" is NOT valid"
-				$Validation = $false
-			}
-			Write-Verbose "Validation response: $($result | Format-Table | Out-String)"
-			$DNSObjects += [PSCustomObject]@{
-				DNSName = $DNSRecord
-				IPAddress = $SANIP
-				Status = $SANStatus
-				Match = $SANMatch
-				SAN = $true
-				DNSValid = $Validation
-				Alias = $IdentifierAlias
+				Write-Verbose "Storing values for reference"
+				$DNSObjects += [PSCustomObject]@{
+					DNSName = $DNSRecord
+					IPAddress = $SANIP
+					Status = $SANStatus
+					Match = $SANMatch
+					SAN = $true
+					DNSValid = $Validation
+					Alias = $IdentifierAlias
+				}
 			}
 		}
 	}
+	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-Table | Out-String)"
 }
-Write-Verbose "$($DNSObjects | Format-Table | Out-String)"
 
 #endregion SAN
 
-if (-not ($CleanNS)) {
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Checking for invalid DNS Records"
 	$InvalidDNS = $DNSObjects | Where-Object {$_.Status -eq $false}
+	$SkippedDNS = $DNSObjects | Where-Object {$_.IPAddress -eq "Skipped"}
 	if ($InvalidDNS) {
-		Write-Verbose "$($InvalidDNS | Select-Object DNSName,Status | Format-Table | Out-String)"
+		Write-Verbose "Invalid DNS object(s):`n$($InvalidDNS | Select-Object DNSName,Status | Format-Table | Out-String)"
 		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
 		$InvalidDNS | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
-		throw "ERROR, invalid (not registered?) DNS Record(s) found:`r`n"
+		throw "ERROR, invalid (not registered?) DNS Record(s) found!"
 	} else {
 		Write-Verbose "None found, continuing"
 	}
+	if ($SkippedDNS) {
+		Write-Warning "The following DNS object(s) will be skipped:`n$($SkippedDNS | Select-Object DNSName | Format-Table | Out-String)"
+	} 
 	Write-Verbose "Checking non matching DNS Records"
 	$DNSNoMatch = $DNSObjects | Where-Object {$_.Match -eq $false}
 	if ($DNSNoMatch -and (-not $DisableIPCheck)) {
@@ -744,134 +902,221 @@ if (-not ($CleanNS)) {
 		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
 		$DNSNoMatch | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
 		throw "ERROR: Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))"
+	} elseif ($DisableIPCheck) {
+		Write-Verbose "IP Adressess checking was skipped"
 	} else {
 		Write-Verbose "All IP Adressess match"
 	}
 }
+
+
 #region ACME DNS Verification
+
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
+	Write-Verbose "Checking if validation is required"
+	$DNSValidationRequired = $DNSObjects | Where-Object {$_.DNSValid -eq $false}
+	if ($DNSValidationRequired) {
+		Write-Verbose "Validation NOT required"
+		$NetScalerActionsRequired = $true
+	} else {
+		Write-Verbose "Validation required for the following objects:`n$($DNSValidationRequired | Select-Object DNSName | Format-Table | Out-String)"
+		$NetScalerActionsRequired = $false
+	
+	}
+}
 
 #region NetScaler pre dns
 	
-if (-not ($CleanNS)) {
-	Write-Verbose "Checking if validation is required"
-	$DNSValidationRequired = $DNSObjects | Where-Object {$_.DNSValid -eq $false}
+if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCertificates))) {
 	try {
 		Write-Verbose "Login to NetScaler and save session to global variable"
 		$NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
-		if ($DNSValidationRequired) {
-			Write-Verbose "$($DNSValidationRequired | Select-Object DNSName,DNSValid | Format-Table | Out-String)"
-			Write-Verbose "$($DNSValidationRequired.Count) items need validation"
-			Write-Verbose "Enable required NetScaler Features, Load Balancer, Responder and Content Switch"
-			$payload = @{"feature"="LB RESPONDER CS APPFLOW"}
-			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type nsfeature -Payload $payload -Action enable
-			try {
-				Write-Verbose "Verifying Content Switch"
-				$response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
-			} catch {
-				$ExcepMessage = $_.Exception.Message
-				Write-Verbose "Error Details: $ExcepMessage"
-				throw "Could not find/read out the content switch `"$NSCsVipName`" not available?"
-			} finally {
-				if ($ExcepMessage -like "*(404) Not Found*") {
-					Write-Host -ForeGroundColor Red "`nThe Content Switch `"$NSCsVipName`" does NOT exists!"
-					Exit (1)
-				} elseif ($ExcepMessage -like "*The remote server returned an error*") {
-					Write-Host -ForeGroundColor Red "`nUnknown error found while checking the Content Switch: `"$NSCsVipName`""
-					Write-Host -ForeGroundColor Red "Error message: `"$ExcepMessage`""
-					Exit (1)
-				} elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-					Write-Host -ForeGroundColor Red "`nThe Content Switch is $($response.csvserver.servicetype) and NOT HTTP"
-					Write-Host -ForeGroundColor Red "Please use a HTTP (Port 80) Content Switch this is required for the validation. Exiting now`n"
-					Exit (1)
-				}
+		Write-Verbose "Enable required NetScaler Features, Load Balancer, Responder, Content Switch and SSL"
+		$payload = @{"feature"="LB RESPONDER CS SSL"}
+		$response = InvokeNSRestApi -Session $NSSession -Method POST -Type nsfeature -Payload $payload -Action enable
+		try {
+			Write-Verbose "Verifying Content Switch"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
+		} catch {
+			$ExcepMessage = $_.Exception.Message
+			Write-Verbose "Error Details: $ExcepMessage"
+			throw "Could not find/read out the content switch `"$NSCsVipName`" not available?"
+		} finally {
+			if ($ExcepMessage -like "*(404) Not Found*") {
+				Write-Host -ForeGroundColor Red "`nThe Content Switch `"$NSCsVipName`" does NOT exists!"
+				Exit (1)
+			} elseif ($ExcepMessage -like "*The remote server returned an error*") {
+				Write-Host -ForeGroundColor Red "`nUnknown error found while checking the Content Switch: `"$NSCsVipName`""
+				Write-Host -ForeGroundColor Red "Error message: `"$ExcepMessage`""
+				Exit (1)
+			} elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
+				Write-Host -ForeGroundColor Red "`nThe Content Switch is $($response.csvserver.servicetype) and NOT HTTP"
+				Write-Host -ForeGroundColor Red "Please use a HTTP (Port 80) Content Switch this is required for the validation. Exiting now`n"
+				Exit (1)
 			}
-			try { 
-				Write-Verbose "Configuring NetScaler: Check if Load Balancer Service exists"
-				$response = InvokeNSRestApi -Session $NSSession -Method GET -Type service -Resource $NSSvcName
-				Write-Verbose "Yep it exists, continuing"
-			} catch {
-				Write-Verbose "It does not exist, continuing"
-				Write-Verbose "Configuring NetScaler: Create Load Balance Service `"$NSSvcName`""
-				$payload = @{"name"="$NSSvcName";"ip"="$NSSvcDestination";"servicetype"="HTTP";"port"="80";"healthmonitor"="NO";} 
-				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type service -Payload $payload -Action add
-			}
-			try { 
-				Write-Verbose "Configuring NetScaler: Check if Load Balancer exists"
-				$response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver -Resource $NSLbName
-				Write-Verbose "Yep it exists, continuing"
-			} catch {
-				Write-Verbose "Nope, continuing"
-				Write-Verbose "Configuring NetScaler: Create Load Balance Vip `"$NSLbName`""
-				$payload = @{"name"="$NSLbName";"servicetype"="HTTP";"ipv46"="0.0.0.0";"Port"="0";}
-				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type lbvserver -Payload $payload -Action add
-			} finally {
-				Write-Verbose "Configuring NetScaler: Bind Service `"$NSSvcName`" to Load Balance Vip `"$NSLbName`""
+		}
+		try { 
+			Write-Verbose "Configuring NetScaler: Check if Load Balancer Service exists"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type service -Resource $NSSvcName
+			Write-Verbose "Yep it exists, continuing"
+		} catch {
+			Write-Verbose "It does not exist, continuing"
+			Write-Verbose "Configuring NetScaler: Create Load Balance Service `"$NSSvcName`""
+			$payload = @{"name"="$NSSvcName";"ip"="$NSSvcDestination";"servicetype"="HTTP";"port"="80";"healthmonitor"="NO";} 
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type service -Payload $payload -Action add
+		}
+		try { 
+			Write-Verbose "Configuring NetScaler: Check if Load Balancer exists"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver -Resource $NSLbName
+			Write-Verbose "Yep it exists, continuing"
+		} catch {
+			Write-Verbose "Nope, continuing"
+			Write-Verbose "Configuring NetScaler: Create Load Balance Vip `"$NSLbName`""
+			$payload = @{"name"="$NSLbName";"servicetype"="HTTP";"ipv46"="0.0.0.0";"Port"="0";}
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type lbvserver -Payload $payload -Action add
+		} finally {
+			Write-Verbose "Configuring NetScaler: Bind Service `"$NSSvcName`" to Load Balance Vip `"$NSLbName`""
+			Write-Verbose "Checking LB Service binding"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver_service_binding -Resource $NSLbName
+			if ($response.lbvserver_service_binding.servicename -eq $NSSvcName) {
+				Write-Verbose "LB Service binding is ok"
+				$SvcConfigure = $True
+			} else {
 				$payload = @{"name"="$NSLbName";"servicename"="$NSSvcName";}
 				$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_service_binding -Payload $payload
 			}
-			try { 
-				Write-Verbose "Configuring NetScaler: Check if Responder Policy exists"
-				$response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderpolicy -Resource $NSRspName
-				try {
-					Write-Verbose "Yep it exists, continuing"
-					Write-Verbose "Configuring NetScaler: Change Responder Policy to default values"
-					$payload = @{"name"="$NSRspName";"action"="rsa_letsencrypt";"rule"='HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/XXXXXX")';}
-					$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
-				} catch {
-					throw "Something went wrong with reconfiguring the existing policy `"$NSRspName`", exiting now..."
-				}	
-			} catch {
-				$payload = @{"name"="$NSRsaName";"type"="respondwith";"target"='"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"';}
-				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action add
-				$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"='HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/XXXX")';}
-				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action add
-			} finally {
-				$payload = @{"name"="$NSLbName";"policyname"="$NSRspName";"priority"=100;}
-				$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
-			}
-			try { 
-				Write-Verbose "Configuring NetScaler: Check if Content Switch Policy exists"
-				$response = InvokeNSRestApi -Session $NSSession -Method GET -Type cspolicy -Resource $NSCspName
-				Write-Verbose "It does, continuing"
-				if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
-					$payload = @{"policyname"="$NSCspName";"rule"="HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")";}
-					$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type cspolicy -Payload $payload
-				}
-			} catch {
-				Write-Verbose "Configuring NetScaler: Create Content Switch Policy"
-				$payload = @{"policyname"="$NSCspName";"rule"='HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")';}
-				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type cspolicy -Payload $payload -Action add
-				
-				
-			}
-			Write-Verbose "Configuring NetScaler: Bind Load Balancer `"$NSLbName`" to Content Switch `"$NSCsVipName`" with prio: $NSCsVipBinding"
-			$payload = @{"name"="$NSCsVipName";"policyname"="$NSCspName";"priority"="$NSCsVipBinding";"targetlbvserver"="$NSLbName";"gotopriorityexpression"="END";}
-			$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
-			Write-Verbose "Finished configuring the NetScaler"
 		}
+		try { 
+			Write-Verbose "Configuring NetScaler: Check if Responder Policy exists"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderpolicy -Resource $NSRspName
+			try {
+				Write-Verbose "Yep it exists, continuing"
+				Write-Verbose "Configuring NetScaler: Change Responder Policy to default values"
+				$payload = @{"name"="$NSRspName";"action"="rsa_letsencrypt";"rule"='HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")';}
+				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
+			} catch {
+				throw "Something went wrong with reconfiguring the existing policy `"$NSRspName`", exiting now..."
+			}	
+		} catch {
+			$payload = @{"name"="$NSRsaName";"type"="respondwith";"target"='"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"';}
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action add
+			$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"='HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")';}
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action add
+		} finally {
+			$payload = @{"name"="$NSLbName";"policyname"="$NSRspName";"priority"=100;}
+			$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
+		}
+		try { 
+			Write-Verbose "Configuring NetScaler: Check if Content Switch Policy exists"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type cspolicy -Resource $NSCspName
+			Write-Verbose "It does, continuing"
+			if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
+				$payload = @{"policyname"="$NSCspName";"rule"="HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")";}
+				$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type cspolicy -Payload $payload
+			}
+		} catch {
+			Write-Verbose "Configuring NetScaler: Create Content Switch Policy"
+			$payload = @{"policyname"="$NSCspName";"rule"='HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")';}
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type cspolicy -Payload $payload -Action add
+			
+			
+		}
+		Write-Verbose "Configuring NetScaler: Bind Load Balancer `"$NSLbName`" to Content Switch `"$NSCsVipName`" with prio: $NSCsVipBinding"
+		$payload = @{"name"="$NSCsVipName";"policyname"="$NSCspName";"priority"="$NSCsVipBinding";"targetlbvserver"="$NSLbName";"gotopriorityexpression"="END";}
+		$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
+		Write-Verbose "Finished configuring the NetScaler"
 	} catch {
 		Write-Verbose "Error Details: $($_.Exception.Message)"
 		throw "ERROR: Could not configure the NetScaler, exiting now"
 	}
+	Start-Sleep -Seconds 2
 }
 
 #endregion NetScaler pre dns
 
+#region Test NS CS
+
+if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCertificates))) {
+	Write-Host -ForeGroundColor White "Executing some tests, can take a couple of seconds/minutes..."
+	Write-Host -ForeGroundColor Yellow "`r`nPlease note that if a test fails, the script still tries to continue!`r`n"
+	ForEach ($DNSObject in $DNSObjects ) {
+		Write-Host -ForeGroundColor White -NoNewLine " -Checking: => "
+		Write-Host -ForeGroundColor Yellow "`"$($DNSObject.DNSName)`" ($($DNSObject.IPAddress))"
+		$TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
+		Write-Verbose "Testing if the Content Switch is available on `"$TestURL`" (via internal DNS)"
+		try {
+			Write-Verbose "Retreiving data"
+			$Result = Invoke-WebRequest -URI $TestURL -TimeoutSec 2
+			Write-Verbose "Success, output: $($Result| Out-String)"
+		} catch {
+			$Result = $null
+			Write-Verbose "Internal check failed, error Details: $($_.Exception.Message)"
+		}
+		if ($Result.RawContent -eq "HTTP/1.0 200 OK" + "`r`n`r`n" + "XXXX") {
+			Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS): "
+			Write-Host -ForeGroundColor Green "OK"
+		} else {
+			Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS): "
+			Write-Host -ForeGroundColor Yellow "Not successfull, maybe not resolvable internally?"
+			Write-Verbose "Output: $($Result| Out-String)"
+		}
+		
+		try {
+			Write-Verbose "Checking if Public IP is available for external DNS testing"
+			[ref]$ValidIP = [ipaddress]::None
+			if (([ipaddress]::TryParse("$($DNSObject.IPAddress)",$ValidIP)) -and (-not ($DisableIPCheck))) {
+				Write-Verbose "Testing if the Content Switch is available on `"$TestURL`" (via external DNS)"
+				$TestURL = "http://$($DNSObject.IPAddress)/.well-known/acme-challenge/XXXX"
+				$Headers = @{"Host"="$($DNSObject.DNSName)"}
+				Write-Verbose "Retreiving data"
+				$Result = Invoke-WebRequest -URI $TestURL -Headers $Headers -TimeoutSec 2
+				Write-Verbose "Success, output: $($Result| Out-String)"
+			} else {
+				Write-Verbose "Public IP is not available for external DNS testing"
+			}
+		} catch {
+			$Result = $null
+			Write-Verbose "External check failed, error Details: $($_.Exception.Message)"
+		}
+		[ref]$ValidIP = [ipaddress]::None
+		if (([ipaddress]::TryParse("$($DNSObject.IPAddress)",$ValidIP)) -and (-not ($DisableIPCheck))) {
+			if ($Result.RawContent -eq "HTTP/1.0 200 OK" + "`r`n`r`n" + "XXXX") {
+				Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS): "
+				Write-Host -ForeGroundColor Green "OK"
+			} else {
+				Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS): "
+				Write-Host -ForeGroundColor Yellow "Not successfull, maybe not resolvable externally?"
+				Write-Verbose "Output: $($Result| Out-String)"
+			}
+		}
+	}
+	Write-Host -ForeGroundColor White "`r`nFinished the tests, script will continue again."
+}
+
+#endregion Test NS CS
+
 #region DNS Check
 
-if (-not ($CleanNS)) {
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Check if DNS Records need to be validated"
+	Write-Host -ForeGroundColor White "Verification:"
 	foreach ($DNSObject in $DNSObjects) {
-		Write-Verbose "Checking validation for `"$($DNSObject.DNSName)`""
+		$DNSRecord = $DNSObject.DNSName
+		Write-Verbose "Checking validation for `"$DNSRecord`""
 		if ($DNSObject.DNSValid){
-			Write-Verbose "Still valid"
+			Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
+			Write-Host -ForeGroundColor Green "`"$DNSRecord`""
+			Write-Host -ForeGroundColor White -NoNewLine " -Status: "
+			Write-Host -ForeGroundColor Green "=> Still valid"
 		} else {
 			Write-Verbose "New validation required, Start verifying"
+			$IdentifierAlias = $DNSObject.Alias
 			try {
 				try {
-					$Challenge = ((Complete-ACMEChallenge $($DNSObject.Alias) -ChallengeType http-01 -Handler manual -VaultProfile $VaultName).Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
+					$Challenge = ((ACMESharp\Complete-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -Handler manual -VaultProfile $VaultName).Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
 				} catch {
-					$Challenge = ((Complete-ACMEChallenge $($DNSObject.DNSName) -ChallengeType http-01 -Handler manual -VaultProfile $VaultName).Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
+					Write-Verbose "Error Details: $($_.Exception.Message)"
+					throw "Error while creating the Challenge"
 				}
 				Write-Verbose "Configuring NetScaler: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$($Challenge.FilePath)`")`""
 				$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"="HTTP.REQ.URL.CONTAINS(`"$($Challenge.FilePath)`")";}
@@ -886,56 +1131,67 @@ if (-not ($CleanNS)) {
 				Start-Sleep -Seconds 1
 				Write-Verbose "Start Submitting Challenge"
 				try {
-					$SubmittedChallenge = Submit-ACMEChallenge $($DNSObject.Alias) -ChallengeType http-01 -VaultProfile $VaultName
+					$SubmittedChallenge = ACMESharp\Submit-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName
 				} catch {
-					$SubmittedChallenge = Submit-ACMEChallenge $($DNSObject.DNSName) -ChallengeType http-01 -VaultProfile $VaultName
+					Write-Verbose "Error Details: $($_.Exception.Message)"
+					throw "Error while submitting the Challenge"
 				}
 				Write-Verbose "Retreiving validation status"
 				try {
-					$UpdateIdentifier = (Update-ACMEIdentifier $($DNSObject.Alias) -ChallengeType http-01 -VaultProfile $VaultName -Alias $($DNSObject.DNSName)).Challenges | Where-Object {$_.Type -eq "http-01"}
+					$UpdateIdentifier = (ACMESharp\Update-ACMEIdentifier -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName).Challenges | Where-Object {$_.Type -eq "http-01"}
 				} catch {
-					$UpdateIdentifier = (Update-ACMEIdentifier $($DNSObject.DNSName) -ChallengeType http-01 -VaultProfile $VaultName -Alias $($DNSObject.DNSName)).Challenges | Where-Object {$_.Type -eq "http-01"}
+					Write-Verbose "Error Details: $($_.Exception.Message)"
+					throw "Error while retreiving validation status"
 				}
 				$i = 0
+				Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
+				Write-Host -ForeGroundColor Green "`"$DNSRecord`""
+				Write-Host -ForeGroundColor White -NoNewLine " -Status: "
 				while(-NOT ($UpdateIdentifier.Status.ToLower() -eq "valid")) {
+					Write-Host -ForeGroundColor Yellow -NoNewLine "="
 					$i++
-					Write-Verbose "($($i.ToString())) $($DNSObject.DNSName) is not (yet) validated, Wait 2 second"
+					Write-Verbose "($($i.ToString())) $DNSRecord is not (yet) validated, Wait 2 second"
 					Start-Sleep -Seconds 2
 					Write-Verbose "Retreiving validation status"
 					try {
-						$UpdateIdentifier = (Update-ACMEIdentifier $($DNSObject.Alias) -ChallengeType http-01 -VaultProfile $VaultName -Alias $($DNSObject.DNSName)).Challenges | Where-Object {$_.Type -eq "http-01"}
+						$UpdateIdentifier = (ACMESharp\Update-ACMEIdentifier -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName).Challenges | Where-Object {$_.Type -eq "http-01"}
 					} catch {
-						$UpdateIdentifier = (Update-ACMEIdentifier $($DNSObject.DNSName) -ChallengeType http-01 -VaultProfile $VaultName -Alias $($DNSObject.DNSName)).Challenges | Where-Object {$_.Type -eq "http-01"}
+						Write-Verbose "Error Details: $($_.Exception.Message)"
+						throw "Error while retreiving validation status"
 					}
 					if (($i -ge 60) -or ($UpdateIdentifier.Status.ToLower() -eq "invalid")) {break}
 				}
 				switch ($UpdateIdentifier.Status.ToLower()) {
 					"pending" {
-						throw "ERROR. It took to long for the validation ($($DNSObject.DNSName)) to complete, exiting now."
+						Write-Host -ForeGroundColor Red "ERROR"
+						throw "It took to long for the validation ($DNSRecord) to complete, exiting now."
 					}
 					"invalid" {
-						throw "ERROR. Validation for `"$($DNSObject.DNSName)`" is invalid! Exiting now."
+						Write-Host -ForeGroundColor Red "ERROR"
+						throw "Validation for `"$DNSRecord`" is invalid! Exiting now."
 					}
 					"valid" {
-						Write-Host -ForeGroundColor Green "Verification for `"$($DNSObject.DNSName)`" was valid, continuing"
+						Write-Host -ForeGroundColor Green "> validated successfully"
 					}
 					default {
-						throw "ERROR. Unexpected status for `"$($DNSObject.DNSName)`" is `"$($UpdateIdentifier.Status)`", exiting now."
+						Write-Host -ForeGroundColor Red "ERROR"
+						throw "Unexpected status for `"$DNSRecord`" is `"$($UpdateIdentifier.Status)`", exiting now."
 					}
 				}
 			} catch {
 				Write-Verbose "Error Details: $($_.Exception.Message)"
-				throw "Error while verifying `"$($DNSObject.DNSName)`", exiting now"
+				throw "Error while verifying `"$DNSRecord`", exiting now"
 			}
 		}
 	}
+	"`r`n"
 }
 
 #endregion DNS Check
 
 #region NetScaler post DNS
 
-if (($DNSValidationRequired) -or ($CleanNS)) {
+if (($NetScalerActionsRequired) -or ($CleanNS) -and (-not ($RemoveTestCertificates))) {
 	Write-Verbose "Login to NetScaler and save session to global variable"
 	Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential
 	try {
@@ -1053,86 +1309,104 @@ if (($DNSValidationRequired) -or ($CleanNS)) {
 
 #region Certificates
 	
-if (-not ($CleanNS)) {
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$SANs = $DNSObjects | Where-Object {$_.SAN -eq $true}
+	$IdentifierAlias = $DNSObjects[0].Alias
 	try {
+		$CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
 		if ($SANs) {
-			Write-Verbose "Get certificate with SANs (ID: $SessionGUID)"
+			Write-Verbose "Get certificate with SANs"
 			Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-Table | Out-String)"
 			Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-Table | Out-String)"
-			$NewCertificate = New-ACMECertificate $DNSObjects[0].Alias `
+			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
 				-AlternativeIdentifierRefs @($SANs.Alias) `
-				-Alias $DNSObjects[0].Alias `
+				-Alias $CertificateAlias `
 				-Generate `
-				-VaultProfile $VaultName | Out-Null
+				-VaultProfile $VaultName
 		} else {
-			Write-Verbose "Get single DNS Name certificate (ID: SessionGUID)"
-			Write-Verbose "Domain:`r`n$($($DNSObjects[0].DNSName) | fl * | Out-String)"
-			$NewCertificate = New-ACMECertificate $DNSObjects[0].Alias `
-				-Alias $DNSObjects[0].Alias `
+			Write-Verbose "Get single DNS Name certificate"
+			Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | fl * | Out-String)"
+			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
+				-Alias $CertificateAlias `
 				-Generate `
-				-VaultProfile $VaultName | Out-Null
+				-VaultProfile $VaultName
 		}
 		Write-Verbose "Submit Certificate request"
-		Submit-ACMECertificate $DNSObjects[0].Alias -VaultProfile $VaultName | Out-Null
+		$SubmittedCertificate = ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName
 	} catch {
 		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
 	}
 	$i = 0
-	while (-not (Update-ACMECertificate $DNSObjects[0].Alias -VaultProfile $VaultName | select IssuerSerialNumber)) {
-		if ($i -ge 120) {
+	while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | select IssuerSerialNumber)) {
+		$i++
+		$imax = 120
+		if ($i -ge $imax) {
 			throw "Error: Retreiving certificate failed, took to long to complete"
 		}
-		Write-Host "Waiting for certificate to come available..."
+		Write-Host "Will continue $(($imax-$i)*2) more seconds for the certificate to come available..."
 		Start-Sleep -seconds 2
 	}
 	
-	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath "$($SessionDateTime)-$($SessionGUID)"
+	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
 	Write-Verbose "Create directory `"$CertificateDirectory`" for storing the new certificates"
 	$output = New-Item $CertificateDirectory -ItemType directory -force
 	if (Test-Path $CertificateDirectory){
 		if ($Production){
+			$CertificateName = "$($ScriptDateTime.ToString("yyyyMMdd"))-$cn"
 			Write-Verbose "Writing production certificates"
 			$IntermediateCACertKeyName = "Lets Encrypt Authority X3-int"
 			$IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
 			$IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
 			$IntermediateCASerial = "0a0141420000015385736a0b85eca708"
 		} else {
+			$CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$cn"
 			Write-Verbose "Writing test/staging certificates"
 			$IntermediateCACertKeyName = "Fake LE Intermediate X1-int"
 			$IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
 			$IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
 			$IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
-
 		}
 		Write-Verbose "Intermediate: `"$IntermediateCAFileName`""
-		Get-ACMECertificate $DNSObjects[0].Alias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
-		
-		
-		$CertificateCertKeyName = "$($SessionDateTime )_$($DNSObjects[0].DNSName)"
+		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
 		
 		if ($Production){
-			$CertificateFileName = "$CertificateCertKeyName.crt"
-			$CertificateKeyFileName = "$CertificateCertKeyName.crt.key"
-			$CertificatePfxFileName = "$CertificateCertKeyName.pfx"
+			$CertificateName = "$CertificateName"
+			$CertificateFileName = "$CertificateAlias.crt"
+			$CertificateKeyFileName = "$CertificateAlias.crt.key"
+			$CertificatePfxFileName = "$CertificateAlias.pfx"
 		} else {
-			$CertificateFileName = "TST-$CertificateCertKeyName.crt"
-			$CertificateKeyFileName = "TST-$CertificateCertKeyName.crt.key"
-			$CertificatePfxFileName = "TST-$CertificateCertKeyName.pfx"
+			$CertificateName = "TST-$CertificateName"
+			$CertificateFileName = "TST-$CertificateAlias.crt"
+			$CertificateKeyFileName = "TST-$CertificateAlias.crt.key"
+			$CertificatePfxFileName = "TST-$CertificateAlias.pfx"
 		}
 		$CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
 		Write-Verbose "Certificate: `"$CertificateFileName`""
-		Get-ACMECertificate $DNSObjects[0].Alias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
+		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
 		$CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
 		Write-Verbose "Key: `"$CertificateKeyFileName`""
-		Get-ACMECertificate $DNSObjects[0].Alias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
+		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
 		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName 
 		if ($PfxPassword){
 			Write-Verbose "PFX: `"$CertificatePfxFileName`""
-			Get-ACMECertificate $DNSObjects[0].Alias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
+			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
 		} else {
-			Write-Warning "No Password was specified, so a PFX certificate was not generated. If you want one run the following command:`n `
-				Get-ACMECertificate $($DNSObjects[0].Alias) -ExportPkcs12 `"$CertificatePfxFullPath`" -CertificatePassword `"P@ssw0rd`" -VaultProfile `"$VaultName`"`n`n"
+			try {
+				$length=15
+				$Assembly = Add-Type -AssemblyName System.Web
+				$PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length,2)
+				Write-Warning "No Password was specified, so a random password was generated!"
+				
+				Write-Host -ForeGroundColor Yellow "`n***********************"
+				Write-Host -ForeGroundColor Yellow "*   PFX Password:     *"
+				Write-Host -ForeGroundColor Yellow "*                     *"
+				Write-Host -ForeGroundColor Yellow "*   $PfxPassword   *"
+				Write-Host -ForeGroundColor Yellow "*                     *"
+				Write-Host -ForeGroundColor Yellow "***********************`n"
+				ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
+			} catch {
+				Write-Verbose "An error occured while generating a Password."
+			}
 		}
 	}
 }
@@ -1141,12 +1415,16 @@ if (-not ($CleanNS)) {
 
 #region Upload certificates to NetScaler
 
-if (-not ($CleanNS)) {
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	try {
 		Write-Verbose "Retreiving existing certificates"
 		$CertDetails = InvokeNSRestApi -Session $NSSession -Method GET -Type sslcertkey
 		Write-Verbose "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists"
-		$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.serial -eq $IntermediateCASerial}
+		if ($ns10x) {
+			$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.cert -match $IntermediateCAFileName}
+		} else {
+			$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.serial -eq $IntermediateCASerial}
+		}
 		if (-not ($IntermediateCADetails)) {
 			Write-Verbose "Uploading `"$IntermediateCAFileName`" to the NetScaler"
 			$IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
@@ -1174,19 +1452,20 @@ if (-not ($CleanNS)) {
 				Write-Verbose "Certificate was not linked"
 			}
 			$NSUpdating = $true
-		} elseif ($NSCertNameToUpdate) {
-			Write-Verbose " `"$NSCertNameToUpdate`" is $($NSCertNameToUpdate.Length) long"
-			if ($NSCertNameToUpdate.Length -gt 30) {
+		} else {
+			Write-Verbose " `"$CertificateName`" is $($CertificateName.Length) long"
+			if ($CertificateName.Length -gt 31) {
 				Write-Verbose "Name is to long, only using the first 31 characters"
-				$CertificateCertKeyName = $NSCertNameToUpdate.subString(0,31)
+				$CertificateCertKeyName = $CertificateName.subString(0,31)
 			} else {
 				Write-Verbose "CertkeyName is not too long, continuing"
-				$CertificateCertKeyName = $NSCertNameToUpdate
+				$CertificateCertKeyName = $CertificateName
 			}
-			Write-Verbose "No existing certificate found, using predefined name `"$NSCertNameToUpdate`". Start configuring the certificate"
-			$NSUpdating = $false
-		} else {
-			Write-Verbose "Start configuring the certificaten"
+			$ExistingCertificateDetails = $CertDetails.sslcertkey | Where-Object {$_.certkey -eq $CertificateCertKeyName}
+			if ($ExistingCertificateDetails) {
+				Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually"
+				exit(1)
+			}
 			$NSUpdating = $false
 		}
 		$CertificateCrtBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateFullPath -Encoding "Byte"))
@@ -1229,4 +1508,78 @@ if (-not ($CleanNS)) {
 		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
 	}
 }
+
 #endregion Upload certificates to NetScaler
+
+#region Remove Test Certificates
+
+if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
+	Write-Verbose "Login to NetScaler and save session to global variable"
+	$NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
+	$IntermediateCACertKeyName = "Fake LE Intermediate X1"
+	$IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
+	Write-Verbose "Retreiving existing certificates"
+	$CertDetails = InvokeNSRestApi -Session $NSSession -Method GET -Type sslcertkey
+	Write-Verbose "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists"
+	if ($ns10x) {
+		$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.cert -match $IntermediateCAFileName}
+	} else {
+		$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.serial -eq $IntermediateCASerial}
+	}
+	$LinkedCertificates = $CertDetails.sslcertkey | Where-Object {$_.linkcertkeyname -eq $IntermediateCADetails.certkey}
+	Write-Verbose "The following certificates were found:`n$($LinkedCertificates | Select-Object certkey,linkcertkeyname,serial | Format-Table | Out-String)"
+	ForEach ($LinkedCertificate in $LinkedCertificates) {
+		$payload = @{"certkey"="$($LinkedCertificate.certkey)";}
+		try {
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
+			Write-Host -NoNewLine "Unlinked: "
+			Write-Host -ForeGroundColor Green "$($LinkedCertificate.certkey)"
+		} catch {
+			Write-Warning "Could not unlink certkey `"$($LinkedCertificate.certkey)`""
+		}
+	}
+	$FakeCerts = $CertDetails.sslcertkey | Where-Object {$_.issuer -match $IntermediateCACertKeyName}
+	ForEach ($FakeCert in $FakeCerts) {
+		try {
+			$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type sslcertkey -Resource $($FakeCert.certkey)
+			Write-Host -NoNewLine "Removing: "
+			Write-Host -ForeGroundColor Green "$($FakeCert.certkey)"
+		} catch {
+			Write-Warning "Could not delete certkey `"$($FakeCert.certkey)`" from the netscaler"
+		}
+		$CertFilePath = (split-path $($FakeCert.cert) -Parent).Replace("\","/")
+		$CertFileName = split-path $($FakeCert.cert) -Leaf
+		Write-Host -NoNewLine "Deleted: "
+		Write-Host -ForeGroundColor Green "$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)"
+		$KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\","/")
+		$KeyFileName = split-path $($FakeCert.key) -Leaf
+		Write-Host -NoNewLine "Deleted: "
+		Write-Host -ForeGroundColor Green "$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)"
+		$Arguments = @{"filelocation"="$CertFilePath";}
+		try {
+			$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type systemfile -Resource $CertFileName -Arguments $Arguments
+		} catch {
+			Write-Warning "Could not delete file: `"$CertFileName`" from location: `"$CertFilePath`""
+		}
+		$Arguments = @{"filelocation"="$KeyFilePath";}
+		try {
+			$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type systemfile -Resource $KeyFileName -Arguments $Arguments
+		} catch {
+			Write-Warning "Could not delete file: `"$KeyFileName`" from location: `"$KeyFilePath`""
+		}
+		
+	}
+	$Arguments = @{"filelocation"="/nsconfig/ssl";}
+	$CertFiles = InvokeNSRestApi -Session $NSSession -Method Get -Type systemfile -Arguments $Arguments
+	$CertFilesToRemove = $response.systemfile | Where-Object {$_.filename -match "TST-"}
+	ForEach ($CertFileToRemove in $CertFilesToRemove) {
+		$Arguments = @{"filelocation"="$($CertFileToRemove.filelocation)";}
+		try {
+		$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type systemfile -Resource $($CertFileToRemove.filename) -Arguments $Arguments
+		} catch {
+			Write-Warning "Could not delete file: `"$($CertFileToRemove.filename)`" from location: `"$($CertFileToRemove.filelocation)`""
+		}
+	}
+}
+
+#endregion Remove Test Certificates
