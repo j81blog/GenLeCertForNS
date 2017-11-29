@@ -1,0 +1,16 @@
+# Created by https://www.gitignore.io/api/batch,powershell
+
+### Batch ###
+# BatchFiles
+*.bat
+*.cmd
+*.btm
+
+### PowerShell ###
+# Exclude packaged modules
+*.zip
+
+# Exclude .NET assemblies from source
+*.dll
+
+# End of https://www.gitignore.io/api/batch,powershell
