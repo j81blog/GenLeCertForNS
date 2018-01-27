@@ -560,7 +560,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			Write-Host -ForeGroundColor Green "OK`r`n"
 		} elseif ($ExcepMessage -like "*(404) Not Found*") {
 			Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
-			Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exists!`r`n"
+			Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!`r`n"
 			Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
 			Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
 			Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
@@ -706,7 +706,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		Write-Verbose "Error Details: $($_.Exception.Message)"
 		Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
 		Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter.`n"
-		throw "Error while retreiving IP Address, does not exists?"
+		throw "Error while retreiving IP Address, does not exist?"
 	}
 	
 	$Identifier = $null
@@ -950,7 +950,7 @@ if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCe
 			throw "Could not find/read out the content switch `"$NSCsVipName`" not available?"
 		} finally {
 			if ($ExcepMessage -like "*(404) Not Found*") {
-				Write-Host -ForeGroundColor Red "`nThe Content Switch `"$NSCsVipName`" does NOT exists!"
+				Write-Host -ForeGroundColor Red "`nThe Content Switch `"$NSCsVipName`" does NOT exist!"
 				Exit (1)
 			} elseif ($ExcepMessage -like "*The remote server returned an error*") {
 				Write-Host -ForeGroundColor Red "`nUnknown error found while checking the Content Switch: `"$NSCsVipName`""
