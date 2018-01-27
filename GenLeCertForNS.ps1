@@ -68,7 +68,7 @@
 	Remob=ving ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v0.9.1.beta2
+	Version   : v0.9.2
 	Author    : John Billekens
 	Requires  : PowerShell v3 and up
 	            NetScaler 11.x and up
@@ -198,7 +198,7 @@ param(
 
 #requires -version 3.0
 #requires -runasadministrator
-$ScriptVersion = "v0.9.1.beta2"
+$ScriptVersion = "v0.9.2"
 
 #region Functions
 
@@ -441,6 +441,7 @@ if ($ns10x){
 Write-Verbose "Setting session DATE/TIME variable"
 [datetime]$ScriptDateTime = Get-Date
 [string]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
+[string]$IdentifierDate = $ScriptDateTime.ToString("yyyyMMdd")
 Write-Verbose "Session DATE/TIME variable value: `"$SessionDateTime`""
 
 if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
@@ -696,7 +697,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				throw "ERROR: No valid entry found for DNSName:`"$CN`""
 			}
 			if ($PrimaryIP -is [system.array]){
-				Write-Warning "More than one ip address found`n$($PrimaryIP | Format-Table | Out-String)"
+				Write-Warning "More than one ip address found`n$($PrimaryIP | Format-List | Out-String)"
 				$PrimaryIP = $PrimaryIP[0]
 				Write-Warning "using the first one`"$PrimaryIP`""
 			}
@@ -708,9 +709,11 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		throw "Error while retreiving IP Address, does not exists?"
 	}
 	
+	$Identifier = $null
+	$IdentifierAlias = $null
 	try {
 		Write-Verbose "Find pre-existing registration for `"$CN`""
-		$IdentifierAlias = "DNS-$($CN)"
+		$IdentifierAlias = "DNS-$($CN)-$IdentifierDate"
 		$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
 	} catch {
 		try {
@@ -724,7 +727,6 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			}
 		}
 	}
-	
 	try {
 		if ($Identifier.Uri) {
 			Write-Verbose "Extracting data, checking validation"
@@ -737,18 +739,17 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			Write-Verbose "No URI available to check..."
 		}
 	}catch{
-		Write-Verbose "Someting went wrong with the validation:`n$($response | Format-Table | Out-String)"
+		Write-Verbose "Someting went wrong with the validation:`n$($response | Format-List | Out-String)"
 	}
-
 	Write-Verbose "Checking if current validation is still valid"
 	if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
 		Write-Verbose "Registration for `"$CN`" is still valid"
 		$Validation = $true
-		Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
+		Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-List | Out-String)"
 	} else {
 		Write-Verbose "Registration for `"$CN`" is NOT valid, validation required"
 		$Validation = $false
-		Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
+		Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-List | Out-String)"
 	}
 	Write-Verbose "Storing values for reference"
 	$DNSObjects += [PSCustomObject]@{
@@ -760,7 +761,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		DNSValid = $Validation
 		Alias = $IdentifierAlias
 	}
-	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-Table | Out-String)"
+	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
 }
 
 #endregion Primary DNS
@@ -768,14 +769,14 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 #region SAN
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
+	$DNSRecord = $null
 	Write-Verbose "Checking if SAN entries are available"
 	if ([string]::IsNullOrWhiteSpace($SAN)) {
 		Write-Verbose "No SAN entries found"
-	} elseif (($($SAN.Count) -eq 1) -and ($SAN[0] -eq $CN)) {
-		Write-Verbose "Skipping SAN, CN:`"$CN`" is equal to SAN:`"$($SAN[0])`""
 	} else {
 		Write-Verbose "$($SAN.Count) found, checking each one"
 		foreach ($DNSRecord in $SAN) {
+			Write-Verbose "Start with SAN: `"$DNSRecord`""
 			try {
 				if ($DisableIPCheck) {
 					Write-Verbose "Skipping IP check"
@@ -784,7 +785,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					Write-Verbose "Start basic IP Check for `"$DNSRecord`", trying to get IP Address"
 					$SANIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSRecord -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
 					if ($SANIP -is [system.array]){
-						Write-Warning "More than one ip address found`n$($SANIP | Format-Table | Out-String)"
+						Write-Warning "More than one ip address found`n$($SANIP | Format-List | Out-String)"
 						$SANIP = $SANIP[0]
 						Write-Warning "using the first one`"$SANIP`""
 					}
@@ -823,9 +824,11 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				}
 			}
 			if (-not($SANIP -eq "Skipped")) {
+				$Identifier = $null
+				$IdentifierAlias = $null
 				try {
 					Write-Verbose "Find pre-existing registration for `"$DNSRecord`""
-					$IdentifierAlias = "DNS-$($DNSRecord)"
+					$IdentifierAlias = "DNS-$($DNSRecord)-$IdentifierDate"
 					$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
 				} catch {
 					try {
@@ -839,6 +842,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 						}
 					}
 				}
+				
 				try {
 					if ($Identifier.Uri) {
 						Write-Verbose "Extracting data, checking validation"
@@ -851,8 +855,10 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 						Write-Verbose "No URI available to check..."
 					}
 				}catch{
-					Write-Verbose "Someting went wrong with the validation: $($response | Format-Table | Out-String)"
+					Write-Verbose "Someting went wrong with the validation:`n$($response | Format-Table | Out-String)"
 				}
+				
+				Write-Verbose "Checking if current validation is still valid"
 				if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
 					Write-Verbose "Registration for `"$DNSRecord`" is still valid"
 					$Validation = $true
@@ -873,9 +879,10 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					Alias = $IdentifierAlias
 				}
 			}
+			Write-Verbose "Finished with SAN: `"$DNSRecord`""
 		}
 	}
-	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-Table | Out-String)"
+	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
 }
 
 #endregion SAN
@@ -885,22 +892,22 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$InvalidDNS = $DNSObjects | Where-Object {$_.Status -eq $false}
 	$SkippedDNS = $DNSObjects | Where-Object {$_.IPAddress -eq "Skipped"}
 	if ($InvalidDNS) {
-		Write-Verbose "Invalid DNS object(s):`n$($InvalidDNS | Select-Object DNSName,Status | Format-Table | Out-String)"
-		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
-		$InvalidDNS | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
+		Write-Verbose "Invalid DNS object(s):`n$($InvalidDNS | Select-Object DNSName,Status | Format-List | Out-String)"
+		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
+		$InvalidDNS | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
 		throw "ERROR, invalid (not registered?) DNS Record(s) found!"
 	} else {
 		Write-Verbose "None found, continuing"
 	}
 	if ($SkippedDNS) {
-		Write-Warning "The following DNS object(s) will be skipped:`n$($SkippedDNS | Select-Object DNSName | Format-Table | Out-String)"
+		Write-Warning "The following DNS object(s) will be skipped:`n$($SkippedDNS | Select-Object DNSName | Format-List | Out-String)"
 	} 
 	Write-Verbose "Checking non matching DNS Records"
 	$DNSNoMatch = $DNSObjects | Where-Object {$_.Match -eq $false}
 	if ($DNSNoMatch -and (-not $DisableIPCheck)) {
-		Write-Verbose "$($DNSNoMatch | Select-Object DNSName,Match | Format-Table | Out-String)"
-		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
-		$DNSNoMatch | Select-Object DNSName,IPAddress | Format-Table | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
+		Write-Verbose "$($DNSNoMatch | Select-Object DNSName,Match | Format-List | Out-String)"
+		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
+		$DNSNoMatch | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
 		throw "ERROR: Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))"
 	} elseif ($DisableIPCheck) {
 		Write-Verbose "IP Adressess checking was skipped"
@@ -919,7 +926,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		Write-Verbose "Validation NOT required"
 		$NetScalerActionsRequired = $true
 	} else {
-		Write-Verbose "Validation required for the following objects:`n$($DNSValidationRequired | Select-Object DNSName | Format-Table | Out-String)"
+		Write-Verbose "Validation required for the following objects:`n$($DNSValidationRequired | Select-Object DNSName | Format-List | Out-String)"
 		$NetScalerActionsRequired = $false
 	
 	}
@@ -986,6 +993,21 @@ if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCe
 				$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_service_binding -Payload $payload
 			}
 		}
+		try {
+			Write-Verbose "Configuring NetScaler: Check if Responder Action exists"
+			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderaction -Resource $NSRsaName
+			try {
+				Write-Verbose "Yep it exists, continuing"
+				Write-Verbose "Configuring NetScaler: Change Responder Action to default values"
+				$payload = @{"name"="$NSRsaName";"target"='"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"';}
+				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
+			} catch {
+				throw "Something went wrong with reconfiguring the existing action `"$NSRsaName`", exiting now..."
+			}	
+		} catch {
+			$payload = @{"name"="$NSRsaName";"type"="respondwith";"target"='"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"';}
+			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action add
+		}
 		try { 
 			Write-Verbose "Configuring NetScaler: Check if Responder Policy exists"
 			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderpolicy -Resource $NSRspName
@@ -994,12 +1016,11 @@ if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCe
 				Write-Verbose "Configuring NetScaler: Change Responder Policy to default values"
 				$payload = @{"name"="$NSRspName";"action"="rsa_letsencrypt";"rule"='HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")';}
 				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
+
 			} catch {
 				throw "Something went wrong with reconfiguring the existing policy `"$NSRspName`", exiting now..."
 			}	
 		} catch {
-			$payload = @{"name"="$NSRsaName";"type"="respondwith";"target"='"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"';}
-			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action add
 			$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"='HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")';}
 			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action add
 		} finally {
@@ -1102,6 +1123,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Host -ForeGroundColor White "Verification:"
 	foreach ($DNSObject in $DNSObjects) {
 		$DNSRecord = $DNSObject.DNSName
+		$Challenge = $null
+		$UpdateIdentifier = $null
 		Write-Verbose "Checking validation for `"$DNSRecord`""
 		if ($DNSObject.DNSValid){
 			Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
@@ -1113,7 +1136,12 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			$IdentifierAlias = $DNSObject.Alias
 			try {
 				try {
-					$Challenge = ((ACMESharp\Complete-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -Handler manual -VaultProfile $VaultName).Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
+					$CompletedChallenge = ACMESharp\Complete-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -Handler manual -VaultProfile $VaultName -Force
+					if ($([datetime]$CompletedChallenge.Expires - $(Get-Date)).TotalDays -gt 1) {
+						$Challenge = ($CompletedChallenge.Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
+					} else {
+						
+					}
 				} catch {
 					Write-Verbose "Error Details: $($_.Exception.Message)"
 					throw "Error while creating the Challenge"
@@ -1316,8 +1344,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		$CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
 		if ($SANs) {
 			Write-Verbose "Get certificate with SANs"
-			Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-Table | Out-String)"
-			Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-Table | Out-String)"
+			Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-List | Out-String)"
+			Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-List | Out-String)"
 			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
 				-AlternativeIdentifierRefs @($SANs.Alias) `
 				-Alias $CertificateAlias `
@@ -1370,25 +1398,27 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
 		
 		if ($Production){
-			$CertificateName = "$CertificateName"
-			$CertificateFileName = "$CertificateAlias.crt"
-			$CertificateKeyFileName = "$CertificateAlias.crt.key"
+			$CertificateName = "$($CertificateName.subString(0,31))"
+			$CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
+			$CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
 			$CertificatePfxFileName = "$CertificateAlias.pfx"
 		} else {
-			$CertificateName = "TST-$CertificateName"
-			$CertificateFileName = "TST-$CertificateAlias.crt"
-			$CertificateKeyFileName = "TST-$CertificateAlias.crt.key"
+			$CertificateName = "TST-$($CertificateName.subString(0,27))"
+			$CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
+			$CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
 			$CertificatePfxFileName = "TST-$CertificateAlias.pfx"
 		}
+		Write-Verbose "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
+		
 		$CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
-		Write-Verbose "Certificate: `"$CertificateFileName`""
+		Write-Verbose "Certificate: `"$CertificateFileName`" ($($CertificateFileName.length) max 63)"
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
 		$CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
-		Write-Verbose "Key: `"$CertificateKeyFileName`""
+		Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
 		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName 
 		if ($PfxPassword){
-			Write-Verbose "PFX: `"$CertificatePfxFileName`""
+			Write-Verbose "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
 			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
 		} else {
 			try {
@@ -1453,14 +1483,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			}
 			$NSUpdating = $true
 		} else {
-			Write-Verbose " `"$CertificateName`" is $($CertificateName.Length) long"
-			if ($CertificateName.Length -gt 31) {
-				Write-Verbose "Name is to long, only using the first 31 characters"
-				$CertificateCertKeyName = $CertificateName.subString(0,31)
-			} else {
-				Write-Verbose "CertkeyName is not too long, continuing"
-				$CertificateCertKeyName = $CertificateName
-			}
+			$CertificateCertKeyName = $CertificateName
 			$ExistingCertificateDetails = $CertDetails.sslcertkey | Where-Object {$_.certkey -eq $CertificateCertKeyName}
 			if ($ExistingCertificateDetails) {
 				Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually"
@@ -1480,13 +1503,13 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		Write-Verbose "Finished uploading"
 		if ($NSUpdating) {
 			Write-Verbose "Update the certificate and key to the NetScaler config"
-			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="/nsconfig/ssl/$($CertificateFileName)";"key"="/nsconfig/ssl/$($CertificateKeyFileName)"}
+			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
 			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
 			Write-Verbose "Succeeded"
 	
 		} else {
 			Write-Verbose "Add the certificate and key to the NetScaler config"
-			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="/nsconfig/ssl/$($CertificateFileName)";"key"="/nsconfig/ssl/$($CertificateKeyFileName)"}
+			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
 			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
 			Write-Verbose "Succeeded"
 		}
@@ -1527,12 +1550,12 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
 		$IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.serial -eq $IntermediateCASerial}
 	}
 	$LinkedCertificates = $CertDetails.sslcertkey | Where-Object {$_.linkcertkeyname -eq $IntermediateCADetails.certkey}
-	Write-Verbose "The following certificates were found:`n$($LinkedCertificates | Select-Object certkey,linkcertkeyname,serial | Format-Table | Out-String)"
+	Write-Verbose "The following certificates were found:`n$($LinkedCertificates | Select-Object certkey,linkcertkeyname,serial | Format-List | Out-String)"
 	ForEach ($LinkedCertificate in $LinkedCertificates) {
 		$payload = @{"certkey"="$($LinkedCertificate.certkey)";}
 		try {
 			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
-			Write-Host -NoNewLine "Unlinked: "
+			Write-Host -NoNewLine "NetScaler, unlinked: "
 			Write-Host -ForeGroundColor Green "$($LinkedCertificate.certkey)"
 		} catch {
 			Write-Warning "Could not unlink certkey `"$($LinkedCertificate.certkey)`""
@@ -1542,18 +1565,24 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
 	ForEach ($FakeCert in $FakeCerts) {
 		try {
 			$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type sslcertkey -Resource $($FakeCert.certkey)
-			Write-Host -NoNewLine "Removing: "
+			Write-Host -NoNewLine "NetScaler, removing: "
 			Write-Host -ForeGroundColor Green "$($FakeCert.certkey)"
 		} catch {
 			Write-Warning "Could not delete certkey `"$($FakeCert.certkey)`" from the netscaler"
 		}
 		$CertFilePath = (split-path $($FakeCert.cert) -Parent).Replace("\","/")
+		if ([string]::IsNullOrEmpty($CertFilePath)) {
+			$CertFilePath = "/nsconfig/ssl/"
+		}
 		$CertFileName = split-path $($FakeCert.cert) -Leaf
-		Write-Host -NoNewLine "Deleted: "
+		Write-Host -NoNewLine "NetScaler, deleted: "
 		Write-Host -ForeGroundColor Green "$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)"
 		$KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\","/")
+		if ([string]::IsNullOrEmpty($KeyFilePath)) {
+			$KeyFilePath = "/nsconfig/ssl/"
+		}
 		$KeyFileName = split-path $($FakeCert.key) -Leaf
-		Write-Host -NoNewLine "Deleted: "
+		Write-Host -NoNewLine "NetScaler, deleted: "
 		Write-Host -ForeGroundColor Green "$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)"
 		$Arguments = @{"filelocation"="$CertFilePath";}
 		try {
@@ -1571,12 +1600,15 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
 	}
 	$Arguments = @{"filelocation"="/nsconfig/ssl";}
 	$CertFiles = InvokeNSRestApi -Session $NSSession -Method Get -Type systemfile -Arguments $Arguments
-	$CertFilesToRemove = $response.systemfile | Where-Object {$_.filename -match "TST-"}
+	$CertFilesToRemove = $CertFiles.systemfile | Where-Object {$_.filename -match "TST-"}
 	ForEach ($CertFileToRemove in $CertFilesToRemove) {
 		$Arguments = @{"filelocation"="$($CertFileToRemove.filelocation)";}
 		try {
+		Write-Host -NoNewLine "File deleted: "
 		$response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type systemfile -Resource $($CertFileToRemove.filename) -Arguments $Arguments
+		Write-Host -ForeGroundColor Green "$($CertFileToRemove.filename)"
 		} catch {
+			Write-Host -ForeGroundColor Red "$($CertFileToRemove.filename) (Error, not removed)"
 			Write-Warning "Could not delete file: `"$($CertFileToRemove.filename)`" from location: `"$($CertFileToRemove.filelocation)`""
 		}
 	}
