@@ -65,7 +65,7 @@
 	Cleaning left over configuration from this schript when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -RemoveTestCertificates -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
-	Remob=ving ALL the test certificates from your NetScaler.
+	Removing ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
 	Version   : v0.9.2
