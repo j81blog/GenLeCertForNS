@@ -68,7 +68,7 @@
 	Removing ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v0.9.2
+	Version   : v0.9.3
 	Author    : John Billekens
 	Requires  : PowerShell v3 and up
 	            NetScaler 11.x and up
@@ -198,7 +198,7 @@ param(
 
 #requires -version 3.0
 #requires -runasadministrator
-$ScriptVersion = "v0.9.2"
+$ScriptVersion = "v0.9.3"
 
 #region Functions
 
@@ -1396,25 +1396,50 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		}
 		Write-Verbose "Intermediate: `"$IntermediateCAFileName`""
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
-		
 		if ($Production){
-			$CertificateName = "$($CertificateName.subString(0,31))"
-			$CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
-			$CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
+			if ($CertificateName.length -ge 31) {
+				$CertificateName = "$($CertificateName.subString(0,31))"
+				Write-Verbose "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+			} else {
+				$CertificateName = "$CertificateName"
+				Write-Verbose "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
+			}
+			if ($CertificateAlias.length -ge 59) {
+				$CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
+				Write-Verbose "Certificate (new name): `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
+				$CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
+				Write-Verbose "Key (new name): `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
+			} else {
+				$CertificateFileName = "$($CertificateAlias).crt"
+				Write-Verbose "Certificate: `"$CertificateFileName`" ($($CertificateFileName.length) max 63)"
+				$CertificateKeyFileName = "$($CertificateAlias).key"
+				Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
+			}
 			$CertificatePfxFileName = "$CertificateAlias.pfx"
 		} else {
-			$CertificateName = "TST-$($CertificateName.subString(0,27))"
-			$CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
-			$CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
+			if ($CertificateName.length -ge 27) {
+				$CertificateName = "TST-$($CertificateName.subString(0,27))"
+				Write-Verbose "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+			} else {
+				$CertificateName = "TST-$($CertificateName)"
+				Write-Verbose "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
+			}
+			if ($CertificateAlias.length -ge 55) {
+				$CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
+				Write-Verbose "Certificate (new name): `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
+				$CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
+				Write-Verbose "Key (new name): `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
+			} else {
+				$CertificateFileName = "TST-$($CertificateAlias).crt"
+				Write-Verbose "Certificate: `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
+				$CertificateKeyFileName = "TST-$($CertificateAlias).key"
+				Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
+			}
 			$CertificatePfxFileName = "TST-$CertificateAlias.pfx"
 		}
-		Write-Verbose "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
-		
 		$CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
-		Write-Verbose "Certificate: `"$CertificateFileName`" ($($CertificateFileName.length) max 63)"
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
 		$CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
-		Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
 		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
 		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName 
 		if ($PfxPassword){
@@ -1426,7 +1451,6 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				$Assembly = Add-Type -AssemblyName System.Web
 				$PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length,2)
 				Write-Warning "No Password was specified, so a random password was generated!"
-				
 				Write-Host -ForeGroundColor Yellow "`n***********************"
 				Write-Host -ForeGroundColor Yellow "*   PFX Password:     *"
 				Write-Host -ForeGroundColor Yellow "*                     *"
