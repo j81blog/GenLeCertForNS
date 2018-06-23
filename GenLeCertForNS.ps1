@@ -68,7 +68,7 @@
 	Removing ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v0.9.3
+	Version   : v0.9.4
 	Author    : John Billekens
 	Requires  : PowerShell v3 and up
 	            NetScaler 11.x and up
@@ -108,17 +108,27 @@ param(
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 		[alias("Password")]
-		[string]$NSPassword,
+		[ValidateScript({
+			if ($_ -is [SecureString]) {
+				return $true
+			} elseif ($_ -is [string]) {
+				$Script:NSPassword=ConvertTo-SecureString -String $_ -AsPlainText -Force
+				return $true
+			} else {
+				Write-Error "You passed an unexpected object type for the credential (-NSPassword)"
+			}
+		})][alias("Password")]
+		[object]$NSPassword,
 
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 		[ValidateScript({
 			if ($_ -is [System.Management.Automation.PSCredential]) {
-				$true
+				return $true
 			} elseif ($_ -is [string]) {
 				$Script:Credential=Get-Credential -Credential $_
-				$true
+				return $true
 			} else {
 				Write-Error "You passed an unexpected object type for the credential (-NSCredential)"
 			}
@@ -166,7 +176,19 @@ param(
 		[string]$CertDir,
 		
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-		[string]$PfxPassword = $null,
+		[ValidateScript({
+			if (([string]::IsNullOrEmpty($_))) {
+				$Script:PfxPassword=$null
+				return $true
+			} elseif ($_ -is [SecureString]) {
+				return $true
+			} elseif ($_ -is [string]) {
+				$Script:PfxPassword=ConvertTo-SecureString -String $_ -AsPlainText -Force
+				return $true
+			} else {
+				Write-Error "You passed an unexpected object type for the credential (-PfxPassword)"
+			}
+		})][object]$PfxPassword = $null,
 		
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
 		[ValidateNotNullOrEmpty()]
@@ -448,7 +470,10 @@ if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	Write-Verbose "Using NSCredential"
 } elseif ((-not([string]::IsNullOrWhiteSpace($NSUserName))) -and (-not([string]::IsNullOrWhiteSpace($NSPassword)))){
 	Write-Verbose "Using NSUsername / NSPassword"
-	[pscredential]$NSCredential = new-object -typename System.Management.Automation.PSCredential -argumentlist $NSUserName, $(ConvertTo-SecureString -String $NSPassword -AsPlainText -Force)
+	if (-not ($NSPassword -is [securestring])){
+		[securestring]$NSPassword = ConvertTo-SecureString -String $NSPassword -AsPlainText -Force
+	}
+	[pscredential]$NSCredential = New-Object System.Management.Automation.PSCredential ($NSUserName, $NSPassword)
 } else {
 	Write-Verbose "No valid username/password or credential specified. Enter a username and password, e.g. `"nsroot`""
 	[pscredential]$NSCredential = Get-Credential -Message "NetScaler username and password:"
@@ -488,7 +513,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
 				Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
 				Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
-				Start "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
+				Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
 				Exit (1)
 			} else {
 				try {
@@ -520,7 +545,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
 					Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
 					Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
-					Start "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
+					Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
 					Exit (1)
 				}
 			}
@@ -733,7 +758,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
 			#$result = $response  | Select-Object status,expires
 			if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
-				$httpIdentifier = ($response | select -expand Challenges | Where-Object {$_.type -eq "http-01"})
+				$httpIdentifier = ($response | Select-Object -expand Challenges | Where-Object {$_.type -eq "http-01"})
 			}
 		} else {
 			Write-Verbose "No URI available to check..."
@@ -849,7 +874,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 						$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
 						#$result = $response  | Select-Object status,expires
 						if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
-							$httpIdentifier = ($response | select -expand Challenges | Where-Object {$_.type -eq "http-01"})
+							$httpIdentifier = ($response | Select-Object -expand Challenges | Where-Object {$_.type -eq "http-01"})
 						}
 					} else {
 						Write-Verbose "No URI available to check..."
@@ -893,8 +918,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$SkippedDNS = $DNSObjects | Where-Object {$_.IPAddress -eq "Skipped"}
 	if ($InvalidDNS) {
 		Write-Verbose "Invalid DNS object(s):`n$($InvalidDNS | Select-Object DNSName,Status | Format-List | Out-String)"
-		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
-		$InvalidDNS | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
+		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | ForEach-Object {Write-Host -ForeGroundColor Green "$_"}
+		$InvalidDNS | Select-Object DNSName,IPAddress | Format-List | Out-String | ForEach-Object {Write-Host -ForeGroundColor Red "$_"}
 		throw "ERROR, invalid (not registered?) DNS Record(s) found!"
 	} else {
 		Write-Verbose "None found, continuing"
@@ -906,8 +931,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$DNSNoMatch = $DNSObjects | Where-Object {$_.Match -eq $false}
 	if ($DNSNoMatch -and (-not $DisableIPCheck)) {
 		Write-Verbose "$($DNSNoMatch | Select-Object DNSName,Match | Format-List | Out-String)"
-		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Green "$_"}
-		$DNSNoMatch | Select-Object DNSName,IPAddress | Format-List | Out-String | Foreach {Write-Host -ForeGroundColor Red "$_"}
+		$DNSObjects[0] | Select-Object DNSName,IPAddress | Format-List | Out-String | ForEach-Object {Write-Host -ForeGroundColor Green "$_"}
+		$DNSNoMatch | Select-Object DNSName,IPAddress | Format-List | Out-String | ForEach-Object {Write-Host -ForeGroundColor Red "$_"}
 		throw "ERROR: Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))"
 	} elseif ($DisableIPCheck) {
 		Write-Verbose "IP Adressess checking was skipped"
@@ -987,7 +1012,6 @@ if ((-not ($CleanNS)) -and ($NetScalerActionsRequired) -and (-not ($RemoveTestCe
 			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver_service_binding -Resource $NSLbName
 			if ($response.lbvserver_service_binding.servicename -eq $NSSvcName) {
 				Write-Verbose "LB Service binding is ok"
-				$SvcConfigure = $True
 			} else {
 				$payload = @{"name"="$NSLbName";"servicename"="$NSSvcName";}
 				$response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_service_binding -Payload $payload
@@ -1159,7 +1183,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				Start-Sleep -Seconds 1
 				Write-Verbose "Start Submitting Challenge"
 				try {
-					$SubmittedChallenge = ACMESharp\Submit-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName
+					ACMESharp\Submit-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName | Out-Null
 				} catch {
 					Write-Verbose "Error Details: $($_.Exception.Message)"
 					throw "Error while submitting the Challenge"
@@ -1353,19 +1377,19 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				-VaultProfile $VaultName
 		} else {
 			Write-Verbose "Get single DNS Name certificate"
-			Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | fl * | Out-String)"
+			Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | Format-List * | Out-String)"
 			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
 				-Alias $CertificateAlias `
 				-Generate `
 				-VaultProfile $VaultName
 		}
 		Write-Verbose "Submit Certificate request"
-		$SubmittedCertificate = ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName
+		ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Out-Null
 	} catch {
 		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
 	}
 	$i = 0
-	while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | select IssuerSerialNumber)) {
+	while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Select-Object IssuerSerialNumber)) {
 		$i++
 		$imax = 120
 		if ($i -ge $imax) {
@@ -1377,7 +1401,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	
 	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
 	Write-Verbose "Create directory `"$CertificateDirectory`" for storing the new certificates"
-	$output = New-Item $CertificateDirectory -ItemType directory -force
+	New-Item $CertificateDirectory -ItemType directory -force | Out-Null
 	if (Test-Path $CertificateDirectory){
 		if ($Production){
 			$CertificateName = "$($ScriptDateTime.ToString("yyyyMMdd"))-$cn"
@@ -1448,7 +1472,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		} else {
 			try {
 				$length=15
-				$Assembly = Add-Type -AssemblyName System.Web
+				Add-Type -AssemblyName System.Web | Out-Null
 				$PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length,2)
 				Write-Warning "No Password was specified, so a random password was generated!"
 				Write-Host -ForeGroundColor Yellow "`n***********************"
