@@ -107,7 +107,6 @@ param(
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
-		[alias("Password")]
 		[ValidateScript({
 			if ($_ -is [SecureString]) {
 				return $true
@@ -117,8 +116,8 @@ param(
 			} else {
 				Write-Error "You passed an unexpected object type for the credential (-NSPassword)"
 			}
-		})][alias("Password")]
-		[object]$NSPassword,
+		})]
+		[alias("Password")][object]$NSPassword,
 
 		[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 		[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
