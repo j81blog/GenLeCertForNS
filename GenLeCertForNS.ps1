@@ -1401,16 +1401,15 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
 	Write-Verbose "Create directory `"$CertificateDirectory`" for storing the new certificates"
 	New-Item $CertificateDirectory -ItemType directory -force | Out-Null
+	$CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$cn"
 	if (Test-Path $CertificateDirectory){
 		if ($Production){
-			$CertificateName = "$($ScriptDateTime.ToString("yyyyMMdd"))-$cn"
 			Write-Verbose "Writing production certificates"
 			$IntermediateCACertKeyName = "Lets Encrypt Authority X3-int"
 			$IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
 			$IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
 			$IntermediateCASerial = "0a0141420000015385736a0b85eca708"
 		} else {
-			$CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$cn"
 			Write-Verbose "Writing test/staging certificates"
 			$IntermediateCACertKeyName = "Fake LE Intermediate X1-int"
 			$IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
