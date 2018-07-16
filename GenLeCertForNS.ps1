@@ -46,10 +46,10 @@
 	Set the Certificate KeyLength, default: 2048
 .PARAMETER EmailAddress
 	The email address used to request the certificates and receive a notification when the certificates (almost) expires
-.PARAMETER cn
+.PARAMETER CN
 	(Common Name) The Primary (first) dns record for the certificaten
 	Example: "domain.com"
-.PARAMETER san
+.PARAMETER SAN
 	(Subject Alternate Name) every following domain listed in this certificate. sepatated via an comma , and between quotes "".
 	Example: "sts.domain.com","www.domain.com","vpn.domain.com"
 	Example (Wildcard): "*.domain.com"
@@ -71,6 +71,9 @@
 	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
 	Generate a (Production)certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler. Also Cleaning the vault on the NetScaler the content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
+	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -WildCard -Production -Verbose
+	Generate a (Production) WildCard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler.
+.EXAMPLE
 	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
 	Cleaning left over configuration from this schript when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
 .EXAMPLE
@@ -85,12 +88,12 @@
 	            Run As Administrator
 	            ACMESharp 0.9.1.326 (can be installed via this script) if not using WildCard certificates
 				Posh-ACME 2.5.0 (can be installed via this script) if using WildCard certificates
-				.NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
+				Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
 .LINK
 	https://blog.j81.nl
 #>
 
-[cmdletbinding(DefaultParametersetName="ConfigNetScaler")]
+[cmdletbinding(DefaultParametersetName="Help")]
 param(
 	[Parameter(ParameterSetName="Help",Mandatory=$false)]
 	[alias("h")]
@@ -473,10 +476,9 @@ function Connect-NetScaler {
 #endregion Functions
 
 #region Help
-
-if($Help){
-	Write-Verbose "Generating help for `"$ScriptFilename`""
-	Get-Help "$ScriptFilename" -Full
+if($Help -or ($args.Count -eq 0)){
+	Write-Verbose "Displaying the Detailed help info for: `"$($MyInvocation.MyCommand.Name)`""
+	Get-Help $MyInvocation.MyCommand.Path -Detailed
 	Exit(0)
 }
 
