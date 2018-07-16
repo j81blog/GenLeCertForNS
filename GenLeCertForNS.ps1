@@ -135,8 +135,8 @@ param(
 		} else {
 			throw "You passed an unexpected object type for the credential (-NSPassword)"
 		}
-	})]
-	[alias("Password")][object]$NSPassword,
+	})][alias("Password")]
+	[object]$NSPassword,
 
 	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
@@ -201,19 +201,10 @@ param(
 			
 	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
 	[ValidateScript({
-		try{
-			if([int32]::TryParse(($_/128),[ref]2)) {
-				$out=[int32]::Parse(($_/128))
-			} else {
-				throw "$_ is not a valid keysize, must be divisible by 128 and must be between 2048-4096"
-			}
-			if (($out -lt 16) -or ($out -gt 32)) {
-				throw "Key size must be between 2048-4096"
-			} else {
-				$true
-			}
-		} catch {
-			throw "$_ is not a valid keysize, must be divisible by 128 and must be between 2048-4096"
+		if($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
+			throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
+		} else {
+			$true
 		}
 	})][int32]$KeyLength = 2048,	
 	
@@ -479,314 +470,6 @@ function Connect-NetScaler {
 	}
 }
 
-function ConvertTo-Jwk {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory,Position=0,ValueFromPipeline)]
-        [Security.Cryptography.AsymmetricAlgorithm]$Key,
-        [switch]$PublicOnly,
-        [switch]$AsJson,
-        [switch]$AsPrettyJson
-    )
-
-    # RFC 7517 - JSON Web Key (JWK)
-    # https://tools.ietf.org/html/rfc7517
-
-    # Support enough of a subset of RFC 7517 to implement the ACME v2
-    # protocol.
-    # https://tools.ietf.org/html/draft-ietf-acme-acme-12
-
-    # This basically includes RSA keys 2048-4096 bits and EC keys utilizing
-    # P-256, P-384, or P-521 curves.
-
-    # Things to remember:
-    # 'kty' is case-sensitive per
-    # https://tools.ietf.org/html/rfc7517#section-4.1
-    # Some things using JWKs require keys to be in alphabetical order. So we might
-    # as well just always output them as such.
-
-    Process {
-
-        if ($Key -is [Security.Cryptography.RSA]) {
-
-            if ($PublicOnly -Or $Key.PublicOnly) {
-                # grab the public parameters only
-                $keyParams = $Key.ExportParameters($false)
-                $jwkObj = $keyParams | Select-Object `
-                    @{L='e';  E={ConvertTo-Base64Url $_.Exponent}},
-                    @{L='kty';E={'RSA'}},
-                    @{L='n';  E={ConvertTo-Base64Url $_.Modulus}}
-            } else {
-                # grab all parameters
-                $keyParams = $Key.ExportParameters($true)
-                $jwkObj = $keyParams | Select-Object `
-                    @{L='d';  E={ConvertTo-Base64Url $_.D}},
-                    @{L='dp'; E={ConvertTo-Base64Url $_.DP}},
-                    @{L='dq'; E={ConvertTo-Base64Url $_.DQ}},
-                    @{L='e';  E={ConvertTo-Base64Url $_.Exponent}},
-                    @{L='kty';E={'RSA'}},
-                    @{L='n';  E={ConvertTo-Base64Url $_.Modulus}},
-                    @{L='p';  E={ConvertTo-Base64Url $_.P}},
-                    @{L='q';  E={ConvertTo-Base64Url $_.Q}},
-                    @{L='qi'; E={ConvertTo-Base64Url $_.InverseQ}}
-            }
-
-        } elseif ($Key -is [Security.Cryptography.ECDsa]) {
-
-            # For all curves currently supported by RFC 7518, the 'crv' value is 'P-<key size'
-            # https://tools.ietf.org/html/rfc7518#section-6.2.1.1
-            $crv = "P-$($Key.KeySize)"
-
-            # since there's no PublicOnly property, we have to fake it by trying to export
-            # the private parameters and catching the error
-            try {
-                $Key.ExportParameters($true) | Out-Null
-                $noPrivate = $false
-            } catch { $noPrivate = $true }
-
-            if ($PublicOnly -or $noPrivate) {
-                $keyParams = $Key.ExportParameters($false)
-                $jwkObj = $keyParams | Select-Object `
-                    @{L='crv';E={$crv}},
-                    @{L='kty';E={'EC'}},
-                    @{L='x';  E={ConvertTo-Base64Url $_.Q.X}},
-                    @{L='y';  E={ConvertTo-Base64Url $_.Q.Y}}
-            } else {
-                $keyParams = $Key.ExportParameters($true)
-                $jwkObj = $keyParams | Select-Object `
-                    @{L='crv';E={$crv}},
-                    @{L='d';  E={ConvertTo-Base64Url $_.D}},
-                    @{L='kty';E={'EC'}},
-                    @{L='x';  E={ConvertTo-Base64Url $_.Q.X}},
-                    @{L='y';  E={ConvertTo-Base64Url $_.Q.Y}}
-            }
-
-        } else {
-            throw 'Unsupported key type'
-        }
-
-        if ($AsPrettyJson) {
-            return ($jwkObj | ConvertTo-Json)
-        } elseif ($AsJson) {
-            return ($jwkObj | ConvertTo-Json -Compress)
-        } else {
-            return $jwkObj
-        }
-
-    }
-
-}
-
-function ConvertTo-Base64Url {
-    [CmdletBinding()]
-    [OutputType('System.String')]
-    param(
-        [Parameter(ParameterSetName='String',Mandatory,Position=0,ValueFromPipeline)]
-        [AllowEmptyString()]
-        [string]$Text,
-        [Parameter(ParameterSetName='String')]
-        [switch]$FromBase64,
-        [Parameter(ParameterSetName='Bytes',Mandatory,Position=0)]
-        [AllowEmptyCollection()]
-        [byte[]]$Bytes
-    )
-
-    Process {
-
-        if (!$FromBase64) {
-
-            # get a byte array from the input string
-            if ($PSCmdlet.ParameterSetName -eq 'String') {
-                $Bytes = [Text.Encoding]::UTF8.GetBytes($Text)
-            }
-
-            # standard base64 encoder
-            $s = [Convert]::ToBase64String($Bytes)
-
-        } else {
-            # $Text is already Base64 encoded, we just need the Url'ized version
-            $s = $Text
-        }
-
-        # remove trailing '='s
-        $s = $s.Split('=')[0]
-
-        # 62nd and 63rd char of encoding
-        $s = $s.Replace('+','-').Replace('/','_')
-
-        return $s
-
-    }
-
-}
-
-function ConvertFrom-Jwk {
-    [CmdletBinding(DefaultParameterSetName='JSON')]
-    [OutputType('System.Security.Cryptography.AsymmetricAlgorithm')]
-    param(
-        [Parameter(ParameterSetName='JSON',Mandatory,Position=0,ValueFromPipeline)]
-        [string]$JwkJson,
-        [Parameter(ParameterSetName='Object',Mandatory,Position=0,ValueFromPipeline)]
-        [pscustomobject]$Jwk
-    )
-
-    # RFC 7515 - JSON Web Key (JWK)
-    # https://tools.ietf.org/html/rfc7517
-
-    # Support enough of a subset of RFC 7515 to implement the ACME v2
-    # protocol.
-    # https://tools.ietf.org/html/draft-ietf-acme-acme-12
-
-    # This basically includes RSA keys 2048-4096 bits and EC keys utilizing
-    # P-256, P-384, or P-521 curves.
-
-    Process {
-
-        if ($PSCmdlet.ParameterSetName -eq 'JSON') {
-            try {
-                $Jwk = $JwkJson | ConvertFrom-Json
-            } catch { throw }
-        }
-
-        if ('kty' -notin $Jwk.PSObject.Properties.Name) {
-            throw "Invalid JWK. No 'kty' element found."
-        }
-
-        # create a KeyParameters object from the values given for each key type
-        switch ($Jwk.kty) {
-
-            'RSA' {
-                $keyParams = New-Object Security.Cryptography.RSAParameters
-
-                # make sure we have the required public key parameters per
-                # https://tools.ietf.org/html/rfc7518#section-6.3.1
-                $hasE = ![string]::IsNullOrWhiteSpace($Jwk.e)
-                $hasN = ![string]::IsNullOrWhiteSpace($Jwk.n)
-                if ($hasE -and $hasN) {
-                    $keyParams.Exponent = $Jwk.e  | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.Modulus  = $Jwk.n  | ConvertFrom-Base64Url -AsByteArray
-                } else {
-                    throw "Invalid RSA JWK. Missing one or more public key parameters."
-                }
-
-                # Add the private key parameters if they were included
-                # Per https://tools.ietf.org/html/rfc7518#section-6.3.2,
-                # 'd' is the only required private parameter. The rest SHOULD
-                # be included and if any *are* included then they all MUST be included.
-                # HOWEVER, Microsoft's RSA implementation either can't or won't create
-                # a private key unless all (d,p,q,dp,dq,qi) are included.
-                $hasD = ![string]::IsNullOrWhiteSpace($Jwk.D)
-                $hasP = ![string]::IsNullOrWhiteSpace($Jwk.P)
-                $hasQ = ![string]::IsNullOrWhiteSpace($Jwk.Q)
-                $hasDP = ![string]::IsNullOrWhiteSpace($Jwk.DP)
-                $hasDQ = ![string]::IsNullOrWhiteSpace($Jwk.DQ)
-                $hasQI = ![string]::IsNullOrWhiteSpace($Jwk.QI)
-                if ($hasD -and $hasP -and $hasQ -and $hasDP -and $hasDQ -and $hasQI) {
-                    $keyParams.D        = $Jwk.d  | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.P        = $Jwk.p  | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.Q        = $Jwk.q  | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.DP       = $Jwk.dp | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.DQ       = $Jwk.dq | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams.InverseQ = $Jwk.qi | ConvertFrom-Base64Url -AsByteArray
-                } elseif ($hasD -or $hasP -or $hasQ -or $hasDP -or $hasDQ -or $hasQI) {
-                    throw "Invalid RSA JWK. Incomplete set of private key parameters."
-                }
-
-                # create the key
-                $key = New-Object Security.Cryptography.RSACryptoServiceProvider
-                $key.ImportParameters($keyParams)
-                break;
-            }
-
-            'EC' {
-                # check for a valid curve
-                if ('crv' -notin $Jwk.PSObject.Properties.Name) {
-                    throw "Invalid JWK. No 'crv' found for key type EC."
-                }
-                $Curve = switch ($jwk.crv) {
-                    'P-256' { [Security.Cryptography.ECCurve+NamedCurves]::nistP256; break }
-                    'P-384' { [Security.Cryptography.ECCurve+NamedCurves]::nistP384; break }
-                    'P-521' { [Security.Cryptography.ECCurve+NamedCurves]::nistP521; break }
-                    default { throw "Unsupported JWK curve (crv) found." }
-                }
-
-                # make sure we have the required public key parameters per
-                # https://tools.ietf.org/html/rfc7518#section-6.2.1
-                $hasX = ![string]::IsNullOrWhiteSpace($Jwk.x)
-                $hasY = ![string]::IsNullOrWhiteSpace($Jwk.y)
-                if ($hasX -and $hasY) {
-                    $Q = New-Object Security.Cryptography.ECPoint
-                    $Q.X = $Jwk.x | ConvertFrom-Base64Url -AsByteArray
-                    $Q.Y = $Jwk.y | ConvertFrom-Base64Url -AsByteArray
-                    $keyParams = New-Object Security.Cryptography.ECParameters
-                    $keyParams.Q = $Q
-                    $keyParams.Curve = $Curve
-                } else {
-                    throw "Invalid EC JWK. Missing one or more public key parameters."
-                }
-
-                # add the private key parameter
-                if (![string]::IsNullOrWhiteSpace($Jwk.d)) {
-                    $keyParams.D = $Jwk.d | ConvertFrom-Base64Url -AsByteArray
-                }
-
-                # create the key
-                $key = [Security.Cryptography.ECDsa]::Create()
-                $key.ImportParameters($keyParams)
-                break;
-            }
-            default {
-                throw "Unsupported JWK key type (kty) found."
-            }
-        }
-
-        # return the key
-        return $key
-    }
-}
-
-function ConvertFrom-Base64Url {
-    [CmdletBinding()]
-    [OutputType('System.String', ParameterSetName='String')]
-    [OutputType('System.Byte[]', ParameterSetName='Bytes')]
-    param(
-        [Parameter(ParameterSetName='Bytes',Mandatory,Position=0,ValueFromPipeline)]
-        [Parameter(ParameterSetName='String',Mandatory,Position=0,ValueFromPipeline)]
-        [AllowEmptyString()]
-        [string]$Base64Url,
-        [Parameter(ParameterSetName='Bytes',Mandatory)]
-        [switch]$AsByteArray
-    )
-
-    Process {
-
-        # short circuit on empty strings
-        if ($Base64Url -eq [string]::Empty) {
-            return [string]::Empty
-        }
-
-        # put the standard unsafe characters back
-        $s = $Base64Url.Replace('-', '+').Replace('_', '/')
-
-        # put the padding back
-        switch ($s.Length % 4) {
-            0 { break; }             # no padding needed
-            2 { $s += '=='; break; } # two pad chars
-            3 { $s += '='; break; }  # one pad char
-            default { throw "Invalid Base64Url string" }
-        }
-
-        # convert it using standard base64 stuff
-        if ($AsByteArray) {
-            return [Convert]::FromBase64String($s)
-        } else {
-            return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s))
-        }
-
-    }
-
-}
-
 #endregion Functions
 
 #region Help
@@ -823,11 +506,32 @@ Write-Verbose "Script version: $ScriptVersion"
 if ($ns10x){
 	Write-Verbose "ns10x parameter used, some options are now disabled."
 }
+
+if ($WildCard){
+	Write-Verbose "The WildCard parameter is selected"
+} else {
+	$WildCard = $false
+}
+
 Write-Verbose "Setting session DATE/TIME variable"
 [datetime]$ScriptDateTime = Get-Date
 [string]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
 [string]$IdentifierDate = $ScriptDateTime.ToString("yyyyMMdd")
 Write-Verbose "Session DATE/TIME variable value: `"$SessionDateTime`""
+
+if (-not $PfxPassword){
+	try {
+		$length=15
+		Add-Type -AssemblyName System.Web | Out-Null
+		$PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length,2)
+		$PfxPasswordGenerated = $true
+	} catch {
+		Write-Verbose "An error occured while generating a Password."
+	}
+} else {
+	$PfxPasswordGenerated = $false
+}
+
 
 if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	Write-Verbose "Using NSCredential"
@@ -852,7 +556,7 @@ if(-not ([string]::IsNullOrWhiteSpace($SAN))){
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	if ($WildCard) {
-		Write-Verbose "The WildCard parameter is selected, Loading the Posh-ACME Modules"
+		Write-Verbose "Try loading the Posh-ACME Modules"
 		if (-not(Get-Module Posh-ACME)){
 			try {
 				$ACMEVersions = (get-Module -Name Posh-ACME -ListAvailable).Version
@@ -1086,8 +790,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))-and ($WildCard)) {
 		$BaseService = "LE_STAGE"
 		Write-Verbose "Using the staging service for test certificates"
 	}
-	Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
 	Posh-ACME\Set-PAServer $BaseService
+	$PAServer = Posh-ACME\Get-PAServer -Refresh
 	Write-Verbose "All account data is being saved to `"$($env:LOCALAPPDATA)\Posh-ACME`""
 }
 #endregion Services
@@ -1128,46 +832,47 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
 	Write-Host -ForeGroundColor White "By running this script you agree with the terms specified by Let's Encrypt."
-	if ($WildCard) {
-		try {
-			Write-Verbose "Try to retreive the existing Registration"
-			$Registration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh
-			Set-PAAccount -ID $Registration.id
-			if ($Registration.Contact -contains "mailto:$($EmailAddress)"){
-				Write-Verbose "Existing registration found, no changes necessary"
-			} else {
-				Write-Verbose "Current registration `"$($Registration.Contacts)`" is not equal to `"$EmailAddress`", setting new registration"
-				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
-			}
-		} catch {
-			Write-Verbose "Setting new registration to `"$EmailAddress`""
-			try {
-				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
-				Write-Verbose "New registration successfull"
-			} catch {
-				Write-Verbose "Error New registration failed!"
-				Write-Verbose "Error Details: $($_.Exception.Message)"
-				Write-Host -ForeGroundColor Red "`nError New registration failed!"
-			}
-		}
-		try {
-			Set-PAAccount -ID $Registration.id | out-null
-			Write-Verbose "Account $($Registration.id) set as default"
-		} catch {
-			Write-Verbose "Could not set default account"
-			Write-Verbose "Error Details: $($_.Exception.Message)"
-		}
-		if (-not ($Registration.Contact -contains "mailto:$($EmailAddress)")) {
-			throw "User registration failed"
-			exit(1)
-		}
-		if ($Registration.status -ne "valid"){
-			 throw "Account status is $($Account.status)"
-			 exit(1)
-		} else {
-			Write-Verbose "Registration ID: $($Registration.id), Status: $($Registration.status)"
-		}
-	} else {
+#	if ($WildCard) {
+#		try {
+#			Write-Verbose "Try to retreive the existing Registration"
+#			$Registration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh
+#			Set-PAAccount -ID $Registration.id
+#			if ($Registration.Contact -contains "mailto:$($EmailAddress)"){
+#				Write-Verbose "Existing registration found, no changes necessary"
+#			} else {
+#				Write-Verbose "Current registration `"$($Registration.Contacts)`" is not equal to `"$EmailAddress`", setting new registration"
+#				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
+#			}
+#		} catch {
+#			Write-Verbose "Setting new registration to `"$EmailAddress`""
+#			try {
+#				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
+#				Write-Verbose "New registration successfull"
+#			} catch {
+#				Write-Verbose "Error New registration failed!"
+#				Write-Verbose "Error Details: $($_.Exception.Message)"
+#				Write-Host -ForeGroundColor Red "`nError New registration failed!"
+#			}
+#		}
+#		try {
+#			Set-PAAccount -ID $Registration.id | out-null
+#			Write-Verbose "Account $($Registration.id) set as default"
+#		} catch {
+#			Write-Verbose "Could not set default account"
+#			Write-Verbose "Error Details: $($_.Exception.Message)"
+#		}
+#		if (-not ($Registration.Contact -contains "mailto:$($EmailAddress)")) {
+#			throw "User registration failed"
+#			exit(1)
+#		}
+#		if ($Registration.status -ne "valid"){
+#			 throw "Account status is $($Account.status)"
+#			 exit(1)
+#		} else {
+#			Write-Verbose "Registration ID: $($Registration.id), Status: $($Registration.status)"
+#		}
+#	} else {
+	if (-not $WildCard) {
 		try {
 			Write-Verbose "Retreive existing Registration"
 			$Registration = ACMESharp\Get-ACMERegistration -VaultProfile $VaultName
@@ -1183,6 +888,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			$Registration = ACMESharp\New-ACMERegistration -VaultProfile $VaultName -Contacts "mailto:$($EmailAddress)" -AcceptTos
 		}
 		Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($Registration.TosLinkUri)`n`n`n"
+	} else {
+		Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($PAServer.meta.termsOfService)`n`n`n"
 	}
 }
 
@@ -1273,6 +980,21 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 		SAN = $false
 		DNSValid = $Validation
 		Alias = $IdentifierAlias
+		WildCard = $WildCard
+	}
+	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
+} elseif ($WildCard) {
+	Write-Verbose "Validating DNS record(s) not necessary"
+	$DNSObjects = @()
+	$DNSObjects += [PSCustomObject]@{
+		DNSName = $CN
+		IPAddress = "0.0.0.0"
+		Status = $true
+		Match = $null
+		SAN = $false
+		DNSValid = $false
+		Alias = $null
+		WildCard = $WildCard
 	}
 	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
 }
@@ -1281,7 +1003,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 
 #region SAN
 
-if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard)) {
+if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$DNSRecord = $null
 	Write-Verbose "Checking if SAN entries are available"
 	if ([string]::IsNullOrWhiteSpace($SAN)) {
@@ -1289,37 +1011,42 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 	} else {
 		Write-Verbose "$($SAN.Count) found, checking each one"
 		foreach ($DNSRecord in $SAN) {
-			Write-Verbose "Start with SAN: `"$DNSRecord`""
-			try {
-				if ($DisableIPCheck) {
-					Write-Verbose "Skipping IP check"
-					$SANIP = "NoIPCheck"
-				} else {
-					Write-Verbose "Start basic IP Check for `"$DNSRecord`", trying to get IP Address"
-					$SANIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSRecord -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
-					if ($SANIP -is [system.array]){
-						Write-Warning "More than one ip address found`n$($SANIP | Format-List | Out-String)"
-						$SANIP = $SANIP[0]
-						Write-Warning "using the first one`"$SANIP`""
+			if (-not $WildCard){
+				Write-Verbose "Start with SAN: `"$DNSRecord`""
+				try {
+					if ($DisableIPCheck) {
+						Write-Verbose "Skipping IP check"
+						$SANIP = "NoIPCheck"
+					} else {
+						Write-Verbose "Start basic IP Check for `"$DNSRecord`", trying to get IP Address"
+						$SANIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSRecord -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
+						if ($SANIP -is [system.array]){
+							Write-Warning "More than one ip address found`n$($SANIP | Format-List | Out-String)"
+							$SANIP = $SANIP[0]
+							Write-Warning "using the first one`"$SANIP`""
+						}
+						Write-Verbose "Finished, Result: $SANIP"
 					}
-					Write-Verbose "Finished, Result: $SANIP"
+					
+				} catch {
+					Write-Verbose "Error Details: $($_.Exception.Message)"
+					Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
+					Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
+					Write-Host -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped`n"
+					$SANIP = "Skipped"
 				}
-				
-			} catch {
-				Write-Verbose "Error Details: $($_.Exception.Message)"
-				Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
-				Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
-				Write-Host -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped`n"
-				$SANIP = "Skipped"
 			}
-			if ([string]::IsNullOrWhiteSpace($SANIP)) {
+			if ([string]::IsNullOrWhiteSpace($SANIP) -and (-not $WildCard)) {
 				Write-Verbose "No valid entry found for DNSName:`"$DNSRecord`""
 				$SANMatch = $false
 				$SANStatus = $false
 			} else {
 				Write-Verbose "Valid entry found"
 				$SANStatus = $true
-				if ($SANIP -eq "NoIPCheck") {
+				if ($WildCard) {
+					Write-Verbose "WildCard certificate, so IP address checking was disabled"
+					$SANMatch = $true
+				} elseif ($SANIP -eq "NoIPCheck") {
 					Write-Verbose "IP address checking was disabled"
 					$SANMatch = $true
 				} elseif ($SANIP -eq "Skipped") {
@@ -1336,7 +1063,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 					}
 				}
 			}
-			if (-not($SANIP -eq "Skipped")) {
+			if (-not($SANIP -eq "Skipped") -and (-not $WildCard)) {
 				$Identifier = $null
 				$IdentifierAlias = $null
 				try {
@@ -1390,7 +1117,20 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 					SAN = $true
 					DNSValid = $Validation
 					Alias = $IdentifierAlias
+					WildCard = $WildCard
 				}
+			} elseif ($WildCard) {
+				$DNSObjects += [PSCustomObject]@{
+					DNSName = $DNSRecord
+					IPAddress = "0.0.0.0"
+					Status = $SANStatus
+					Match = $SANMatch
+					SAN = $true
+					DNSValid = $null
+					Alias = $null
+					WildCard = $WildCard
+				}
+			
 			}
 			Write-Verbose "Finished with SAN: `"$DNSRecord`""
 		}
@@ -1849,150 +1589,175 @@ if ((($NetScalerActionsRequired) -or ($CleanNS) -and (-not ($RemoveTestCertifica
 
 #region WildCard
 
-if ($WildCard) {
-	try{
-		$domains = @()
-		$domains += $CN
-		$domains += $SAN
-		Write-Verbose "Checking if there is an existing order for `"$($CN)`""
-		Write-Verbose "Domains: $($domains -Join ", ")"
-		try {
-			$order = Get-PAOrder -MainDomain $cn -Refresh
-			Write-Verbose "Existing order found, setting as active order"
-			Write-Verbose "$($order | Out-String)"
-			Set-PAOrder -MainDomain $cn | Out-Null
-			Write-Verbose "Retreive authorizations"
-			$allAuths = @($order | Get-PAAuthorizations)
-			Write-Verbose "$($allAuths | Out-String)"
-		} catch {
-			Write-Verbose "No existing order found, creating an new order"
-			try {
-				$order = New-PAOrder -Domain $domains -KeyLength $KeyLength -PfxPass $PfxPassword -FriendlyName $FriendlyName
-				$order = Get-PAOrder -MainDomain $cn -Refresh
-				Write-Verbose "$($order | Out-String)"
-				Set-PAOrder -MainDomain $cn | Out-Null
-				Write-Verbose "Retreive authorizations"
-				$allAuths = @($order | Get-PAAuthorizations)
-				Write-Verbose "$($allAuths | Out-String)"
-				throw "halt"
-			} catch {
-				throw "New order creation failed"
-			}
-		}
-	} catch {
-		Write-Verbose "Caught an error: $($_.Exception.Message)"
-		if ($_.Exception.Message -like "*is redundant with a wildcard domain in the same request*") {
-			throw "One of the SANs specified is redundant like *.domain.com and www.domain.com, please correct changes"
-			exit(1)
-		} else {
-			throw $_.Exception.Message
-			exit(1)
-		}
-	}
-	try {
-		$RecordsToValidate = @()
-		if ($Order.status -eq 'invalid') {
-			throw "Order status is invalid for $($Order.MainDomain). Unable to continue."
-		} elseif ($Order.status -eq 'valid' -or $Order.status -eq 'processing') {
-			Write-Warning "The server has already issued or is processing a certificate for order $($Order.MainDomain)."
-		} elseif ($Order.status -eq 'ready') {
-			Write-Warning "The order $($Order.MainDomain) has already completed challenge validation and is awaiting finalization."
-		} elseif ($Order.status -eq 'pending') {
-			Write-Verbose "Order status is pending"
-			$acctKey = $Registration.key | ConvertFrom-Jwk
-			for ($i=0; $i -lt ($allAuths.Count); $i++) {
-				$auth = $allAuths[$i]
-				if ($auth.status -eq 'valid') {
-					Write-Verbose "$($auth.fqdn) authorization is already valid"
-					continue
-				} elseif ($auth.status -eq 'pending') {
-					if ($auth.DNS01Status -eq 'pending') {
-						Write-Verbose "Publishing DNS challenge for $($auth.fqdn)"
-						$pubJwk = $acctKey | ConvertTo-Jwk -PublicOnly -AsJson
-						$jwkBytes = [Text.Encoding]::UTF8.GetBytes($pubJwk)
-						$sha256 = [Security.Cryptography.SHA256]::Create()
-						$jwkHash = $sha256.ComputeHash($jwkBytes)
-						$thumb = ConvertTo-Base64Url $jwkHash
-						$keyAuth = "$($auth.DNS01Token).$thumb"
-						$keyAuthBytes = [Text.Encoding]::UTF8.GetBytes($keyAuth)
-						$keyAuthHash = $sha256.ComputeHash($keyAuthBytes)
-						$txtValue = ConvertTo-Base64Url $keyAuthHash
-						$txtRecord = "_acme-challenge.$($auth.DNSId)"
-						$RecordsToValidate += [PSCustomObject]@{
-							txtRecord = $txtRecord
-							txtValue = $txtValue
-							txtStatus = $auth.DNS01Status
-						}
-						Write-Verbose "txtRecord = $txtRecord | txtValue = $txtValue"
-					}
-				}
-			}
-			if (-not ($RecordsToValidate.Count -eq 0)) {
-				Write-Host -NoNewLine -ForeGroundColor Yellow "`r`nWARNING: "
-				Write-Host "Create the following DNS records withe their respective value (with the smallest TTL value)"
-				Write-Host "Then re-run this script with the same parameters to continue."
-				Write-Host "Then re-run this script with the same parameters to continue."
-				Write-Host -ForeGroundColor Yellow "`r`n*********************************************************"
-				Write-Host -ForeGroundColor Yellow "$($RecordsToValidate |fl | Out-String)"
-				Write-Host -ForeGroundColor Yellow "*********************************************************`r`n"
-			}
-			Exit(2)
-		}
-
-		
-	} catch {
-		Write-Verbose "Caught an error: $($_.Exception.Message)"
-		throw $_.Exception.Message
-		exit(1)
-	}
+#if ($WildCard) {
+#	try{
+#		$domains = @()
+#		$domains += $CN
+#		$domains += $SAN
+#		Write-Verbose "Checking if there is an existing order for `"$($CN)`""
+#		Write-Verbose "Domains: $($domains -Join ", ")"
+#		try {
+#			$order = Get-PAOrder -MainDomain $cn -Refresh
+#			Write-Verbose "Existing order found, setting as active order"
+#			Write-Verbose "$($order | Out-String)"
+#			Set-PAOrder -MainDomain $cn | Out-Null
+#			Write-Verbose "Retreive authorizations"
+#			$allAuths = @($order | Get-PAAuthorizations)
+#			Write-Verbose "$($allAuths | Out-String)"
+#		} catch {
+#			Write-Verbose "No existing order found, creating an new order"
+#			try {
+#				$order = New-PAOrder -Domain $domains -KeyLength $KeyLength -PfxPass $PfxPassword -FriendlyName $FriendlyName
+#				$order = Get-PAOrder -MainDomain $cn -Refresh
+#				Write-Verbose "$($order | Out-String)"
+#				Set-PAOrder -MainDomain $cn | Out-Null
+#				Write-Verbose "Retreive authorizations"
+#				$allAuths = @($order | Get-PAAuthorizations)
+#				Write-Verbose "$($allAuths | Out-String)"
+#			} catch {
+#				throw "New order creation failed"
+#			}
+#		}
+#	} catch {
+#		Write-Verbose "Caught an error: $($_.Exception.Message)"
+#		if ($_.Exception.Message -like "*is redundant with a wildcard domain in the same request*") {
+#			throw "One of the SANs specified is redundant like *.domain.com and www.domain.com, please correct changes"
+#			exit(1)
+#		} else {
+#			throw $_.Exception.Message
+#			exit(1)
+#		}
+#	}
+#	try {
+#		if ($Order.status -eq 'invalid') {
+#			throw "Order status is invalid for $($Order.MainDomain). Unable to continue."
+#		} elseif ($Order.status -eq 'ready') {
+#			Write-Warning "The order $($Order.MainDomain) has already completed challenge validation and is awaiting finalization."
+#		} elseif ($Order.status -eq 'pending') {
+#			Write-Verbose "Order status is pending"
+#			$acctKey = $Registration.key | ConvertFrom-Jwk
+#			$RecordsToValidate = @()
+#			for ($i=0; $i -lt ($allAuths.Count); $i++) {
+#				$auth = $allAuths[$i]
+#				if ($auth.status -eq 'valid') {
+#					Write-Verbose "$($auth.fqdn) authorization is already valid"
+#					continue
+#				} elseif ($auth.status -eq 'pending') {
+#					if ($auth.DNS01Status -eq 'pending') {
+#						Write-Verbose "Publishing DNS challenge for $($auth.fqdn)"
+#						$pubJwk = $acctKey | ConvertTo-Jwk -PublicOnly -AsJson
+#						$jwkBytes = [Text.Encoding]::UTF8.GetBytes($pubJwk)
+#						$sha256 = [Security.Cryptography.SHA256]::Create()
+#						$jwkHash = $sha256.ComputeHash($jwkBytes)
+#						$thumb = ConvertTo-Base64Url $jwkHash
+#						$keyAuth = "$($auth.DNS01Token).$thumb"
+#						$keyAuthBytes = [Text.Encoding]::UTF8.GetBytes($keyAuth)
+#						$keyAuthHash = $sha256.ComputeHash($keyAuthBytes)
+#						$txtValue = ConvertTo-Base64Url $keyAuthHash
+#						$txtRecord = "_acme-challenge.$($auth.DNSId)"
+#						$RecordsToValidate += [PSCustomObject]@{
+#							txtRecord = $txtRecord
+#							txtValue = $txtValue
+#							txtStatus = $auth.DNS01Status
+#						}
+#						Write-Verbose "txtRecord = $txtRecord | txtValue = $txtValue"
+#					}
+#				}
+#			}
+#			if (-not ($RecordsToValidate.Count -eq 0)) {
+#				Write-Host -NoNewLine -ForeGroundColor Yellow "`r`nWARNING: "
+#				Write-Host "Create the following DNS records withe their respective value (with the smallest TTL value)"
+#				Write-Host "Then re-run this script with the same parameters to continue."
+#				Write-Host "Then re-run this script with the same parameters to continue."
+#				Write-Host -ForeGroundColor Yellow "`r`n*********************************************************"
+#				Write-Host -ForeGroundColor Yellow "$($RecordsToValidate |fl | Out-String)"
+#				Write-Host -ForeGroundColor Yellow "*********************************************************`r`n"
+#			}
+#			Exit(2)
+#		} elseif ($Order.status -eq 'valid' -or $Order.status -eq 'processing') {
+#			Write-Warning "The server has already issued or is processing a certificate for order $($Order.MainDomain)."
+#		} 
+#		##$PAServer.nonce
+#
+#		
+#	} catch {
+#		Write-Verbose "Caught an error: $($_.Exception.Message)"
+#		throw $_.Exception.Message
+#		exit(1)
+#	}
+#	
+#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Publish-DNSChallenge.ps1
+#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Submit-ChallengeValidation.ps1
+#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Private/Get-KeyAuthorization.ps1
+#	#https://github.com/rmbolger/Posh-ACME/blob/master/Tutorial.md
+#	
+#	
+#	try {
+#		#$PAServer = Get-PAServer -Refresh
+#		$header = @{ alg=$Registration.alg; kid=$Registration.location; nonce=$PAServer.nonce; url='' }
+#		$ToValidate = $allAuths | Where-Object {$_.DNS01Status -eq "pending"}
+#		ForEach ($Challenge in $ToValidate) {
+#			$header.url = $Challenge.DNS01Url
+#			try { $response = Invoke-ACME $header.url ($Registration.key | ConvertFrom-Jwk) $header '{}' -EA Stop } catch {}
+#			Write-Verbose "Response: $($response.Content)"
+#				
+#		}
+#		$RecordToValidateLocation = @(($allAuths | Where-Object {$_.DNS01Status -eq "pending"}).location)
+#		Wait-AuthValidation $RecordToValidateLocation 60 -Verbose
+#	
+#	} catch {}
 	
-	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Publish-DNSChallenge.ps1
-	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Submit-ChallengeValidation.ps1
-	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Private/Get-KeyAuthorization.ps1
-	#https://github.com/rmbolger/Posh-ACME/blob/master/Tutorial.md
+	
+if ($WildCard) {
+	$domains = @()
+	$domains += $CN
+	$domains += $SAN
+	$Output = New-PACertificate -Domain $domains  -Contact $EmailAddress -CertKeyLength $KeyLength -AcceptTOS -AccountKeyLength "ec-256" -DirectoryUrl $BaseService -DnsPlugin Manual -FriendlyName $FriendlyName -PfxPass $PfxPassword -ValidationTimeout 60 -Force
 }
-
-
+	
 #endregion WildCard
 
 #region Certificates
 	
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$SANs = $DNSObjects | Where-Object {$_.SAN -eq $true}
-	$IdentifierAlias = $DNSObjects[0].Alias
-	try {
-		$CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
-		if ($SANs) {
-			Write-Verbose "Get certificate with SANs"
-			Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-List | Out-String)"
-			Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-List | Out-String)"
-			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
-				-AlternativeIdentifierRefs @($SANs.Alias) `
-				-Alias $CertificateAlias `
-				-Generate `
-				-VaultProfile $VaultName
-		} else {
-			Write-Verbose "Get single DNS Name certificate"
-			Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | Format-List * | Out-String)"
-			$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
-				-Alias $CertificateAlias `
-				-Generate `
-				-VaultProfile $VaultName
+	$CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
+	if (-not $WildCard) {
+		$IdentifierAlias = $DNSObjects[0].Alias
+		try {
+			
+			if ($SANs) {
+				Write-Verbose "Get certificate with SANs"
+				Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-List | Out-String)"
+				Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-List | Out-String)"
+				$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
+					-AlternativeIdentifierRefs @($SANs.Alias) `
+					-Alias $CertificateAlias `
+					-Generate `
+					-VaultProfile $VaultName
+			} else {
+				Write-Verbose "Get single DNS Name certificate"
+				Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | Format-List * | Out-String)"
+				$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
+					-Alias $CertificateAlias `
+					-Generate `
+					-VaultProfile $VaultName
+			}
+			Write-Verbose "Submit Certificate request"
+			ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Out-Null
+		} catch {
+			throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
 		}
-		Write-Verbose "Submit Certificate request"
-		ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Out-Null
-	} catch {
-		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
-	}
-	$i = 0
-	while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Select-Object IssuerSerialNumber)) {
-		$i++
-		$imax = 120
-		if ($i -ge $imax) {
-			throw "Error: Retreiving certificate failed, took to long to complete"
+		$i = 0
+		while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Select-Object IssuerSerialNumber)) {
+			$i++
+			$imax = 120
+			if ($i -ge $imax) {
+				throw "Error: Retreiving certificate failed, took to long to complete"
+			}
+			Write-Host "Will continue $(($imax-$i)*2) more seconds for the certificate to come available..."
+			Start-Sleep -seconds 2
 		}
-		Write-Host "Will continue $(($imax-$i)*2) more seconds for the certificate to come available..."
-		Start-Sleep -seconds 2
 	}
 	
 	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
@@ -2014,7 +1779,12 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			$IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
 		}
 		Write-Verbose "Intermediate: `"$IntermediateCAFileName`""
-		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
+		if ($WildCard) {
+			$WCCertificate = Get-PACertificate -MainDomain $cn
+			Copy-Item $WCCertificate.ChainFile -Destination $IntermediateCAFullPath -Force
+		} else {
+			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
+		}
 		if ($Production){
 			if ($CertificateName.length -ge 31) {
 				$CertificateName = "$($CertificateName.subString(0,31))"
@@ -2035,6 +1805,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
 			}
 			$CertificatePfxFileName = "$CertificateAlias.pfx"
+			$CertificatePemFileName = "$CertificateAlias.pem"
+			$CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
 		} else {
 			if ($CertificateName.length -ge 27) {
 				$CertificateName = "TST-$($CertificateName.subString(0,27))"
@@ -2055,32 +1827,26 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 				Write-Verbose "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
 			}
 			$CertificatePfxFileName = "TST-$CertificateAlias.pfx"
+			$CertificatePemFileName = "TST-$CertificateAlias.pem"
+			$CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
 		}
+		
 		$CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
-		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
 		$CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
-		ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
-		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName 
-		if ($PfxPassword){
-			Write-Verbose "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
-			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
+		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
+		$CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
+		Write-Verbose "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
+		if ($WildCard) {
+			Copy-Item $WCCertificate.CertFile -Destination $CertificateFullPath -Force
+			Copy-Item $WCCertificate.KeyFile -Destination $CertificateKeyFullPath -Force
+			Copy-Item $WCCertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
 		} else {
-			try {
-				$length=15
-				Add-Type -AssemblyName System.Web | Out-Null
-				$PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length,2)
-				Write-Warning "No Password was specified, so a random password was generated!"
-				Write-Host -ForeGroundColor Yellow "`n***********************"
-				Write-Host -ForeGroundColor Yellow "*   PFX Password:     *"
-				Write-Host -ForeGroundColor Yellow "*                     *"
-				Write-Host -ForeGroundColor Yellow "*   $PfxPassword   *"
-				Write-Host -ForeGroundColor Yellow "*                     *"
-				Write-Host -ForeGroundColor Yellow "***********************`n"
-				ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 "$CertificatePfxFullPath" -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
-			} catch {
-				Write-Verbose "An error occured while generating a Password."
-			}
+			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
+			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
+			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 $CertificatePfxWithChainFileName -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
 		}
+		$certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force)
+		$output = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force) -ChainOption EndEntityCertOnly -Force
 	}
 }
 
@@ -2134,27 +1900,54 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			}
 			$NSUpdating = $false
 		}
-		$CertificateCrtBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateFullPath -Encoding "Byte"))
-		$CertificateKeyBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateKeyFullPath -Encoding "Byte"))
-		Write-Verbose "Uploading the certificate"
-		$payload = @{"filename"="$CertificateFileName";"filecontent"="$CertificateCrtBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
+		$CertificatePfxBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificatePfxFullPath -Encoding "Byte"))
+		Write-Verbose "Uploading the Pfx certificate"
+		$payload = @{"filename"="$CertificatePfxFileName";"filecontent"="$CertificatePfxBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
 		$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
+		Write-Verbose "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
+		$payload = @{"outfile"="$CertificatePemFileName";"Import"="true";"pkcs12file"="$CertificatePfxFileName";"des3"="true";"password"="$PfxPassword";"pempassphrase"="$PfxPassword"}
+		$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
+
+		#$CertificateCrtBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateFullPath -Encoding "Byte"))
+		#$CertificateKeyBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateKeyFullPath -Encoding "Byte"))
+		#Write-Verbose "Uploading the certificate"
+		#$payload = @{"filename"="$CertificateFileName";"filecontent"="$CertificateCrtBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
+		#$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
+		#
+		#Write-Verbose "Uploading the certificate key"
+		#$payload = @{"filename"="$CertificateKeyFileName";"filecontent"="$CertificateKeyBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
+		#$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
+		#Write-Verbose "Finished uploading"
+		#Start-Sleep -Seconds 2
+		try {
+			#if ($NSUpdating) {
+			#	Write-Verbose "Update the certificate and key to the NetScaler config"
+			#	$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
+			#	$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
+			#	Write-Verbose "Succeeded"
+		    #
+			#} else {
+			#	Write-Verbose "Add the certificate and key to the NetScaler config"
+			#	$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
+			#	$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
+			#	Write-Verbose "Succeeded"
+			#}
+			
+			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificatePemFileName)";"key"="$($CertificatePemFileName)";"password"="true";"inform"="PEM";"passplain"="$PfxPassword"}
+			
+			if ($NSUpdating) {
+				Write-Verbose "Update the certificate and key to the NetScaler config"
+				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
+				Write-Verbose "Succeeded"
 		
-		Write-Verbose "Uploading the certificate key"
-		$payload = @{"filename"="$CertificateKeyFileName";"filecontent"="$CertificateKeyBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
-		$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
-		Write-Verbose "Finished uploading"
-		if ($NSUpdating) {
-			Write-Verbose "Update the certificate and key to the NetScaler config"
-			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
-			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
-			Write-Verbose "Succeeded"
-	
-		} else {
-			Write-Verbose "Add the certificate and key to the NetScaler config"
-			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
-			$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
-			Write-Verbose "Succeeded"
+			} else {
+				Write-Verbose "Add the certificate and key to the NetScaler config"
+				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
+				Write-Verbose "Succeeded"
+			}
+		} catch {
+			Write-Warning "Caught an error, certificate not added to the NetScaler Config"
+			Write-Warning "Details: $($_.Exception.Message | Out-String)"
 		}
 		Write-Verbose "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
 		$payload = @{"certkey"="$CertificateCertKeyName";"linkcertkeyname"="$IntermediateCACertKeyName";}
@@ -2165,10 +1958,24 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			InvokeNSRestApi -Session $NSSession -Method POST -Type nsconfig -Action save
 		}
 		""
+		if ($PfxPasswordGenerated) {
+			Write-Warning "No Password was specified, so a random password was generated!"
+			Write-Host -ForeGroundColor Yellow "`r`n***********************"
+			Write-Host -ForeGroundColor Yellow "*   PFX Password:     *"
+			Write-Host -ForeGroundColor Yellow "*                     *"
+			Write-Host -ForeGroundColor Yellow "*   $PfxPassword   *"
+			Write-Host -ForeGroundColor Yellow "*                     *"
+			Write-Host -ForeGroundColor Yellow "***********************`r`n"
+		}
 		Write-Host -ForeGroundColor Green "Finished with the certificates!"
+		""
+		Write-Host -ForeGroundColor Yellow "IMPORTANT: Don't forget to delete the created DNS records!!"
+		""
 		if (-not $Production){
 			Write-Host -ForeGroundColor Green "You are now ready for the Production version!"
 			Write-Host -ForeGroundColor Green "Add the `"-Production`" parameter and rerun the same script."
+		}
+		if ($WildCard) {
 		}
 	} catch {
 		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
