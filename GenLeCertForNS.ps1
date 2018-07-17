@@ -261,7 +261,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v1.0"
+$ScriptVersion = "v1.1"
 
 #region Functions
 
