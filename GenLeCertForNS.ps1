@@ -492,7 +492,8 @@ if ((($CN -match "\*") -or ($SAN -match "\*")) -and (-not $WildCard)) {
 #endregion Script Basics
 
 #region Help
-if($Help -or ($args.Count -eq 0)){
+
+if($Help -or ($PSBoundParameters.Count -eq 0)){
 	Write-Verbose "Displaying the Detailed help info for: `"$($MyInvocation.MyCommand.Name)`""
 	Get-Help $MyInvocation.MyCommand.Path -Detailed
 	Exit(0)
