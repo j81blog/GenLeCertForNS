@@ -67,6 +67,7 @@
 	Save the NetScaler config after all the changes.
 .PARAMETER ns10x
 	When using v10x, some nitro functions will not work propperly, run the script with this parameter.
+	Specify the logfile name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
 	Generate a (Production)certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler. Also Cleaning the vault on the NetScaler the content Switch "cs_domain.com_http" will be used to validate the certificates.
@@ -475,13 +476,27 @@ function Connect-NetScaler {
 
 #endregion Functions
 
+#region Script Basics
+
+
+Write-Verbose "Script version: $ScriptVersion"
+Write-Verbose "Script was started with the following Parameters: $($PSBoundParameters | Out-String)"
+
+if ((($CN -match "\*") -or ($SAN -match "\*")) -and (-not $WildCard)) {
+	Write-Host -ForeGroundColor Yellow "`r`nWARNING: -CN or -SAN contains a wildcard entry, continuing with the -WildCard parameter!"
+	Write-Host -ForeGroundColor Yellow "`r`nCN:  $CN"
+	Write-Host -ForeGroundColor Yellow "SAN: $($SAN -Join ", ")`r`n"
+	$WildCard = $true
+}
+
+#endregion Script Basics
+
 #region Help
 if($Help -or ($args.Count -eq 0)){
 	Write-Verbose "Displaying the Detailed help info for: `"$($MyInvocation.MyCommand.Name)`""
 	Get-Help $MyInvocation.MyCommand.Path -Detailed
 	Exit(0)
 }
-
 #endregion Help
 
 #region DOTNETCheck
@@ -504,7 +519,6 @@ if ($WildCard) {
 
 #region Script variables
 
-Write-Verbose "Script version: $ScriptVersion"
 if ($ns10x){
 	Write-Verbose "ns10x parameter used, some options are now disabled."
 }
@@ -2067,3 +2081,4 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
 }
 
 #endregion Remove Test Certificates
+
