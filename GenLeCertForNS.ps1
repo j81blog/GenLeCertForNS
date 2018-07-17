@@ -67,6 +67,9 @@
 	Save the NetScaler config after all the changes.
 .PARAMETER ns10x
 	When using v10x, some nitro functions will not work propperly, run the script with this parameter.
+.PARAMETER EnableLogging
+	Start logging to file. The name of the logfile can be specified with the "-LogLocation" parameter.
+.PARAMETER LogLocation
 	Specify the logfile name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
@@ -239,6 +242,12 @@ param(
 	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
 	[switch]$SaveNSConfig,
 	
+	[Parameter(Mandatory=$false)]
+	[switch]$EnableLogging,
+	
+	[Parameter(Mandatory=$false)]
+	[ValidateNotNullOrEmpty()]
+	[string]$LogLocation = "$(Split-Path -parent $MyInvocation.MyCommand.Path)\GenLeCertForNS_log.txt",
 	
 	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
 	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
@@ -478,6 +487,11 @@ function Connect-NetScaler {
 
 #region Script Basics
 
+if($EnableLogging) {
+	try { Stop-Transcript } catch { }
+	Start-Transcript -Path $LogLocation -IncludeInvocationHeader
+	Write-Verbose "Logging is started: $LogLocation"
+}
 
 Write-Verbose "Script version: $ScriptVersion"
 Write-Verbose "Script was started with the following Parameters: $($PSBoundParameters | Out-String)"
@@ -2083,3 +2097,11 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
 
 #endregion Remove Test Certificates
 
+#region Final Actions
+
+if($EnableLogging) {
+	Write-Verbose "Stopping the Logging"
+	Stop-Transcript
+}
+
+#region Final Actions
