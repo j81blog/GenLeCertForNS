@@ -90,7 +90,7 @@
 	Requires  : PowerShell v5.1 and up
 	            NetScaler 11.x and up
 	            Run As Administrator
-				Posh-ACME 2.5.0 (can be installed via this script) if using WildCard certificates
+				Posh-ACME 2.6.0 (Will be installed via this script) Thank you @rmbolger (GitHub and Twitter) for providing the HTTP validation method!
 				Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
 .LINK
 	https://blog.j81.nl
