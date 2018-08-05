@@ -838,7 +838,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
 		Write-Verbose "Challenges: $($PAChallenge | Format-List | Out-String)"
 	} catch {
 		Write-Verbose "Error Details: $($_.Exception.Message)"
-		Write-Host -ForeGroundColor Red -NoNewLine "ERROR: Could not create the order."
+		Write-Host -ForeGroundColor Red "ERROR: Could not create the order."
 		Exit (1)
 	}
 }
@@ -1440,7 +1440,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -eq "
 	
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (($ValidationMethod -eq "dns") -or ($ValidationMethod -eq "http"))) {
 	#$Output = New-PACertificate -Domain $domains  -Contact $EmailAddress -CertKeyLength $KeyLength -AcceptTOS -AccountKeyLength "ec-256" -DirectoryUrl $BaseService -DnsPlugin Manual -FriendlyName $FriendlyName -PfxPass $PfxPassword -ValidationTimeout 60 -Force
-	$NewCertificates = New-PACertificate -Domain $domains -DnsPlugin Manual -ValidationTimeout 60 -Force -FriendlyName $FriendlyName -PfxPass $PfxPassword
+	$NewCertificates = New-PACertificate -Domain $domains -DnsPlugin Manual -ValidationTimeout 60 -Force -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
 	Start-Sleep -Seconds 1
 }
 	
