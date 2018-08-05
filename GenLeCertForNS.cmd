@@ -37,7 +37,6 @@ SET OPTIONS=%OPTIONS% -NSPassword "P@ssw0rd"
 SET OPTIONS=%OPTIONS% -NSUsername "nsroot"
 SET OPTIONS=%OPTIONS% -NSCertNameToUpdate "san_domain_com"
 rem SET OPTIONS=%OPTIONS% -Production
-SET OPTIONS=%OPTIONS% -CleanVault
 SET OPTIONS=%OPTIONS% -Verbose
 
 NOTE: Use the "-Production" only if you're sure everything works, you can only use the Let's Encrypt production server 5 times per week.
@@ -58,7 +57,6 @@ SET OPTIONS=%OPTIONS% -NSPassword "P@ssw0rd"
 SET OPTIONS=%OPTIONS% -NSUsername "nsroot"
 SET OPTIONS=%OPTIONS% -NSCertNameToUpdate "san_domain_com"
 rem SET OPTIONS=%OPTIONS% -Production
-SET OPTIONS=%OPTIONS% -CleanVault
 SET OPTIONS=%OPTIONS% -Verbose
 
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File "%~dp0GenLeCertForNS.ps1" %OPTIONS%
