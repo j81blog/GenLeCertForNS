@@ -2,11 +2,9 @@
 .SYNOPSIS
 	Create a new or update an existing Let's Encrypt certificate for one or more domains and add it to a store then update the SSL bindings for a NetScaler
 .DESCRIPTION
-	The script will use ACMESharp to create a new or update an existing certificate for one or more domains or Posh-ACME when creating Wildcard certificates. If generated successfully the script will add the certificate to the NetScaler and update the SSL binding for a web site. This script is for use with a Citrix NetScaler (v11.x and up). The script will validate the dns records provided. For example, the domain(s) listed must be configured with the same IP Address that is configured (via NAT) to a Content Switch.
+	The script will utilize Posh-ACME to create a new or update an existing certificate for one or more domains. If generated successfully the script will add the certificate to the NetScaler and update the SSL binding for a web site. This script is for use with a Citrix NetScaler (v11.x and up). The script will validate the dns records provided. For example, the domain(s) listed must be configured with the same IP Address that is configured (via NAT) to a Content Switch. Or Use DNS verification if a WildCard domain was specified.
 .PARAMETER Help
 	Display the detailed information about this script
-.PARAMETER WildCard
-	Create Wildcard certificates (*.domain.com)
 .PARAMETER CleanNS
 	Cleanup the NetScaler configuration made within this script, for when somewhere it gone wrong
 .PARAMETER RemoveTestCertificates
@@ -52,7 +50,8 @@
 .PARAMETER SAN
 	(Subject Alternate Name) every following domain listed in this certificate. sepatated via an comma , and between quotes "".
 	Example: "sts.domain.com","www.domain.com","vpn.domain.com"
-	Example (Wildcard): "*.domain.com"
+	Example (Wildcard): "*.domain.com","*.pub.domain.com"
+	NOTE: Only a DNS verification is possible when using WildCards!
 .PARAMETER FriendlyName
 	The displayname of the certificate, if not specified the CN will used. You can specify an empty value if required.
 	Example (Empty display name) : ""
@@ -61,8 +60,8 @@
 	Use the production Let's encryt server
 .PARAMETER DisableIPCheck
 	If you want to skip the IP Address verification, specify this parameter
-.PARAMETER CleanVault
-	Force initialization of the vault before use
+.PARAMETER CleanPoshACMEStorage
+	Force cleanup of the Posh-Acme certificates located in "%LOCALAPPDATA%\Posh-ACME"
 .PARAMETER SaveNSConfig
 	Save the NetScaler config after all the changes.
 .PARAMETER ns10x
@@ -72,11 +71,12 @@
 .PARAMETER LogLocation
 	Specify the logfile name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -CleanVault -Verbose
+	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
 	Generate a (Production)certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler. Also Cleaning the vault on the NetScaler the content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -WildCard -Production -Verbose
+	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
 	Generate a (Production) WildCard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the emailaddress "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler.
+	NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
 	Cleaning left over configuration from this schript when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
@@ -87,57 +87,53 @@
 	File Name : GenLeCertForNS.ps1
 	Version   : v1.1
 	Author    : John Billekens
-	Requires  : PowerShell v3 and up
+	Requires  : PowerShell v5.1 and up
 	            NetScaler 11.x and up
 	            Run As Administrator
-	            ACMESharp 0.9.1.326 (can be installed via this script) if not using WildCard certificates
 				Posh-ACME 2.5.0 (can be installed via this script) if using WildCard certificates
 				Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
 .LINK
 	https://blog.j81.nl
 #>
 
-[cmdletbinding(DefaultParametersetName="Help")]
+[cmdletbinding(DefaultParameterSetName="LECertificates")]
 param(
-	[Parameter(ParameterSetName="Help",Mandatory=$false)]
+	[Parameter(ParameterSetName="Help",Mandatory=$true)]
 	[alias("h")]
 	[switch]$Help,
 	
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$true)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$true)]
 	[switch]$CleanNS,
 
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[alias("WC")]
-	[switch]$WildCard,
-
-	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
-	[alias("RemTestCert")]
+	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$true)]
 	[switch]$RemoveTestCertificates,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$true)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$true)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanPoshACMEStorage",Mandatory=$true)]
+	[switch]$CleanPoshACMEStorage,
+	
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$true)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$true)]
 	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$true)]
 	[ValidateNotNullOrEmpty()]
 	[alias("URL")]
 	[string]$NSManagementURL,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 	[alias("User", "Username")]
 	[string]$NSUserName,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 	[ValidateScript({
 		if ($_ -is [SecureString]) {
 			return $true
 		} elseif ($_ -is [string]) {
-			$Script:NSPassword=ConvertTo-SecureString -String $_ -AsPlainText -Force
+			$Script:NSPassword = ConvertTo-SecureString -String $_ -AsPlainText -Force
 			return $true
 		} else {
 			throw "You passed an unexpected object type for the credential (-NSPassword)"
@@ -145,9 +141,8 @@ param(
 	})][alias("Password")]
 	[object]$NSPassword,
 
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 	[ValidateScript({
 		if ($_ -is [System.Management.Automation.PSCredential]) {
@@ -161,52 +156,65 @@ param(
 	})][alias("Credential")]
 	[object]$NSCredential,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$true)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$true)]
 	[ValidateNotNullOrEmpty()]
+	[string]$CN,
+	
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[string[]]$SAN=@(),
+	
+	[string]$FriendlyName = $CN,
+	
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[ValidateSet(
+		'http',
+		'dns',
+		ignorecase=$true
+	)][string]$ValidationMethod = "http",
+
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$true)]
 	[string]$NSCsVipName,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSCsVipBinding = 11,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSSvcName = "svc_letsencrypt_cert_dummy",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSSvcDestination = "1.2.3.4",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSLbName = "lb_letsencrypt_cert",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSRspName = "rsp_letsencrypt",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSRsaName = "rsa_letsencrypt",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[string]$NSCspName = "csp_NSCertCsp",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
 	[string]$NSCertNameToUpdate,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$true)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$true)]
 	[ValidateNotNullOrEmpty()]
 	[string]$CertDir,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
 	[string]$PfxPassword = $null,
 			
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
 	[ValidateScript({
 		if($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
 			throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
@@ -215,46 +223,29 @@ param(
 		}
 	})][int32]$KeyLength = 2048,	
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$true)]
-	[ValidateNotNullOrEmpty()]
-	[string]$CN,
-	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[string[]]$SAN=@(),
-	
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[string]$FriendlyName = $CN,
-	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$true)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$true)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$true)]
 	[string]$EmailAddress,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
 	[switch]$DisableIPCheck,
-
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[switch]$CleanVault,
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
 	[switch]$SaveNSConfig,
 	
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 	[Parameter(Mandatory=$false)]
 	[switch]$EnableLogging,
 	
-	[Parameter(Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanNS",Mandatory=$false)]
+	[Parameter(ParameterSetName="CleanTestCertificate",Mandatory=$false)]
 	[ValidateNotNullOrEmpty()]
 	[string]$LogLocation = "$(Split-Path -parent $MyInvocation.MyCommand.Path)\GenLeCertForNS_log.txt",
 	
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="CleanNetScaler",Mandatory=$false)]
-	[switch]$ns10x,
-
-	[Parameter(ParameterSetName="ConfigNetScaler",Mandatory=$false)]
-	[Parameter(ParameterSetName="ConfigNetScalerWC",Mandatory=$false)]
+	[Parameter(ParameterSetName="LECertificates",Mandatory=$false)]
 	[switch]$Production
 	
 )
@@ -496,13 +487,6 @@ if($EnableLogging) {
 Write-Verbose "Script version: $ScriptVersion"
 Write-Verbose "Script was started with the following Parameters: $($PSBoundParameters | Out-String)"
 
-if ((($CN -match "\*") -or ($SAN -match "\*")) -and (-not $WildCard)) {
-	Write-Host -ForeGroundColor Yellow "`r`nWARNING: -CN or -SAN contains a wildcard entry, continuing with the -WildCard parameter!"
-	Write-Host -ForeGroundColor Yellow "`r`nCN:  $CN"
-	Write-Host -ForeGroundColor Yellow "SAN: $($SAN -Join ", ")`r`n"
-	$WildCard = $true
-}
-
 #endregion Script Basics
 
 #region Help
@@ -515,34 +499,37 @@ if($Help -or ($PSBoundParameters.Count -eq 0)){
 #endregion Help
 
 #region DOTNETCheck
-if ($WildCard) {
-	Write-Verbose "The WildCard option is selected, using the Posh-ACME module"
-	Write-Verbose "Checking if .NET Framework 4.7.1 or higher is installed."
-	$NetRelease = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release).Release
-	if ($NetRelease -lt 461308) {
-		Write-Verbose ".NET Framework 4.7.1 or higher is NOT installed."
-		Write-Host -NoNewLine -ForeGroundColor RED "`n`nWARNING: "
-		Write-Host ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
-		Start https://www.microsoft.com/net/download/dotnet-framework-runtime
-		Exit (1)
-	} else {
-		Write-Verbose ".NET Framework 4.7.1 or higher is installed."
-	}
+Write-Verbose "Checking if .NET Framework 4.7.1 or higher is installed."
+$NetRelease = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release).Release
+if ($NetRelease -lt 461308) {
+	Write-Verbose ".NET Framework 4.7.1 or higher is NOT installed."
+	Write-Host -NoNewLine -ForeGroundColor RED "`n`nWARNING: "
+	Write-Host ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
+	Start https://www.microsoft.com/net/download/dotnet-framework-runtime
+	Exit (1)
+} else {
+	Write-Verbose ".NET Framework 4.7.1 or higher is installed."
 }
 
 #endregion DOTNETCheck
 
 #region Script variables
 
-if ($ns10x){
-	Write-Verbose "ns10x parameter used, some options are now disabled."
-}
-
-if ($WildCard){
-	Write-Verbose "The WildCard parameter is selected"
+if ($RemoveTestCertificates -or $CleanNS) {
+	$ValidationMethod = $null
+} elseif (($CN -match "\*") -or ($SAN -match "\*")) {
+	Write-Host -ForeGroundColor Yellow "`r`nWARNING: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
+	Write-Host -ForeGroundColor Yellow "`r`nCN:  $CN"
+	Write-Host -ForeGroundColor Yellow "SAN: $($SAN -Join ", ")`r`n"
+	$ValidationMethod = "dns"
 } else {
-	$WildCard = $false
+	$ValidationMethod = $ValidationMethod.ToLower()
+	if ((-not ($RemoveTestCertificates)) -and (-not $CleanNS) -and (([string]::IsNullOrWhiteSpace($NSCsVipName)) -and ($ValidationMethod -eq "http"))) {
+		Write-Host -ForeGroundColor Red "`r`nERROR: The `"-NSCsVipName`" cannot be empty!`r`n"
+		Exit (1)
+	}
 }
+Write-Verbose "ValidationMethod is set to: `"$ValidationMethod`""
 
 Write-Verbose "Setting session DATE/TIME variable"
 [datetime]$ScriptDateTime = Get-Date
@@ -563,7 +550,6 @@ if (-not $PfxPassword){
 	$PfxPasswordGenerated = $false
 }
 
-
 if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	Write-Verbose "Using NSCredential"
 } elseif ((-not([string]::IsNullOrWhiteSpace($NSUserName))) -and (-not([string]::IsNullOrWhiteSpace($NSPassword)))){
@@ -577,143 +563,93 @@ if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
 	[pscredential]$NSCredential = Get-Credential -Message "NetScaler username and password:"
 }
 Write-Verbose "Starting new session"
+$Domains = @()
+$Domains += $CN
 if(-not ([string]::IsNullOrWhiteSpace($SAN))){
 	[string[]]$SAN = @($SAN.Split(","))
+	$Domains += $SAN
+
 }
 
 #endregion Script variables
 
+#region CleanPoshACMEStorage
+
+if ($CleanPoshACMEStorage) {
+	$ACMEStorage = Join-Path $($env:LOCALAPPDATA) "Posh-ACME"
+	Write-Verbose "Removing `"$ACMEStorage`""
+	try {
+		Remove-Item -Path $ACMEStorage -Recurse -Force
+	} catch {
+		Write-Verbose "Error Details: $($_.Exception.Message)"
+		Write-Host -ForeGroundColor Red "`r`nERROR: Could not remove `"$ACMEStorage`""
+		Exit (1)
+	}
+}
+
+#endregion CleanPoshACMEStorage 
+
 #region Load Module
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-	if ($WildCard) {
-		Write-Verbose "Try loading the Posh-ACME Modules"
-		if (-not(Get-Module Posh-ACME)){
-			try {
-				$ACMEVersions = (get-Module -Name Posh-ACME -ListAvailable).Version
-				$ACMEUpdateRequired = $false
-				ForEach ($ACMEVersion in $ACMEVersions) {
-					if (($ACMEVersion -eq [System.Version]"2.5.0") -and (-not $ACMEUpdateRequired)) {
-						Write-Verbose "v2.5.0 of Posh-ACME is installed, continuing"
-					} else {
-						Write-Verbose "v2.5.0 of Posh-ACME is NOT installed, update/downgrade required"
-						$ACMEUpdateRequired = $true
+	Write-Verbose "Try loading the Posh-ACME Modules"
+	if (-not(Get-Module Posh-ACME)){
+		try {
+			$ACMEVersions = (get-Module -Name Posh-ACME -ListAvailable).Version | Where-Object {$_ -eq [System.Version]"2.6.0"}
+			if ($ACMEVersions) {
+				Write-Verbose "v2.6.0 of Posh-ACME is installed, continuing"
+			} else {
+				Write-Verbose "v2.6.0 of Posh-ACME is NOT installed, update/downgrade required"
+				Write-Verbose "Trying to update the Posh-ACME modules"
+				Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.6.0 -Force -ErrorAction SilentlyContinue
+			}
+			Write-Verbose "Try loading module Posh-ACME"
+			Import-Module Posh-ACME -ErrorAction Stop
+		} catch [System.IO.FileNotFoundException] {
+			Write-Verbose "Checking for PackageManagement"
+			if ([string]::IsNullOrWhiteSpace($(Get-Module -ListAvailable -Name PackageManagement))) {
+				Write-Warning "PackageManagement is not available please install this first or manually install Posh-ACME"
+				Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
+				Write-Warning "Posh-ACME: https://github.com/rmbolger/Posh-ACME"
+				Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
+				Exit (1)
+			} else {
+				try {
+					if (-not ((Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue).Version -ge [System.Version]"2.8.5.208")) {
+						Write-Verbose "Installing Nuget"
+						Get-PackageProvider -Name NuGet -Force -ErrorAction SilentlyContinue | Out-Null
 					}
-				}
-				if ($ACMEUpdateRequired) {
-					Write-Verbose "Trying to update the Posh-ACME modules"
-					Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.5.0 -Force -ErrorAction SilentlyContinue
-				}
-				Write-Verbose "Try loading module Posh-ACME"
-				Import-Module Posh-ACME -ErrorAction Stop
-			} catch [System.IO.FileNotFoundException] {
-				Write-Verbose "Checking for PackageManagement"
-				if ([string]::IsNullOrWhiteSpace($(Get-Module -ListAvailable -Name PackageManagement))) {
+					$installationPolicy = (Get-PSRepository -Name PSGallery).InstallationPolicy
+					if (-not ($installationPolicy.ToLower() -eq "trusted")){
+						Write-Verbose "Defining PSGallery PSRepository as trusted"
+						Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
+					}
+					Write-Verbose "Installing Posh-ACME"
+					try {
+						Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.6.0 -Force -AllowClobber
+					} catch {
+						Write-Verbose "Installing Posh-ACME again but without the -AllowClobber option"
+						Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.6.0 -Force
+					}
+					if (-not ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq $installationPolicy)){
+						Write-Verbose "Returning the PSGallery PSRepository InstallationPolicy to previous value"
+						Set-PSRepository -Name "PSGallery" -InstallationPolicy $installationPolicy | Out-Null
+					}
+					Write-Verbose "Try loading module Posh-ACME"
+					Import-Module Posh-ACME -ErrorAction Stop
+				} catch {
+					Write-Verbose "Error Details: $($_.Exception.Message)"
+					Write-Error "Error while loading and/or installing module"
 					Write-Warning "PackageManagement is not available please install this first or manually install Posh-ACME"
 					Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
 					Write-Warning "Posh-ACME: https://github.com/rmbolger/Posh-ACME"
 					Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
 					Exit (1)
-				} else {
-					try {
-						if (-not ((Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue).Version -ge [System.Version]"2.8.5.208")) {
-							Write-Verbose "Installing Nuget"
-							Get-PackageProvider -Name NuGet -Force -ErrorAction SilentlyContinue | Out-Null
-						}
-						$installationPolicy = (Get-PSRepository -Name PSGallery).InstallationPolicy
-						if (-not ($installationPolicy.ToLower() -eq "trusted")){
-							Write-Verbose "Defining PSGallery PSRepository as trusted"
-							Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
-						}
-						Write-Verbose "Installing Posh-ACME"
-						try {
-							Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.5.0 -Force -AllowClobber
-						} catch {
-							Write-Verbose "Installing Posh-ACME again but without the -AllowClobber option"
-							Install-Module -Name Posh-ACME -Scope AllUsers -RequiredVersion 2.5.0 -Force
-						}
-						if (-not ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq $installationPolicy)){
-							Write-Verbose "Returning the PSGallery PSRepository InstallationPolicy to previous value"
-							Set-PSRepository -Name "PSGallery" -InstallationPolicy $installationPolicy | Out-Null
-						}
-						Write-Verbose "Try loading module Posh-ACME"
-						Import-Module Posh-ACME -ErrorAction Stop
-					} catch {
-						Write-Verbose "Error Details: $($_.Exception.Message)"
-						Write-Error "Error while loading and/or installing module"
-						Write-Warning "PackageManagement is not available please install this first or manually install Posh-ACME"
-						Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
-						Write-Warning "Posh-ACME: https://github.com/rmbolger/Posh-ACME"
-						Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
-						Exit (1)
-					}
 				}
 			}
 		}
 	} else {
-		Write-Verbose "Load ACMESharp Modules"
-		if (-not(Get-Module ACMESharp)){
-			try {
-				$ACMEVersions = (get-Module -Name ACMESharp -ListAvailable).Version
-				$ACMEUpdateRequired = $false
-				ForEach ($ACMEVersion in $ACMEVersions) {
-					if (($ACMEVersion -eq [System.Version]"0.9.1") -and (-not $ACMEUpdateRequired)) {
-						Write-Verbose "v0.9.1 of ACMESharp is installed, continuing"
-					} else {
-						Write-Verbose "v0.9.1 of ACMESharp is NOT installed, update/downgrade required"
-						$ACMEUpdateRequired = $true
-					}
-				}
-				if ($ACMEUpdateRequired) {
-					Write-Verbose "Trying to update the ACMESharp modules"
-					Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1 -Force -ErrorAction SilentlyContinue
-				}
-				Write-Verbose "Try loading module ACMESharp"
-				Import-Module ACMESharp -ErrorAction Stop
-			} catch [System.IO.FileNotFoundException] {
-				Write-Verbose "Checking for PackageManagement"
-				if ([string]::IsNullOrWhiteSpace($(Get-Module -ListAvailable -Name PackageManagement))) {
-					Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
-					Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
-					Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
-					Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
-					Exit (1)
-				} else {
-					try {
-						if (-not ((Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue).Version -ge [System.Version]"2.8.5.208")) {
-							Write-Verbose "Installing Nuget"
-							Get-PackageProvider -Name NuGet -Force -ErrorAction SilentlyContinue | Out-Null
-						}
-						$installationPolicy = (Get-PSRepository -Name PSGallery).InstallationPolicy
-						if (-not ($installationPolicy.ToLower() -eq "trusted")){
-							Write-Verbose "Defining PSGallery PSRepository as trusted"
-							Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted
-						}
-						Write-Verbose "Installing ACMESharp"
-						try {
-							Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1.326 -Force -AllowClobber
-						} catch {
-							Write-Verbose "Installing ACMESharp again but without the -AllowClobber option"
-							Install-Module -Name ACMESharp -Scope AllUsers -RequiredVersion 0.9.1.326 -Force
-						}
-						if (-not ((Get-PSRepository -Name PSGallery).InstallationPolicy -eq $installationPolicy)){
-							Write-Verbose "Returning the PSGallery PSRepository InstallationPolicy to previous value"
-							Set-PSRepository -Name "PSGallery" -InstallationPolicy $installationPolicy | Out-Null
-						}
-						Write-Verbose "Try loading module ACMESharp"
-						Import-Module ACMESharp -ErrorAction Stop
-					} catch {
-						Write-Verbose "Error Details: $($_.Exception.Message)"
-						Write-Error "Error while loading and/or installing module"
-						Write-Warning "PackageManagement is not available please install this first or manually install ACMESharp"
-						Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
-						Write-Warning "ACMESharp: https://github.com/ebekker/ACMESharp"
-						Start-Process "https://www.microsoft.com/en-us/download/details.aspx?id=49186"
-						Exit (1)
-					}
-				}
-			}
-		}
+		Write-Verbose "Module already loaded"
 	}
 }
 
@@ -731,7 +667,15 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Host -ForeGroundColor Green "$($NSSession.Username)"
 	Write-Host -ForeGroundColor White -NoNewLine "- Version: "
 	Write-Host -ForeGroundColor Green "$($NSSession.Version)"
-	if (-not $WildCard){
+	try {
+		$NSVersion = [double]$($NSSession.version.split(" ")[1].Replace("NS","").Replace(":",""))
+		if ($NSVersion -lt 11){
+			Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
+			Write-Host -ForeGroundColor White "Only NetScaler version 11 and up is supported, please use an older version of this script!"
+			Exit (1)
+		}
+	} catch {}
+	if ($ValidationMethod -eq "http"){
 		try {
 			Write-Verbose "Verifying Content Switch"
 			$response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
@@ -813,7 +757,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 
 #region Services
 
-if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))-and ($WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
 	if ($Production) {
 		$BaseService = "LE_PROD"
 		Write-Verbose "Using the production service for real certificates"
@@ -827,113 +771,85 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))-and ($WildCard)) {
 }
 #endregion Services
 
-#region Vault
-
-if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard)) {
-	if ($Production) {
-		$VaultName = ":sys"
-		$BaseService = "LetsEncrypt"
-		Write-Verbose "Using the vault `"$VaultName`" for production certificates"
-	} else {
-		$VaultName = ":user"	
-		$BaseService = "LetsEncrypt-STAGING"
-		Write-Verbose "Using the vault `"$VaultName`" for test/staging purposes"
-	}
-	try {
-		Write-Verbose "Get ACMEVault `"$VaultName`"" 
-		$VaultData = ACMESharp\Get-ACMEVault -VaultProfile $VaultName
-	} catch {
-		Write-Verbose "`"$VaultName`" Vault not available, initialize"
-		$CleanVault = $true
-	}
-	if ($CleanVault) {
-		Write-Verbose "Initializing Vault"
-		ACMESharp\Initialize-ACMEVault -VaultProfile $VaultName -Force
-		Write-Verbose "Finished initializing"
-		$VaultData = ACMESharp\Get-ACMEVault -VaultProfile $VaultName
-	}
-	Write-Verbose "Configure vault `"$VaultName`" for `"$BaseService`""
-	ACMESharp\Set-ACMEVault -VaultProfile $VaultName -BaseService $BaseService
-}
-
-#endregion Vault
-
 #region Registration
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
 	Write-Host -ForeGroundColor White "By running this script you agree with the terms specified by Let's Encrypt."
-#	if ($WildCard) {
-#		try {
-#			Write-Verbose "Try to retreive the existing Registration"
-#			$Registration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh
-#			Set-PAAccount -ID $Registration.id
-#			if ($Registration.Contact -contains "mailto:$($EmailAddress)"){
-#				Write-Verbose "Existing registration found, no changes necessary"
-#			} else {
-#				Write-Verbose "Current registration `"$($Registration.Contacts)`" is not equal to `"$EmailAddress`", setting new registration"
-#				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
-#			}
-#		} catch {
-#			Write-Verbose "Setting new registration to `"$EmailAddress`""
-#			try {
-#				$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
-#				Write-Verbose "New registration successfull"
-#			} catch {
-#				Write-Verbose "Error New registration failed!"
-#				Write-Verbose "Error Details: $($_.Exception.Message)"
-#				Write-Host -ForeGroundColor Red "`nError New registration failed!"
-#			}
-#		}
-#		try {
-#			Set-PAAccount -ID $Registration.id | out-null
-#			Write-Verbose "Account $($Registration.id) set as default"
-#		} catch {
-#			Write-Verbose "Could not set default account"
-#			Write-Verbose "Error Details: $($_.Exception.Message)"
-#		}
-#		if (-not ($Registration.Contact -contains "mailto:$($EmailAddress)")) {
-#			throw "User registration failed"
-#			exit(1)
-#		}
-#		if ($Registration.status -ne "valid"){
-#			 throw "Account status is $($Account.status)"
-#			 exit(1)
-#		} else {
-#			Write-Verbose "Registration ID: $($Registration.id), Status: $($Registration.status)"
-#		}
-#	} else {
-	if (-not $WildCard) {
-		try {
-			Write-Verbose "Retreive existing Registration"
-			$Registration = ACMESharp\Get-ACMERegistration -VaultProfile $VaultName
-			if ($Registration.Contacts -contains "mailto:$($EmailAddress)"){
-				Write-Verbose "Existing registration found, no changes necessary"
-			} else {
-				Write-Verbose "Current registration `"$($Registration.Contacts)`" is not equal to `"$EmailAddress`", setting new registration"
-				$Registration = ACMESharp\New-ACMERegistration -VaultProfile $VaultName -Contacts "mailto:$($EmailAddress)" -AcceptTos
-			}
-		} catch {
-			Write-Verbose "Setting new registration to `"$EmailAddress`""
-			
-			$Registration = ACMESharp\New-ACMERegistration -VaultProfile $VaultName -Contacts "mailto:$($EmailAddress)" -AcceptTos
+	try {
+		Write-Verbose "Try to retreive the existing Registration"
+		$Registration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh | Where-Object {$_.status -eq "valid"}
+		if ($Registration -is [system.array]) {
+			$Registration = $Registration[$($Registration.Count -1)]
 		}
-		Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($Registration.TosLinkUri)`n`n`n"
-	} else {
-		Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($PAServer.meta.termsOfService)`n`n`n"
+		if ($Registration.Contact -contains "mailto:$($EmailAddress)"){
+			Write-Verbose "Existing registration found, no changes necessary"
+		} else {
+			Write-Verbose "Current registration `"$($Registration.Contact)`" is not equal to `"$EmailAddress`", setting new registration"
+			$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
+		}
+	} catch {
+		Write-Verbose "Setting new registration to `"$EmailAddress`""
+		try {
+			$Registration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
+			Write-Verbose "New registration successfull"
+		} catch {
+			Write-Verbose "Error New registration failed!"
+			Write-Verbose "Error Details: $($_.Exception.Message)"
+			Write-Host -ForeGroundColor Red "`nError New registration failed!"
+		}
 	}
+	try {
+		Set-PAAccount -ID $Registration.id | out-null
+		Write-Verbose "Account $($Registration.id) set as default"
+	} catch {
+		Write-Verbose "Could not set default account"
+		Write-Verbose "Error Details: $($_.Exception.Message)"
+	}
+	$Registration = Get-PAAccount
+	if (-not ($Registration.Contact -contains "mailto:$($EmailAddress)")) {
+		throw "User registration failed"
+		exit(1)
+	}
+	if ($Registration.status -ne "valid"){
+		 throw "Account status is $($Account.status)"
+		 exit(1)
+	} else {
+		Write-Verbose "Registration ID: $($Registration.id), Status: $($Registration.status)"
+	}
+	Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($PAServer.meta.termsOfService)`n`n`n"
 }
 
 #endregion Registration
 
 #region DNS
 
+#region Order
+
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
+	try {
+		Write-Verbose "Trying to create a new order"
+		$PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $KeyLength -Force
+		Start-Sleep -Seconds 1
+		$PAOrder = Posh-ACME\Get-PAOrder -Refresh
+		Start-Sleep -Seconds 1
+		Write-Verbose "Order data: $($PAOrder | Format-List | Out-String)"
+		$PAChallenge = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Select-Object DnsId,HTTP01Status,HTTP01Token,HTTP01Url,DNS01Status,DNS01Token,DNS01Url
+		Write-Verbose "Challenges: $($PAChallenge | Format-List | Out-String)"
+	} catch {
+		Write-Verbose "Error Details: $($_.Exception.Message)"
+		Write-Host -ForeGroundColor Red -NoNewLine "ERROR: Could not create the order."
+		Exit (1)
+	}
+}
+
+#endregion Order
+
 #region Primary DNS
 
-if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
 	Write-Verbose "Validating DNS record(s)"
 	$DNSObjects = @()
-	
 	Write-Verbose "Checking `"$CN`""
 	try {
 		if ($DisableIPCheck){
@@ -957,50 +873,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 		Write-Verbose "Error Details: $($_.Exception.Message)"
 		Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
 		Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter.`n"
-		throw "Error while retreiving IP Address, does not exist?"
-	}
-	
-	$Identifier = $null
-	$IdentifierAlias = $null
-	try {
-		Write-Verbose "Find pre-existing registration for `"$CN`""
-		$IdentifierAlias = "DNS-$($CN)-$IdentifierDate"
-		$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
-	} catch {
-		try {
-			Write-Verbose "Registration does not exist, registering `"$CN`""
-			$Identifier = ACMESharp\New-ACMEIdentifier -Dns $CN -Alias $IdentifierAlias -VaultProfile $VaultName
-		} catch {
-			Write-Verbose "Registration is invalid"
-			$Identifier = [PSCustomObject]@{
-				Status = "invalid"
-				Expires = $null
-			}
-		}
-	}
-	try {
-		if ($Identifier.Uri) {
-			Write-Verbose "Extracting data, checking validation"
-			$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
-			#$result = $response  | Select-Object status,expires
-			if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
-				$httpIdentifier = ($response | Select-Object -expand Challenges | Where-Object {$_.type -eq "http-01"})
-			}
-		} else {
-			Write-Verbose "No URI available to check..."
-		}
-	}catch{
-		Write-Verbose "Someting went wrong with the validation:`n$($response | Format-List | Out-String)"
-	}
-	Write-Verbose "Checking if current validation is still valid"
-	if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
-		Write-Verbose "Registration for `"$CN`" is still valid"
-		$Validation = $true
-		Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-List | Out-String)"
-	} else {
-		Write-Verbose "Registration for `"$CN`" is NOT valid, validation required"
-		$Validation = $false
-		Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-List | Out-String)"
+		Exit (1)
 	}
 	Write-Verbose "Storing values for reference"
 	$DNSObjects += [PSCustomObject]@{
@@ -1009,12 +882,10 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 		Status = $(if ([string]::IsNullOrWhiteSpace($PrimaryIP)) {$false} else {$true})
 		Match = $null
 		SAN = $false
-		DNSValid = $Validation
-		Alias = $IdentifierAlias
-		WildCard = $WildCard
+		Challenge = $PAChallenge | Where-Object {$_.DNSId -eq $CN}
 	}
 	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
-} elseif ($WildCard) {
+} elseif ($ValidationMethod -eq "dns") {
 	Write-Verbose "Validating DNS record(s) not necessary"
 	$DNSObjects = @()
 	$DNSObjects += [PSCustomObject]@{
@@ -1023,9 +894,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 		Status = $true
 		Match = $null
 		SAN = $false
-		DNSValid = $false
-		Alias = $null
-		WildCard = $WildCard
+		Challenge = $PAChallenge | Where-Object {$_.DNSId -eq $CN}
 	}
 	Write-Verbose "SAN Objects:`n$($DNSObjects | Format-List | Out-String)"
 }
@@ -1034,7 +903,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard
 
 #region SAN
 
-if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
+if (($ValidationMethod -eq "http") -or ($ValidationMethod -eq "dns")) {
 	$DNSRecord = $null
 	Write-Verbose "Checking if SAN entries are available"
 	if ([string]::IsNullOrWhiteSpace($SAN)) {
@@ -1042,7 +911,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	} else {
 		Write-Verbose "$($SAN.Count) found, checking each one"
 		foreach ($DNSRecord in $SAN) {
-			if (-not $WildCard){
+			if ($ValidationMethod -eq "http"){
 				Write-Verbose "Start with SAN: `"$DNSRecord`""
 				try {
 					if ($DisableIPCheck) {
@@ -1067,14 +936,14 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					$SANIP = "Skipped"
 				}
 			}
-			if ([string]::IsNullOrWhiteSpace($SANIP) -and (-not $WildCard)) {
+			if ([string]::IsNullOrWhiteSpace($SANIP) -and ($ValidationMethod -eq "http")) {
 				Write-Verbose "No valid entry found for DNSName:`"$DNSRecord`""
 				$SANMatch = $false
 				$SANStatus = $false
 			} else {
 				Write-Verbose "Valid entry found"
 				$SANStatus = $true
-				if ($WildCard) {
+				if ($ValidationMethod -eq "dns") {
 					Write-Verbose "WildCard certificate, so IP address checking was disabled"
 					$SANMatch = $true
 				} elseif ($SANIP -eq "NoIPCheck") {
@@ -1094,51 +963,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					}
 				}
 			}
-			if (-not($SANIP -eq "Skipped") -and (-not $WildCard)) {
-				$Identifier = $null
-				$IdentifierAlias = $null
-				try {
-					Write-Verbose "Find pre-existing registration for `"$DNSRecord`""
-					$IdentifierAlias = "DNS-$($DNSRecord)-$IdentifierDate"
-					$Identifier = ACMESharp\Get-ACMEIdentifier -IdentifierRef $IdentifierAlias -VaultProfile $VaultName
-				} catch {
-					try {
-						Write-Verbose "Registration does not exist, registering `"$DNSRecord`""
-						$Identifier = ACMESharp\New-ACMEIdentifier -Dns $DNSRecord -Alias $IdentifierAlias -VaultProfile $VaultName
-					} catch {
-						Write-Verbose "Registration is invalid"
-						$Identifier = [PSCustomObject]@{
-							Status = "invalid"
-							Expires = $null
-						}
-					}
-				}
-				
-				try {
-					if ($Identifier.Uri) {
-						Write-Verbose "Extracting data, checking validation"
-						$response = Invoke-RestMethod -Uri $Identifier.Uri -Method Get
-						#$result = $response  | Select-Object status,expires
-						if ((-not([string]::IsNullOrWhiteSpace($response.status))) -and (-not([string]::IsNullOrWhiteSpace($response.expires)))) {
-							$httpIdentifier = ($response | Select-Object -expand Challenges | Where-Object {$_.type -eq "http-01"})
-						}
-					} else {
-						Write-Verbose "No URI available to check..."
-					}
-				}catch{
-					Write-Verbose "Someting went wrong with the validation:`n$($response | Format-Table | Out-String)"
-				}
-				
-				Write-Verbose "Checking if current validation is still valid"
-				if (($response.status -eq "valid") -and ($([datetime]$response.Expires - $(Get-Date)).TotalDays -gt 1)) {
-					Write-Verbose "Registration for `"$DNSRecord`" is still valid"
-					$Validation = $true
-					Write-Verbose "Validation response:`n$($($response | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
-				} else {
-					Write-Verbose "Registration for `"$DNSRecord`" is NOT valid, validation required"
-					$Validation = $false
-					Write-Verbose "Validation response:`n$($($Identifier | Select-Object Identifier,Status,Expires) | Format-Table | Out-String)"
-				}
+			if (-not($SANIP -eq "Skipped") -and ($ValidationMethod -eq "http")) {
 				Write-Verbose "Storing values for reference"
 				$DNSObjects += [PSCustomObject]@{
 					DNSName = $DNSRecord
@@ -1146,20 +971,18 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 					Status = $SANStatus
 					Match = $SANMatch
 					SAN = $true
-					DNSValid = $Validation
+					Challenge = $PAChallenge | Where-Object {$_.DNSId -eq $DNSRecord}
 					Alias = $IdentifierAlias
-					WildCard = $WildCard
 				}
-			} elseif ($WildCard) {
+			} elseif ($ValidationMethod -eq "dns") {
 				$DNSObjects += [PSCustomObject]@{
 					DNSName = $DNSRecord
 					IPAddress = "0.0.0.0"
 					Status = $SANStatus
 					Match = $SANMatch
 					SAN = $true
-					DNSValid = $null
+					Challenge = $PAChallenge | Where-Object {$_.DNSId -eq $DNSRecord}
 					Alias = $null
-					WildCard = $WildCard
 				}
 			
 			}
@@ -1171,7 +994,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 
 #endregion SAN
 
-if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and ($ValidationMethod -eq "http")) {
 	Write-Verbose "Checking for invalid DNS Records"
 	$InvalidDNS = $DNSObjects | Where-Object {$_.Status -eq $false}
 	$SkippedDNS = $DNSObjects | Where-Object {$_.IPAddress -eq "Skipped"}
@@ -1200,25 +1023,26 @@ if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard))
 	}
 }
 
-
 #region ACME DNS Verification
 
-if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
 	Write-Verbose "Checking if validation is required"
-	$DNSValidationRequired = $DNSObjects | Where-Object {$_.DNSValid -eq $false}
-	if ($DNSValidationRequired) {
+	$ValidationRequired = $DNSObjects | Where-Object {$_.Challenge.HTTP01Status -ne "valid"}
+	Write-Verbose "$($ValidationRequired.Count) validations required $($ValidationRequired | Out-String)"
+	if ($ValidationRequired.Count -eq 0) {
 		Write-Verbose "Validation NOT required"
-		$NetScalerActionsRequired = $true
-	} else {
-		Write-Verbose "Validation required for the following objects:`n$($DNSValidationRequired | Select-Object DNSName | Format-List | Out-String)"
 		$NetScalerActionsRequired = $false
+	} else {
+		Write-Verbose "Validation IS required"
+		$NetScalerActionsRequired = $true
 	
 	}
+	Write-Verbose "NetScaler actions required: $($NetScalerActionsRequired)"
 }
 
 #region NetScaler pre dns
 	
-if ((-not $CleanNS) -and ($NetScalerActionsRequired) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRequired -and ($ValidationMethod -eq "http")) {
 	try {
 		Write-Verbose "Login to NetScaler and save session to global variable"
 		$NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
@@ -1340,7 +1164,7 @@ if ((-not $CleanNS) -and ($NetScalerActionsRequired) -and (-not $RemoveTestCerti
 
 #region Test NS CS
 
-if ((-not $CleanNS) -and ($NetScalerActionsRequired) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsRequired) -and ($ValidationMethod -eq "http")) {
 	Write-Host -ForeGroundColor White "Executing some tests, can take a couple of seconds/minutes..."
 	Write-Host -ForeGroundColor Yellow "`r`nPlease note that if a test fails, the script still tries to continue!`r`n"
 	ForEach ($DNSObject in $DNSObjects ) {
@@ -1399,57 +1223,50 @@ if ((-not $CleanNS) -and ($NetScalerActionsRequired) -and (-not $RemoveTestCerti
 
 #endregion Test NS CS
 
-#region DNS Check
+#region Validation
 
-if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
 	Write-Verbose "Check if DNS Records need to be validated"
 	Write-Host -ForeGroundColor White "Verification:"
 	foreach ($DNSObject in $DNSObjects) {
 		$DNSRecord = $DNSObject.DNSName
 		$Challenge = $null
-		$UpdateIdentifier = $null
-		Write-Verbose "Checking validation for `"$DNSRecord`""
-		if ($DNSObject.DNSValid){
+		$NSKeyAuthorization = $null
+		$DNSValidated = $null
+		$DNSValidated = (Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName} | Select-Object status).status
+		Write-Verbose "Checking validation for `"$DNSRecord`" => $($DNSValidated)"
+		if ($DNSValidated -eq "valid"){
 			Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
 			Write-Host -ForeGroundColor Green "`"$DNSRecord`""
 			Write-Host -ForeGroundColor White -NoNewLine " -Status: "
 			Write-Host -ForeGroundColor Green "=> Still valid"
 		} else {
 			Write-Verbose "New validation required, Start verifying"
-			$IdentifierAlias = $DNSObject.Alias
 			try {
-				try {
-					$CompletedChallenge = ACMESharp\Complete-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -Handler manual -VaultProfile $VaultName -Force
-					if ($([datetime]$CompletedChallenge.Expires - $(Get-Date)).TotalDays -gt 1) {
-						$Challenge = ($CompletedChallenge.Challenges | Where-Object { $_.Type -eq "http-01" }).Challenge
-					} else {
-						
-					}
-				} catch {
-					Write-Verbose "Error Details: $($_.Exception.Message)"
-					throw "Error while creating the Challenge"
-				}
-				Write-Verbose "Configuring NetScaler: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$($Challenge.FilePath)`")`""
-				$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"="HTTP.REQ.URL.CONTAINS(`"$($Challenge.FilePath)`")";}
+				$PAToken = ".well-known/acme-challenge/$($DNSObject.Challenge.HTTP01Token)"
+				Write-Verbose "Configuring NetScaler: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
+				$payload = @{"name"="$NSRspName";"action"="$NSRsaName";"rule"="HTTP.REQ.URL.CONTAINS(`"$PAToken`")";}
 				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
 				
 				Write-Verbose "Configuring NetScaler: Change Responder Action `"$NSRsaName`" to return "
-				Write-Verbose "`"HTTP/1.0 200 OK\r\n\r\n$($Challenge.FileContent)`""
-				$payload = @{"name"="$NSRsaName";"target"="`"HTTP/1.0 200 OK\r\n\r\n$($Challenge.FileContent)`"";}
+				$KeyAuth = Get-KeyAuthorization -Token $($DNSObject.Challenge.HTTP01Token) -Account $PAAccount
+				$NSKeyAuthorization = "`"HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)`""
+				Write-Verbose $NSKeyAuthorization
+				$payload = @{"name"="$NSRsaName";"target"=$NSKeyAuthorization;}
 				$response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
-				
 				Write-Verbose "Wait 1 second"
 				Start-Sleep -Seconds 1
-				Write-Verbose "Start Submitting Challenge"
+				Write-Verbose "Start submitting Challenge"
 				try {
-					ACMESharp\Submit-ACMEChallenge -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName | Out-Null
+					Send-ChallengeAck -ChallengeUrl $($DNSObject.Challenge.HTTP01Url) -Account $PAAccount
 				} catch {
 					Write-Verbose "Error Details: $($_.Exception.Message)"
 					throw "Error while submitting the Challenge"
 				}
 				Write-Verbose "Retreiving validation status"
 				try {
-					$UpdateIdentifier = (ACMESharp\Update-ACMEIdentifier -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName).Challenges | Where-Object {$_.Type -eq "http-01"}
+					$PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+					Write-Verbose "$($PAValidation | Format-List | Out-String)"
 				} catch {
 					Write-Verbose "Error Details: $($_.Exception.Message)"
 					throw "Error while retreiving validation status"
@@ -1458,21 +1275,22 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
 				Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
 				Write-Host -ForeGroundColor Green "`"$DNSRecord`""
 				Write-Host -ForeGroundColor White -NoNewLine " -Status: "
-				while(-NOT ($UpdateIdentifier.Status.ToLower() -eq "valid")) {
+				while(-NOT ($PAValidation.status -eq "valid")) {
 					Write-Host -ForeGroundColor Yellow -NoNewLine "="
 					$i++
-					Write-Verbose "($($i.ToString())) $DNSRecord is not (yet) validated, Wait 2 second"
+					Write-Verbose "$i $DNSRecord is not (yet) validated, Wait 2 second"
 					Start-Sleep -Seconds 2
 					Write-Verbose "Retreiving validation status"
 					try {
-						$UpdateIdentifier = (ACMESharp\Update-ACMEIdentifier -IdentifierRef $IdentifierAlias -ChallengeType http-01 -VaultProfile $VaultName).Challenges | Where-Object {$_.Type -eq "http-01"}
+						$PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+						Write-Verbose "$($PAValidation | Format-List | Out-String)"
 					} catch {
 						Write-Verbose "Error Details: $($_.Exception.Message)"
 						throw "Error while retreiving validation status"
 					}
-					if (($i -ge 60) -or ($UpdateIdentifier.Status.ToLower() -eq "invalid")) {break}
+					if (($i -ge 60) -or ($PAValidation.status.ToLower() -eq "invalid")) {break}
 				}
-				switch ($UpdateIdentifier.Status.ToLower()) {
+				switch ($PAValidation.status.ToLower()) {
 					"pending" {
 						Write-Host -ForeGroundColor Red "ERROR"
 						throw "It took to long for the validation ($DNSRecord) to complete, exiting now."
@@ -1486,7 +1304,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
 					}
 					default {
 						Write-Host -ForeGroundColor Red "ERROR"
-						throw "Unexpected status for `"$DNSRecord`" is `"$($UpdateIdentifier.Status)`", exiting now."
+						throw "Unexpected status for `"$DNSRecord`" is `"$($PAValidation.status)`", exiting now."
 					}
 				}
 			} catch {
@@ -1498,11 +1316,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (-not $WildCard)) {
 	"`r`n"
 }
 
-#endregion DNS Check
+#endregion Validation
 
 #region NetScaler post DNS
 
-if ((($NetScalerActionsRequired) -or ($CleanNS) -and (-not ($RemoveTestCertificates))) -and (-not $WildCard)) {
+if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -eq "http") -or ($ValidationMethod -eq "dns"))) {
 	Write-Verbose "Login to NetScaler and save session to global variable"
 	Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential
 	try {
@@ -1618,179 +1436,21 @@ if ((($NetScalerActionsRequired) -or ($CleanNS) -and (-not ($RemoveTestCertifica
 
 #endregion DNS
 
-#region WildCard
-
-#if ($WildCard) {
-#	try{
-#		$domains = @()
-#		$domains += $CN
-#		$domains += $SAN
-#		Write-Verbose "Checking if there is an existing order for `"$($CN)`""
-#		Write-Verbose "Domains: $($domains -Join ", ")"
-#		try {
-#			$order = Get-PAOrder -MainDomain $cn -Refresh
-#			Write-Verbose "Existing order found, setting as active order"
-#			Write-Verbose "$($order | Out-String)"
-#			Set-PAOrder -MainDomain $cn | Out-Null
-#			Write-Verbose "Retreive authorizations"
-#			$allAuths = @($order | Get-PAAuthorizations)
-#			Write-Verbose "$($allAuths | Out-String)"
-#		} catch {
-#			Write-Verbose "No existing order found, creating an new order"
-#			try {
-#				$order = New-PAOrder -Domain $domains -KeyLength $KeyLength -PfxPass $PfxPassword -FriendlyName $FriendlyName
-#				$order = Get-PAOrder -MainDomain $cn -Refresh
-#				Write-Verbose "$($order | Out-String)"
-#				Set-PAOrder -MainDomain $cn | Out-Null
-#				Write-Verbose "Retreive authorizations"
-#				$allAuths = @($order | Get-PAAuthorizations)
-#				Write-Verbose "$($allAuths | Out-String)"
-#			} catch {
-#				throw "New order creation failed"
-#			}
-#		}
-#	} catch {
-#		Write-Verbose "Caught an error: $($_.Exception.Message)"
-#		if ($_.Exception.Message -like "*is redundant with a wildcard domain in the same request*") {
-#			throw "One of the SANs specified is redundant like *.domain.com and www.domain.com, please correct changes"
-#			exit(1)
-#		} else {
-#			throw $_.Exception.Message
-#			exit(1)
-#		}
-#	}
-#	try {
-#		if ($Order.status -eq 'invalid') {
-#			throw "Order status is invalid for $($Order.MainDomain). Unable to continue."
-#		} elseif ($Order.status -eq 'ready') {
-#			Write-Warning "The order $($Order.MainDomain) has already completed challenge validation and is awaiting finalization."
-#		} elseif ($Order.status -eq 'pending') {
-#			Write-Verbose "Order status is pending"
-#			$acctKey = $Registration.key | ConvertFrom-Jwk
-#			$RecordsToValidate = @()
-#			for ($i=0; $i -lt ($allAuths.Count); $i++) {
-#				$auth = $allAuths[$i]
-#				if ($auth.status -eq 'valid') {
-#					Write-Verbose "$($auth.fqdn) authorization is already valid"
-#					continue
-#				} elseif ($auth.status -eq 'pending') {
-#					if ($auth.DNS01Status -eq 'pending') {
-#						Write-Verbose "Publishing DNS challenge for $($auth.fqdn)"
-#						$pubJwk = $acctKey | ConvertTo-Jwk -PublicOnly -AsJson
-#						$jwkBytes = [Text.Encoding]::UTF8.GetBytes($pubJwk)
-#						$sha256 = [Security.Cryptography.SHA256]::Create()
-#						$jwkHash = $sha256.ComputeHash($jwkBytes)
-#						$thumb = ConvertTo-Base64Url $jwkHash
-#						$keyAuth = "$($auth.DNS01Token).$thumb"
-#						$keyAuthBytes = [Text.Encoding]::UTF8.GetBytes($keyAuth)
-#						$keyAuthHash = $sha256.ComputeHash($keyAuthBytes)
-#						$txtValue = ConvertTo-Base64Url $keyAuthHash
-#						$txtRecord = "_acme-challenge.$($auth.DNSId)"
-#						$RecordsToValidate += [PSCustomObject]@{
-#							txtRecord = $txtRecord
-#							txtValue = $txtValue
-#							txtStatus = $auth.DNS01Status
-#						}
-#						Write-Verbose "txtRecord = $txtRecord | txtValue = $txtValue"
-#					}
-#				}
-#			}
-#			if (-not ($RecordsToValidate.Count -eq 0)) {
-#				Write-Host -NoNewLine -ForeGroundColor Yellow "`r`nWARNING: "
-#				Write-Host "Create the following DNS records withe their respective value (with the smallest TTL value)"
-#				Write-Host "Then re-run this script with the same parameters to continue."
-#				Write-Host "Then re-run this script with the same parameters to continue."
-#				Write-Host -ForeGroundColor Yellow "`r`n*********************************************************"
-#				Write-Host -ForeGroundColor Yellow "$($RecordsToValidate |fl | Out-String)"
-#				Write-Host -ForeGroundColor Yellow "*********************************************************`r`n"
-#			}
-#			Exit(2)
-#		} elseif ($Order.status -eq 'valid' -or $Order.status -eq 'processing') {
-#			Write-Warning "The server has already issued or is processing a certificate for order $($Order.MainDomain)."
-#		} 
-#		##$PAServer.nonce
-#
-#		
-#	} catch {
-#		Write-Verbose "Caught an error: $($_.Exception.Message)"
-#		throw $_.Exception.Message
-#		exit(1)
-#	}
-#	
-#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Publish-DNSChallenge.ps1
-#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Public/Submit-ChallengeValidation.ps1
-#	#https://github.com/rmbolger/Posh-ACME/blob/master/Posh-ACME/Private/Get-KeyAuthorization.ps1
-#	#https://github.com/rmbolger/Posh-ACME/blob/master/Tutorial.md
-#	
-#	
-#	try {
-#		#$PAServer = Get-PAServer -Refresh
-#		$header = @{ alg=$Registration.alg; kid=$Registration.location; nonce=$PAServer.nonce; url='' }
-#		$ToValidate = $allAuths | Where-Object {$_.DNS01Status -eq "pending"}
-#		ForEach ($Challenge in $ToValidate) {
-#			$header.url = $Challenge.DNS01Url
-#			try { $response = Invoke-ACME $header.url ($Registration.key | ConvertFrom-Jwk) $header '{}' -EA Stop } catch {}
-#			Write-Verbose "Response: $($response.Content)"
-#				
-#		}
-#		$RecordToValidateLocation = @(($allAuths | Where-Object {$_.DNS01Status -eq "pending"}).location)
-#		Wait-AuthValidation $RecordToValidateLocation 60 -Verbose
-#	
-#	} catch {}
+#region DNS Validation
 	
-	
-if ($WildCard) {
-	$domains = @()
-	$domains += $CN
-	$domains += $SAN
-	$Output = New-PACertificate -Domain $domains  -Contact $EmailAddress -CertKeyLength $KeyLength -AcceptTOS -AccountKeyLength "ec-256" -DirectoryUrl $BaseService -DnsPlugin Manual -FriendlyName $FriendlyName -PfxPass $PfxPassword -ValidationTimeout 60 -Force
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and (($ValidationMethod -eq "dns") -or ($ValidationMethod -eq "http"))) {
+	#$Output = New-PACertificate -Domain $domains  -Contact $EmailAddress -CertKeyLength $KeyLength -AcceptTOS -AccountKeyLength "ec-256" -DirectoryUrl $BaseService -DnsPlugin Manual -FriendlyName $FriendlyName -PfxPass $PfxPassword -ValidationTimeout 60 -Force
+	$NewCertificates = New-PACertificate -Domain $domains -DnsPlugin Manual -ValidationTimeout 60 -Force -FriendlyName $FriendlyName -PfxPass $PfxPassword
+	Start-Sleep -Seconds 1
 }
 	
-#endregion WildCard
+#endregion DNS Validation
 
 #region Certificates
 	
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 	$SANs = $DNSObjects | Where-Object {$_.SAN -eq $true}
 	$CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
-	if (-not $WildCard) {
-		$IdentifierAlias = $DNSObjects[0].Alias
-		try {
-			
-			if ($SANs) {
-				Write-Verbose "Get certificate with SANs"
-				Write-Verbose "Domain:`n$($DNSObjects[0] | Select-Object DNSName,Alias | Format-List | Out-String)"
-				Write-Verbose "Subject Alternative Names:`n$(@($SANs) | Select-Object DNSName,Alias | Format-List | Out-String)"
-				$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
-					-AlternativeIdentifierRefs @($SANs.Alias) `
-					-Alias $CertificateAlias `
-					-Generate `
-					-VaultProfile $VaultName
-			} else {
-				Write-Verbose "Get single DNS Name certificate"
-				Write-Verbose "Domain:`n$($($DNSObjects[0].DNSName) | Format-List * | Out-String)"
-				$NewCertificate = ACMESharp\New-ACMECertificate $IdentifierAlias `
-					-Alias $CertificateAlias `
-					-Generate `
-					-VaultProfile $VaultName
-			}
-			Write-Verbose "Submit Certificate request"
-			ACMESharp\Submit-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Out-Null
-		} catch {
-			throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
-		}
-		$i = 0
-		while (-not (ACMESharp\Update-ACMECertificate $CertificateAlias -VaultProfile $VaultName | Select-Object IssuerSerialNumber)) {
-			$i++
-			$imax = 120
-			if ($i -ge $imax) {
-				throw "Error: Retreiving certificate failed, took to long to complete"
-			}
-			Write-Host "Will continue $(($imax-$i)*2) more seconds for the certificate to come available..."
-			Start-Sleep -seconds 2
-		}
-	}
-	
 	$CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
 	Write-Verbose "Create directory `"$CertificateDirectory`" for storing the new certificates"
 	New-Item $CertificateDirectory -ItemType directory -force | Out-Null
@@ -1810,12 +1470,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 			$IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
 		}
 		Write-Verbose "Intermediate: `"$IntermediateCAFileName`""
-		if ($WildCard) {
-			$WCCertificate = Get-PACertificate -MainDomain $cn
-			Copy-Item $WCCertificate.ChainFile -Destination $IntermediateCAFullPath -Force
-		} else {
-			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportIssuerPEM $IntermediateCAFullPath -VaultProfile $VaultName | Out-Null
-		}
+		$WCCertificate = Get-PACertificate -MainDomain $cn
+		Copy-Item $WCCertificate.ChainFile -Destination $IntermediateCAFullPath -Force
 		if ($Production){
 			if ($CertificateName.length -ge 31) {
 				$CertificateName = "$($CertificateName.subString(0,31))"
@@ -1867,17 +1523,11 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		$CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
 		$CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
 		Write-Verbose "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
-		if ($WildCard) {
-			Copy-Item $WCCertificate.CertFile -Destination $CertificateFullPath -Force
-			Copy-Item $WCCertificate.KeyFile -Destination $CertificateKeyFullPath -Force
-			Copy-Item $WCCertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
-		} else {
-			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportCertificatePEM $CertificateFullPath -VaultProfile $VaultName | Out-Null
-			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportKeyPEM $CertificateKeyFullPath -VaultProfile $VaultName | Out-Null
-			ACMESharp\Get-ACMECertificate $CertificateAlias -ExportPkcs12 $CertificatePfxWithChainFileName -CertificatePassword "$PfxPassword" -VaultProfile $VaultName | Out-Null
-		}
+		Copy-Item $WCCertificate.CertFile -Destination $CertificateFullPath -Force
+		Copy-Item $WCCertificate.KeyFile -Destination $CertificateKeyFullPath -Force
+		Copy-Item $WCCertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
 		$certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force)
-		$output = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force) -ChainOption EndEntityCertOnly -Force
+		$NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force) -ChainOption EndEntityCertOnly -Force
 	}
 }
 
@@ -1938,32 +1588,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		Write-Verbose "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
 		$payload = @{"outfile"="$CertificatePemFileName";"Import"="true";"pkcs12file"="$CertificatePfxFileName";"des3"="true";"password"="$PfxPassword";"pempassphrase"="$PfxPassword"}
 		$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
-
-		#$CertificateCrtBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateFullPath -Encoding "Byte"))
-		#$CertificateKeyBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificateKeyFullPath -Encoding "Byte"))
-		#Write-Verbose "Uploading the certificate"
-		#$payload = @{"filename"="$CertificateFileName";"filecontent"="$CertificateCrtBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
-		#$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
-		#
-		#Write-Verbose "Uploading the certificate key"
-		#$payload = @{"filename"="$CertificateKeyFileName";"filecontent"="$CertificateKeyBase64";"filelocation"="/nsconfig/ssl/";"fileencoding"="BASE64";}
-		#$response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
-		#Write-Verbose "Finished uploading"
-		#Start-Sleep -Seconds 2
 		try {
-			#if ($NSUpdating) {
-			#	Write-Verbose "Update the certificate and key to the NetScaler config"
-			#	$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
-			#	$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
-			#	Write-Verbose "Succeeded"
-		    #
-			#} else {
-			#	Write-Verbose "Add the certificate and key to the NetScaler config"
-			#	$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificateFileName)";"key"="$($CertificateKeyFileName)"}
-			#	$response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
-			#	Write-Verbose "Succeeded"
-			#}
-			
 			$payload = @{"certkey"="$CertificateCertKeyName";"cert"="$($CertificatePemFileName)";"key"="$($CertificatePemFileName)";"password"="true";"inform"="PEM";"passplain"="$PfxPassword"}
 			
 			if ($NSUpdating) {
@@ -2000,13 +1625,13 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 		}
 		Write-Host -ForeGroundColor Green "Finished with the certificates!"
 		""
-		Write-Host -ForeGroundColor Yellow "IMPORTANT: Don't forget to delete the created DNS records!!"
-		""
+		if ($ValidationMethod -eq "dns") {
+			Write-Host -ForeGroundColor Yellow "IMPORTANT: Don't forget to delete the created DNS records!!"
+			""
+		}
 		if (-not $Production){
 			Write-Host -ForeGroundColor Green "You are now ready for the Production version!"
 			Write-Host -ForeGroundColor Green "Add the `"-Production`" parameter and rerun the same script."
-		}
-		if ($WildCard) {
 		}
 	} catch {
 		throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
