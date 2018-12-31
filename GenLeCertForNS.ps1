@@ -83,7 +83,7 @@
 	Removing ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v1.1
+	Version   : v1.2
 	Author    : John Billekens
 	Requires  : PowerShell v5.1 and up
 	            NetScaler 11.x and up
@@ -250,7 +250,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v1.1"
+$ScriptVersion = "v1.2"
 
 #region Functions
 
