@@ -977,9 +977,10 @@ if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and ($ValidationMetho
 #region ACME DNS Verification
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
-    Write-Verbose "Checking if validation is required"
-    $ValidationRequired = $DNSObjects | Where-Object {$_.Challenge.HTTP01Status -ne "valid"}
-    Write-Verbose "$($ValidationRequired.Count) validations required $($ValidationRequired | Out-String)"
+	Write-Verbose "Checking if validation is required"
+	$PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    $ValidationRequired = $PAOrderItem | Where-Object {$_.status -ne "valid"}
+    Write-Verbose "$($ValidationRequired.Count) validations required: $($ValidationRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
     if ($ValidationRequired.Count -eq 0) {
         Write-Verbose "Validation NOT required"
         $NetScalerActionsRequired = $false
@@ -988,7 +989,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         $NetScalerActionsRequired = $true
 	
     }
-    Write-Verbose "NetScaler actions required: $($NetScalerActionsRequired)"
+    Write-Verbose "NetScaler actions required: $($NetScalerActionsRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
 }
 
 #region NetScaler pre dns
@@ -1177,15 +1178,13 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsR
 #region Validation
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
-    Write-Verbose "Check if DNS Records need to be validated"
+    Write-Verbose "Check if Records need to be validated"
     Write-Host -ForeGroundColor White "Verification:"
     foreach ($DNSObject in $DNSObjects) {
-        $DNSRecord = $DNSObject.DNSName
         $NSKeyAuthorization = $null
-        $DNSValidated = $null
-        $DNSValidated = (Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName} | Select-Object status).status
-        Write-Verbose "Checking validation for `"$DNSRecord`" => $($DNSValidated)"
-        if ($DNSValidated -eq "valid") {
+        $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+        Write-Verbose "Checking validation for `"$($DNSObject.DNSName)`" => $($PAOrderItem.status)"
+        if ($PAOrderItem.status -eq "valid") {
             Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
             Write-Host -ForeGroundColor Green "`"$DNSRecord`""
             Write-Host -ForeGroundColor White -NoNewLine " -Status: "
@@ -1193,22 +1192,22 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         } else {
             Write-Verbose "New validation required, Start verifying"
             try {
-                $PAToken = ".well-known/acme-challenge/$($DNSObject.Challenge.HTTP01Token)"
+                $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
                 Write-Verbose "Configuring NetScaler: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
                 $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
 				
                 Write-Verbose "Configuring NetScaler: Change Responder Action `"$NSRsaName`" to return "
-                $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($DNSObject.Challenge.HTTP01Token) -Account $PAAccount
+                $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
                 $NSKeyAuthorization = "`"HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)`""
                 Write-Verbose $NSKeyAuthorization
                 $payload = @{"name" = "$NSRsaName"; "target" = $NSKeyAuthorization; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
                 Write-Verbose "Wait 1 second"
                 Start-Sleep -Seconds 1
-                Write-Verbose "Start submitting Challenge"
+				Write-Verbose -Message "Start submitting Challenge"
                 try {
-                    Send-ChallengeAck -ChallengeUrl $($DNSObject.Challenge.HTTP01Url) -Account $PAAccount
+                    Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while submitting the Challenge"
@@ -1216,24 +1215,20 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 Write-Verbose "Retreiving validation status"
                 try {
                     $PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                    Write-Verbose "$($PAValidation | Format-List | Out-String)"
+                    Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while retreiving validation status"
                 }
                 $i = 0
-                Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
-                Write-Host -ForeGroundColor Green "`"$DNSRecord`""
-                Write-Host -ForeGroundColor White -NoNewLine " -Status: "
                 while (-NOT ($PAValidation.status -eq "valid")) {
-                    Write-Host -ForeGroundColor Yellow -NoNewLine "="
-                    $i++
+					$i++
                     Write-Verbose "$i $DNSRecord is not (yet) validated, Wait 2 second"
                     Start-Sleep -Seconds 2
                     Write-Verbose "Retreiving validation status"
                     try {
                         $PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                        Write-Verbose "$($PAValidation | Format-List | Out-String)"
+                        Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
                     } catch {
                         Write-Verbose "Error Details: $($_.Exception.Message)"
                         throw "Error while retreiving validation status"
@@ -1242,28 +1237,32 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 }
                 switch ($PAValidation.status.ToLower()) {
                     "pending" {
-                        Write-Host -ForeGroundColor Red "ERROR"
-                        throw "It took to long for the validation ($DNSRecord) to complete, exiting now."
+						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor Red "=> ERROR"
+                        throw "It took to long for the validation ($($DNSObject.DNSName)) to complete, exiting now."
                     }
                     "invalid" {
-                        Write-Host -ForeGroundColor Red "ERROR"
-                        throw "Validation for `"$DNSRecord`" is invalid! Exiting now."
+						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor Red "=> ERROR"
+                        throw "Validation for `"$($DNSObject.DNSName)`" is invalid! Exiting now."
                     }
                     "valid" {
-                        Write-Host -ForeGroundColor Green "> validated successfully"
+						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor Green "=> validated successfully"
                     }
                     default {
-                        Write-Host -ForeGroundColor Red "ERROR"
-                        throw "Unexpected status for `"$DNSRecord`" is `"$($PAValidation.status)`", exiting now."
+						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor Red "=> ERROR"
+                        throw "Unexpected status for `"$($DNSObject.DNSName)`" is `"$($PAValidation.status)`", exiting now."
                     }
                 }
             } catch {
                 Write-Verbose "Error Details: $($_.Exception.Message)"
-                throw "Error while verifying `"$DNSRecord`", exiting now"
+                throw "Error while verifying `"$($DNSObject.DNSName)`", exiting now"
             }
         }
     }
-    "`r`n"
+    ""
 }
 
 #endregion Validation
@@ -1389,7 +1388,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -in "
 #region DNS Challenge
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "dns")) {
-    $TXTRecords = $DNSObjects.Challenge | Select-Object fqdn, `
+	$PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    $TXTRecords = $PAOrderItems | Select-Object fqdn, `
     @{L = 'TXTName'; E = {"_acme-challenge.$($_.fqdn.Replace('*.',''))"}}, `
     @{L = 'TXTValue'; E = {ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token)}}
     Write-Host -ForegroundColor White "`r`n`r`n************************************************************"
@@ -1420,7 +1420,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
             Write-Host -ForegroundColor White -NoNewLine " - $($Record.fqdn): "
 			Write-Verbose "`r`nTrying to retreive the TXT record"
 			$result = $null
-			$dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer
+			$dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
 			if ([string]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
 				Write-Verbose -Message "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records"
 				$result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
@@ -1450,37 +1450,48 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
 
 #region Finalizing Order
 	
-if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "http", "dns")) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "dns")) {
+    Write-Verbose "Check if DNS Records need to be validated"
+    Write-Host -ForeGroundColor White "Verification:"
     $i = 0
-    if ($ValidationMethod -eq "dns") {
-        while ($i -le 10) {
-            Foreach ($DNSObject in $DNSObjects) {
-                $DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
-                if (($DNSObject.Challenge.DNS01Status -notlike "valid") -and ($DNSObject.Challenge.DNS01Status -notlike "invalid")) {
-                    Write-Verbose -Message "Asking Let's Encrypt to verify records"
-                    try {
-						Write-Verbose -Message "Sending Ack `"$($DNSObject.Challenge.DNS01Url)`""
-						Posh-ACME\Send-ChallengeAck -ChallengeUrl $($DNSObject.Challenge.DNS01Url) -Account $PAAccount
-                    } catch {
-                        Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
-                        throw "Error while submitting the Challenge"
-                    }
-                    Start-Sleep -Milliseconds 100
-                    $DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
-                    Write-Verbose "$($DNSObject.Challenge | Format-List | Out-String)"
+    while ($i -le 10) {
+        Foreach ($DNSObject in $DNSObjects) {
+            $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+            #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
+            if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
+				Write-Verbose -Message "Start submitting Challenge"
+                try {
+					Write-Verbose "Start submitting Challenge"
+					Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
+                } catch {
+                    Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
+                    throw "Error while submitting the Challenge"
                 }
-            }
-            $Items = $DNSObjects.Challenge | Select-Object DNS01Status -ExpandProperty DNS01Status
-            if (($Items | Where-Object {($_ -notlike "valid") -and ($_ -notlike "invalid")}).Count -eq 0) {
-                Write-Verbose -Message "All items verified"
-                break
-            }
-            $i++
-            Write-Verbose -Message "Waiting, round: $i"
-            Start-Sleep -Seconds 2
+                Start-Sleep -Milliseconds 100
+                try {
+                    $PAValidation = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+                    Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
+                } catch {
+                    Write-Verbose "Error Details: $($_.Exception.Message)"
+                    throw "Error while retreiving validation status"
+                }
+                #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
+                Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
+			} 
+			
+			$PAOrderItem = $null
         }
+        $Items = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object status -ExpandProperty status
+        if (($Items | Where-Object {($_ -notlike "valid") -and ($_ -notlike "invalid")}).Count -eq 0) {
+            Write-Verbose -Message "All items verified"
+            break
+        }
+        $i++
+        Write-Verbose -Message "Waiting, round: $i"
+        Start-Sleep -Seconds 2
     }
-
+}
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "http", "dns")) {
     $Order = $PAOrder | Posh-ACME\Get-PAOrder -Refresh
     if ($Order.status -eq "ready") {
         Write-Verbose "Order is ready"
