@@ -35,7 +35,7 @@
 .PARAMETER NSCspName
 	NetScaler Content Switch Policy name
 .PARAMETER NSCertNameToUpdate
-	NetScaler SSL Certkey name currently in use, that needs to be renewd
+	NetScaler SSL Certkey name currently in use, that needs to be renewed
 .PARAMETER CertDir
 	Directory where to store the certificates
 .PARAMETER PfxPassword
@@ -45,10 +45,10 @@
 .PARAMETER EmailAddress
 	The email address used to request the certificates and receive a notification when the certificates (almost) expires
 .PARAMETER CN
-	(Common Name) The Primary (first) dns record for the certificaten
+	(Common Name) The Primary (first) dns record for the certificate
 	Example: "domain.com"
 .PARAMETER SAN
-	(Subject Alternate Name) every following domain listed in this certificate. sepatated via an comma , and between quotes "".
+	(Subject Alternate Name) every following domain listed in this certificate. separated via an comma , and between quotes "".
 	Example: "sts.domain.com","www.domain.com","vpn.domain.com"
 	Example (Wildcard): "*.domain.com","*.pub.domain.com"
 	NOTE: Only a DNS verification is possible when using WildCards!
@@ -57,7 +57,7 @@
 	Example (Empty display name) : ""
 	Example (Set your own name) : "Custom Name"
 .PARAMETER Production
-	Use the production Let's encryt server
+	Use the production Let's encrypt server
 .PARAMETER DisableIPCheck
 	If you want to skip the IP Address verification, specify this parameter
 .PARAMETER CleanPoshACMEStorage
@@ -77,13 +77,13 @@
 	NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
-	Cleaning left over configuration from this schript when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
+	Cleaning left over configuration from this script when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
 .EXAMPLE
 	.\GenLeCertForNS.ps1 -RemoveTestCertificates -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
 	Removing ALL the test certificates from your NetScaler.
 .NOTES
 	File Name : GenLeCertForNS.ps1
-	Version   : v1.2
+	Version   : v1.2.1
 	Author    : John Billekens
 	Requires  : PowerShell v5.1 and up
 	            NetScaler 11.x and up
@@ -250,7 +250,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v1.2"
+$ScriptVersion = "v1.2.1"
 
 #region Functions
 
@@ -551,7 +551,7 @@ if (-not $PfxPassword) {
         $PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length, 2)
         $PfxPasswordGenerated = $true
     } catch {
-        Write-Verbose "An error occured while generating a Password."
+        Write-Verbose "An error occurred while generating a Password."
     }
 } else {
     $PfxPasswordGenerated = $false
@@ -705,8 +705,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
             Write-Verbose "Verifying Content Switch"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
         } catch {
-            $ExcepMessage = $_.Exception.Message
-            Write-Verbose "Error Details: $ExcepMessage"
+            $ExceptMessage = $_.Exception.Message
+            Write-Verbose "Error Details: $ExceptMessage"
         } finally {
             if (($response.errorcode -eq "0") -and `
                 ($response.csvserver.type -eq "CONTENT") -and `
@@ -717,21 +717,21 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor Green "`"$NSCsVipName`" -> Found"
                 Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
                 Write-Host -ForeGroundColor Green "OK`r`n"
-            } elseif ($ExcepMessage -like "*(404) Not Found*") {
+            } elseif ($ExceptMessage -like "*(404) Not Found*") {
                 Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
                 Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
-                Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+                Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
                 Write-Host -ForeGroundColor Red "FAILED!`r`n"
                 Write-Host -ForeGroundColor Red "  Exiting now`r`n"
                 Exit (1)
-            } elseif ($ExcepMessage -like "*The remote server returned an error*") {
+            } elseif ($ExceptMessage -like "*The remote server returned an error*") {
                 Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
                 Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
                 Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
-                Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+                Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
                 Write-Host -ForeGroundColor Red "FAILED!`r`n"
                 Write-Host -ForeGroundColor Red "  Exiting now`r`n"
@@ -739,9 +739,9 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
                 Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
                 Write-Host -ForeGroundColor Red "ERROR: Content Switch is $($response.csvserver.servicetype) and NOT HTTP`r`n"
-                if (-not ([string]::IsNullOrWhiteSpace($ExcepMessage))) {
+                if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
                     Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
-                    Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 }
                 Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
@@ -763,9 +763,9 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
                 }
-                if (-not ([string]::IsNullOrWhiteSpace($ExcepMessage))) {
+                if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
                     Write-Host -ForeGroundColor White -NoNewLine "`r`n- Error message: "
-                    Write-Host -ForeGroundColor Red "`"$ExcepMessage`"`r`n"
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 }
                 Write-Host -ForeGroundColor White -NoNewLine "- Data: "
                 $response.csvserver  | Format-List -Property * | Out-String
@@ -802,7 +802,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
     Write-Host -ForeGroundColor White "By running this script you agree with the terms specified by Let's Encrypt."
     try {
-        Write-Verbose "Try to retreive the existing Registration"
+        Write-Verbose "Try to retrieve the existing Registration"
         $PARegistration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh | Where-Object {$_.status -eq "valid"}
         if ($PARegistration -is [system.array]) {
             $PARegistration = $PARegistration | Sort-Object id | Select-Object -Last 1
@@ -817,7 +817,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         Write-Verbose "Setting new registration to `"$EmailAddress`""
         try {
             $PARegistration = Posh-ACME\New-PAAccount -Contact $EmailAddress -KeyLength $KeyLength -AcceptTOS
-            Write-Verbose "New registration successfull"
+            Write-Verbose "New registration successful"
         } catch {
             Write-Verbose "Error New registration failed!"
             Write-Verbose "Error Details: $($_.Exception.Message)"
@@ -909,7 +909,7 @@ if ($ValidationMethod -in "http", "dns") {
             }
         } catch {
             Write-Verbose "Error Details: $($_.Exception.Message)"
-            Write-Host -ForeGroundColor Red "`nError while retreiving IP Address,"
+            Write-Host -ForeGroundColor Red "`nError while retrieving IP Address,"
             if ($DNSObject.SAN) {
                 Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
                 Write-Host -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped`n"
@@ -922,7 +922,7 @@ if ($ValidationMethod -in "http", "dns") {
         }
         if ($DNSObject.SAN) {
             $CNObject = $DNSObjects | Where-Object {$_.SAN -eq $false}
-            Write-Verbose "All IP Adressess must match, checking"
+            Write-Verbose "All IP Addresses must match, checking"
             if ($DNSObject.IPAddress -match $CNObject.IPAddress) {
                 Write-Verbose "`"$($DNSObject.IPAddress) ($($DNSObject.DNSName))`" matches to `"$($CNObject.IPAddress) ($($CNObject.DNSName))`""
                 $DNSObject.Match = $true
@@ -968,9 +968,9 @@ if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and ($ValidationMetho
         $DNSNoMatch | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object {Write-Host -ForeGroundColor Red "$_"}
         throw "ERROR: Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))"
     } elseif ($DisableIPCheck) {
-        Write-Verbose "IP Adressess checking was skipped"
+        Write-Verbose "IP Addresses checking was skipped"
     } else {
-        Write-Verbose "All IP Adressess match"
+        Write-Verbose "All IP Addresses match"
     }
 }
 
@@ -1005,16 +1005,16 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
             Write-Verbose "Verifying Content Switch"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type csvserver -Resource $NSCsVipName
         } catch {
-            $ExcepMessage = $_.Exception.Message
-            Write-Verbose "Error Details: $ExcepMessage"
+            $ExceptMessage = $_.Exception.Message
+            Write-Verbose "Error Details: $ExceptMessage"
             throw "Could not find/read out the content switch `"$NSCsVipName`" not available?"
         } finally {
-            if ($ExcepMessage -like "*(404) Not Found*") {
+            if ($ExceptMessage -like "*(404) Not Found*") {
                 Write-Host -ForeGroundColor Red "`nThe Content Switch `"$NSCsVipName`" does NOT exist!"
                 Exit (1)
-            } elseif ($ExcepMessage -like "*The remote server returned an error*") {
+            } elseif ($ExceptMessage -like "*The remote server returned an error*") {
                 Write-Host -ForeGroundColor Red "`nUnknown error found while checking the Content Switch: `"$NSCsVipName`""
-                Write-Host -ForeGroundColor Red "Error message: `"$ExcepMessage`""
+                Write-Host -ForeGroundColor Red "Error message: `"$ExceptMessage`""
                 Exit (1)
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
                 Write-Host -ForeGroundColor Red "`nThe Content Switch is $($response.csvserver.servicetype) and NOT HTTP"
@@ -1061,7 +1061,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
                 $payload = @{"name" = "$NSRsaName"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
             } catch {
-                throw "Something went wrong with reconfiguring the existing action `"$NSRsaName`", exiting now..."
+                throw "Something went wrong with re-configuring the existing action `"$NSRsaName`", exiting now..."
             }	
         } catch {
             $payload = @{"name" = "$NSRsaName"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
@@ -1077,7 +1077,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
 
             } catch {
-                throw "Something went wrong with reconfiguring the existing policy `"$NSRspName`", exiting now..."
+                throw "Something went wrong with re-configuring the existing policy `"$NSRspName`", exiting now..."
             }	
         } catch {
             $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
@@ -1125,7 +1125,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsR
         $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
         Write-Verbose "Testing if the Content Switch is available on `"http://$($DNSObject.DNSName)`" (via internal DNS)"
         try {
-            Write-Verbose "Retreiving data"
+            Write-Verbose "Retrieving data"
             $Result = Invoke-WebRequest -URI $TestURL -TimeoutSec 2
             Write-Verbose "Success, output: $($Result| Out-String)"
         } catch {
@@ -1137,7 +1137,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsR
             Write-Host -ForeGroundColor Green "OK"
         } else {
             Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS): "
-            Write-Host -ForeGroundColor Yellow "Not successfull, maybe not resolvable internally?"
+            Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable internally?"
             Write-Verbose "Output: $($Result| Out-String)"
         }
 		
