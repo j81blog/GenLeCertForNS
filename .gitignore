@@ -14,3 +14,6 @@
 *.dll
 
 # End of https://www.gitignore.io/api/batch,powershell
+
+# ignore Visual Studio Code settings
+.vscode
