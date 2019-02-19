@@ -1,97 +1,104 @@
 <#
 .SYNOPSIS
-	Create a new or update an existing Let's Encrypt certificate for one or more domains and add it to a store then update the SSL bindings for a NetScaler
+    Create a new or update an existing Let's Encrypt certificate for one or more domains and add it to a store then update the SSL bindings for a ADC
 .DESCRIPTION
-	The script will utilize Posh-ACME to create a new or update an existing certificate for one or more domains. If generated successfully the script will add the certificate to the NetScaler and update the SSL binding for a web site. This script is for use with a Citrix NetScaler (v11.x and up). The script will validate the dns records provided. For example, the domain(s) listed must be configured with the same IP Address that is configured (via NAT) to a Content Switch. Or Use DNS verification if a WildCard domain was specified.
+    The script will utilize Posh-ACME to create a new or update an existing certificate for one or more domains. If generated successfully the script will add the certificate to the ADC and update the SSL binding for a web site. This script is for use with a Citrix ADC (v11.x and up). The script will validate the dns records provided. For example, the domain(s) listed must be configured with the same IP Address that is configured (via NAT) to a Content Switch. Or Use DNS verification if a WildCard domain was specified.
 .PARAMETER Help
-	Display the detailed information about this script
+    Display the detailed information about this script
 .PARAMETER CleanNS
-	Cleanup the NetScaler configuration made within this script, for when somewhere it gone wrong
+    Clean-up the ADC configuration made within this script, for when somewhere it gone wrong
 .PARAMETER RemoveTestCertificates
-	Tries to remove all the Test certificates signed by the "Fake LE Intermediate X1" staging intermediate
+    Remove all the Test/Staging certificates signed by the "Fake LE Intermediate X1" staging intermediate
 .PARAMETER NSManagementURL
-	Management URL, used to connect to the NetScaler
+    Management URL, used to connect to the ADC
 .PARAMETER NSUserName
-	NetScaler username with enough access to configure it
+    ADC username with enough access to configure it
 .PARAMETER NSPassword
-	NetScaler username password
+    ADC username password
 .PARAMETER NSCredential
-	Use a PSCredential object instead of a username or password. Use "Get-Credential" to generate a credential object
-	C:\PS> $Credential = Get-Credential
+    Use a PSCredential object instead of a username or password. Use "Get-Credential" to generate a credential object
+    C:\PS> $Credential = Get-Credential
 .PARAMETER NSCsVipName
-	Name of the HTTP NetScaler Content Switch used for the domain validation
+    Name of the HTTP ADC Content Switch used for the domain validation
 .PARAMETER NSCsVipBinding
-	NetScaler Content Switch binding used for the validation
+    ADC Content Switch binding used for the validation
+    Default: 11
 .PARAMETER NSSvcName
-	NetScaler Load Balance service name
+    ADC Load Balance service name
+    Default "svc_letsencrypt_cert_dummy"
 .PARAMETER NSSvcDestination
-	IP Address used for the NetScaler Service (leave default 1.2.3.4), only change when already used
+    IP Address used for the ADC Service (leave default 1.2.3.4, only change when already used
 .PARAMETER NSLbName
-	NetScaler Load Balance VIP name
+    ADC Load Balance VIP name
+    Default: "lb_letsencrypt_cert"
 .PARAMETER NSRspName
-	NetScaler Responder Policy name
+    ADC Responder Policy name
+    Default: "rsp_letsencrypt"
 .PARAMETER NSRsaName
-	NetScaler Responder Action name
+    ADC Responder Action name
+    Default: "rsa_letsencrypt"
 .PARAMETER NSCspName
-	NetScaler Content Switch Policy name
+    ADC Content Switch Policy name
+    Default: "csp_NSCertCsp"
 .PARAMETER NSCertNameToUpdate
-	NetScaler SSL Certkey name currently in use, that needs to be renewed
+    ADC SSL Certkey name currently in use, that needs to be renewed
 .PARAMETER CertDir
-	Directory where to store the certificates
+    Directory where to store the certificates
 .PARAMETER PfxPassword
-	Password for the PFX certificate, generated at the end
+    Specify a password for the PFX certificate, if not specified a new password is generated at the end
 .PARAMETER KeyLength
-	Set the Certificate KeyLength, default: 2048
+    Specify the KeyLength of the new to be generated certificate
+    Default: 2048
 .PARAMETER EmailAddress
-	The email address used to request the certificates and receive a notification when the certificates (almost) expires
+    The email address used to request the certificates and receive a notification when the certificates (almost) expires
 .PARAMETER CN
-	(Common Name) The Primary (first) dns record for the certificate
-	Example: "domain.com"
+    (Common Name) The Primary (first) dns record for the certificate
+    Example: "domain.com"
 .PARAMETER SAN
-	(Subject Alternate Name) every following domain listed in this certificate. separated via an comma , and between quotes "".
-	Example: "sts.domain.com","www.domain.com","vpn.domain.com"
-	Example (Wildcard): "*.domain.com","*.pub.domain.com"
-	NOTE: Only a DNS verification is possible when using WildCards!
+    (Subject Alternate Name) every following domain listed in this certificate. separated via an comma , and between quotes "".
+    Example: "sts.domain.com","www.domain.com","vpn.domain.com"
+    Example Wildcard: "*.domain.com","*.pub.domain.com"
+    NOTE: Only a DNS verification is possible when using WildCards!
 .PARAMETER FriendlyName
-	The displayname of the certificate, if not specified the CN will used. You can specify an empty value if required.
-	Example (Empty display name) : ""
-	Example (Set your own name) : "Custom Name"
+    The displayname of the certificate, if not specified the CN will used. You can specify an empty value if required.
+    Example (Empty display name) : ""
+    Example (Set your own name) : "Custom Name"
 .PARAMETER Production
-	Use the production Let's encrypt server
+    Use the production Let's encryt server, without this parameter the staging (test) server will be used
 .PARAMETER DisableIPCheck
-	If you want to skip the IP Address verification, specify this parameter
+    If you want to skip the IP Address verification, specify this parameter
 .PARAMETER CleanPoshACMEStorage
-	Force cleanup of the Posh-Acme certificates located in "%LOCALAPPDATA%\Posh-ACME"
+    Force cleanup of the Posh-Acme certificates located in "%LOCALAPPDATA%\Posh-ACME"
 .PARAMETER SaveNSConfig
-	Save the NetScaler config after all the changes.
+    Save the ADC config after all the changes
 .PARAMETER EnableLogging
-	Start logging to file. The name of the logfile can be specified with the "-LogLocation" parameter.
+    Start logging to file. The name of the logfile can be specified with the "-LogLocation" parameter
 .PARAMETER LogLocation
-	Specify the logfile name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
+    Specify the logfile name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
-	Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
+    Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
-	Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the NetScaler.
-	NOTE: Only a DNS verification is possible when using WildCards!
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
+    Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
+    NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
-	Cleaning left over configuration from this script when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
+    .\GenLeCertForNS.ps1 -CleanNS -NSManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
+    Cleaning left over configuration from this script when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
 .EXAMPLE
-	.\GenLeCertForNS.ps1 -RemoveTestCertificates -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
-	Removing ALL the test certificates from your NetScaler.
+    .\GenLeCertForNS.ps1 -RemoveTestCertificates -NSManagementURL "http://192.168.100.1" -NSPassword "P@ssw0rd" -NSUserName "nsroot" -Verbose
+    Removing ALL the test certificates from your ADC.
 .NOTES
-	File Name : GenLeCertForNS.ps1
-	Version   : v1.2.1
-	Author    : John Billekens
-	Requires  : PowerShell v5.1 and up
-	            NetScaler 11.x and up
-	            Run As Administrator
-				Posh-ACME 3.1.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
-				Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
+    File Name : GenLeCertForNS.ps1
+    Version   : v2.0.0
+    Author    : John Billekens
+    Requires  : PowerShell v5.1 and up
+                ADC 11.x and up
+                Run As Administrator
+                Posh-ACME 3.1.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
 .LINK
-	https://blog.j81.nl
+    https://blog.j81.nl
 #>
 
 [cmdletbinding(DefaultParameterSetName = "LECertificates")]
@@ -99,31 +106,31 @@ param(
     [Parameter(ParameterSetName = "Help", Mandatory = $true)]
     [alias("h")]
     [switch]$Help,
-	
+    
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $true)]
     [switch]$CleanNS,
 
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
     [switch]$RemoveTestCertificates,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanPoshACMEStorage", Mandatory = $true)]
     [switch]$CleanPoshACMEStorage,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [alias("URL")]
     [string]$NSManagementURL,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [alias("User", "Username")]
     [string]$NSUserName,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
@@ -153,16 +160,16 @@ param(
             }
         })][alias("Credential")]
     [object]$NSCredential,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$CN,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [string[]]$SAN = @(),
-	
+    
     [string]$FriendlyName = $CN,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [ValidateSet(
         'http',
@@ -173,45 +180,45 @@ param(
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $true)]
     [string]$NSCsVipName,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSCsVipBinding = 11,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSSvcName = "svc_letsencrypt_cert_dummy",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSSvcDestination = "1.2.3.4",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSLbName = "lb_letsencrypt_cert",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSRspName = "rsp_letsencrypt",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSRsaName = "rsa_letsencrypt",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [string]$NSCspName = "csp_NSCertCsp",
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [string]$NSCertNameToUpdate,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$CertDir,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [string]$PfxPassword = $null,
-			
+            
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [ValidateScript( {
             if ($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
@@ -219,38 +226,38 @@ param(
             } else {
                 $true
             }
-        })][int32]$KeyLength = 2048,	
-	
+        })][int32]$KeyLength = 2048,    
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [string]$EmailAddress,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [switch]$DisableIPCheck,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [switch]$SaveNSConfig,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Parameter(Mandatory = $false)]
     [switch]$EnableLogging,
-	
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
-    [string]$LogLocation = "$(Split-Path -parent $MyInvocation.MyCommand.Path)\GenLeCertForNS_log.txt",
-	
+    [string]$LogLocation = "$PSScriptRoot\GenLeCertForNS_log.txt",
+    
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [switch]$Production
-	
+    
 )
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v1.2.1"
+$ScriptVersion = "v2.0.0"
 
 #region Functions
 
@@ -288,7 +295,7 @@ function InvokeNSRestApi {
     )
     # https://github.com/devblackops/NetScaler
     if ([string]::IsNullOrEmpty($($Session.ManagementURL))) {
-        throw "ERROR. Probably not logged into the NetScaler"
+        throw "ERROR. Probably not logged into the ADC"
     }
     if ($Stat) {
         $uri = "$($Session.ManagementURL)/nitro/v1/stat/$Type"
@@ -384,7 +391,7 @@ function InvokeNSRestApi {
     }
 }
 
-function Connect-NetScaler {
+function Connect-ADC {
     [cmdletbinding()]
     param(
         [parameter(Mandatory)]
@@ -446,7 +453,7 @@ function Connect-NetScaler {
     }
 
     try {
-        Write-Verbose -Message "Trying to retreive the NetScaler version"
+        Write-Verbose -Message "Trying to retreive the ADC version"
         $params = @{
             Uri           = "$ManagementURL/nitro/v1/config/nsversion"
             Method        = 'GET'
@@ -465,7 +472,7 @@ function Connect-NetScaler {
         Write-Verbose -Message "Error. See response: `n$($response | Format-List -Property * | Out-String)"
     }
     $Script:NSSession = $session
-	
+    
     if ($PassThru) {
         return $session
     }
@@ -498,8 +505,8 @@ Write-Verbose "Script was started with the following Parameters: $($PSBoundParam
 #region Help
 
 if ($Help -or ($PSBoundParameters.Count -eq 0)) {
-    Write-Verbose "Displaying the Detailed help info for: `"$($MyInvocation.MyCommand.Name)`""
-    Get-Help $MyInvocation.MyCommand.Path -Detailed
+    Write-Verbose "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
+    Get-Help "$PSScriptRoot\GenLeCertForNS.ps1" -Detailed
     Exit(0)
 }
 #endregion Help
@@ -567,7 +574,7 @@ if (-not([string]::IsNullOrWhiteSpace($NSCredential))) {
     [pscredential]$NSCredential = New-Object System.Management.Automation.PSCredential ($NSUserName, $NSPassword)
 } else {
     Write-Verbose "No valid username/password or credential specified. Enter a username and password, e.g. `"nsroot`""
-    [pscredential]$NSCredential = Get-Credential -Message "NetScaler username and password:"
+    [pscredential]$NSCredential = Get-Credential -Message "ADC username and password:"
 }
 Write-Verbose "Starting new session"
 $DNSObjects = @()
@@ -679,12 +686,12 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 
 #endregion Load Module
 
-#region NetScaler Check
+#region ADC Check
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-    Write-Verbose "Login to NetScaler and save session to global variable"
-    Write-Host -ForeGroundColor White "`r`nNetScaler:"
-    $NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
+    Write-Verbose "Login to ADC and save session to global variable"
+    Write-Host -ForeGroundColor White "`r`nADC:"
+    $NSSession = Connect-ADC -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
     Write-Host -ForeGroundColor White -NoNewLine "- URL: "
     Write-Host -ForeGroundColor Green "$NSManagementURL"
     Write-Host -ForeGroundColor White -NoNewLine "- Username: "
@@ -695,7 +702,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         $NSVersion = [double]$($NSSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
         if ($NSVersion -lt 11) {
             Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
-            Write-Host -ForeGroundColor White "Only NetScaler version 11 and up is supported, please use an older version of this script!"
+            Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version of this script!"
             Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
             Exit (1)
         }
@@ -778,7 +785,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     }
 }
 
-#endregion NetScaler Check
+#endregion ADC Check
 
 #region Services
 
@@ -886,9 +893,9 @@ if ($ValidationMethod -in "http", "dns") {
                 $DNSObject.Challenge = $PAChallenge
             }
             if ($DisableIPCheck) {
-				if ($ValidationMethod -eq "http") {
-				    Write-Warning "Skipping IP check"
-				}
+                if ($ValidationMethod -eq "http") {
+                    Write-Warning "Skipping IP check"
+                }
                 $DNSObject.IPAddress = "NoIPCheck"
                 $DNSObject.Match = $true
                 $DNSObject.Status = $true
@@ -977,28 +984,28 @@ if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and ($ValidationMetho
 #region ACME DNS Verification
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
-	Write-Verbose "Checking if validation is required"
-	$PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    Write-Verbose "Checking if validation is required"
+    $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     $ValidationRequired = $PAOrderItem | Where-Object {$_.status -ne "valid"}
     Write-Verbose "$($ValidationRequired.Count) validations required: $($ValidationRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
     if ($ValidationRequired.Count -eq 0) {
         Write-Verbose "Validation NOT required"
-        $NetScalerActionsRequired = $false
+        $ADCActionsRequired = $false
     } else {
         Write-Verbose "Validation IS required"
-        $NetScalerActionsRequired = $true
-	
+        $ADCActionsRequired = $true
+    
     }
-    Write-Verbose "NetScaler actions required: $($NetScalerActionsRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
+    Write-Verbose "ADC actions required: $($ADCActionsRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
 }
 
-#region NetScaler pre dns
-	
-if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRequired -and ($ValidationMethod -eq "http")) {
+#region ADC pre dns
+    
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $ADCActionsRequired -and ($ValidationMethod -eq "http")) {
     try {
-        Write-Verbose "Login to NetScaler and save session to global variable"
-        $NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
-        Write-Verbose "Enable required NetScaler Features, Load Balancer, Responder, Content Switch and SSL"
+        Write-Verbose "Login to ADC and save session to global variable"
+        $NSSession = Connect-ADC -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
+        Write-Verbose "Enable required ADC Features, Load Balancer, Responder, Content Switch and SSL"
         $payload = @{"feature" = "LB RESPONDER CS SSL"}
         $response = InvokeNSRestApi -Session $NSSession -Method POST -Type nsfeature -Payload $payload -Action enable
         try {
@@ -1023,26 +1030,26 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
             }
         }
         try { 
-            Write-Verbose "Configuring NetScaler: Check if Load Balancer Service exists"
+            Write-Verbose "Configuring ADC: Check if Load Balancer Service exists"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type service -Resource $NSSvcName
             Write-Verbose "Yep it exists, continuing"
         } catch {
             Write-Verbose "It does not exist, continuing"
-            Write-Verbose "Configuring NetScaler: Create Load Balance Service `"$NSSvcName`""
+            Write-Verbose "Configuring ADC: Create Load Balance Service `"$NSSvcName`""
             $payload = @{"name" = "$NSSvcName"; "ip" = "$NSSvcDestination"; "servicetype" = "HTTP"; "port" = "80"; "healthmonitor" = "NO"; } 
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type service -Payload $payload -Action add
         }
         try { 
-            Write-Verbose "Configuring NetScaler: Check if Load Balancer exists"
+            Write-Verbose "Configuring ADC: Check if Load Balancer exists"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver -Resource $NSLbName
             Write-Verbose "Yep it exists, continuing"
         } catch {
             Write-Verbose "Nope, continuing"
-            Write-Verbose "Configuring NetScaler: Create Load Balance Vip `"$NSLbName`""
+            Write-Verbose "Configuring ADC: Create Load Balance Vip `"$NSLbName`""
             $payload = @{"name" = "$NSLbName"; "servicetype" = "HTTP"; "ipv46" = "0.0.0.0"; "Port" = "0"; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type lbvserver -Payload $payload -Action add
         } finally {
-            Write-Verbose "Configuring NetScaler: Bind Service `"$NSSvcName`" to Load Balance Vip `"$NSLbName`""
+            Write-Verbose "Configuring ADC: Bind Service `"$NSSvcName`" to Load Balance Vip `"$NSLbName`""
             Write-Verbose "Checking LB Service binding"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type lbvserver_service_binding -Resource $NSLbName
             if ($response.lbvserver_service_binding.servicename -eq $NSSvcName) {
@@ -1053,32 +1060,32 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
             }
         }
         try {
-            Write-Verbose "Configuring NetScaler: Check if Responder Action exists"
+            Write-Verbose "Configuring ADC: Check if Responder Action exists"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderaction -Resource $NSRsaName
             try {
                 Write-Verbose "Yep it exists, continuing"
-                Write-Verbose "Configuring NetScaler: Change Responder Action to default values"
+                Write-Verbose "Configuring ADC: Change Responder Action to default values"
                 $payload = @{"name" = "$NSRsaName"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
             } catch {
                 throw "Something went wrong with re-configuring the existing action `"$NSRsaName`", exiting now..."
-            }	
+            }    
         } catch {
             $payload = @{"name" = "$NSRsaName"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action add
         }
         try { 
-            Write-Verbose "Configuring NetScaler: Check if Responder Policy exists"
+            Write-Verbose "Configuring ADC: Check if Responder Policy exists"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type responderpolicy -Resource $NSRspName
             try {
                 Write-Verbose "Yep it exists, continuing"
-                Write-Verbose "Configuring NetScaler: Change Responder Policy to default values"
+                Write-Verbose "Configuring ADC: Change Responder Policy to default values"
                 $payload = @{"name" = "$NSRspName"; "action" = "rsa_letsencrypt"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
 
             } catch {
                 throw "Something went wrong with re-configuring the existing policy `"$NSRspName`", exiting now..."
-            }	
+            }    
         } catch {
             $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action add
@@ -1087,7 +1094,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
             $response = InvokeNSRestApi -Session $NSSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
         }
         try { 
-            Write-Verbose "Configuring NetScaler: Check if Content Switch Policy exists"
+            Write-Verbose "Configuring ADC: Check if Content Switch Policy exists"
             $response = InvokeNSRestApi -Session $NSSession -Method GET -Type cspolicy -Resource $NSCspName
             Write-Verbose "It does, continuing"
             if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
@@ -1095,28 +1102,28 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $NetScalerActionsRe
                 $response = InvokeNSRestApi -Session $NSSession -Method PUT -Type cspolicy -Payload $payload
             }
         } catch {
-            Write-Verbose "Configuring NetScaler: Create Content Switch Policy"
+            Write-Verbose "Configuring ADC: Create Content Switch Policy"
             $payload = @{"policyname" = "$NSCspName"; "rule" = 'HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")'; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type cspolicy -Payload $payload -Action add
-			
-			
+            
+            
         }
-        Write-Verbose "Configuring NetScaler: Bind Load Balancer `"$NSLbName`" to Content Switch `"$NSCsVipName`" with prio: $NSCsVipBinding"
+        Write-Verbose "Configuring ADC: Bind Load Balancer `"$NSLbName`" to Content Switch `"$NSCsVipName`" with prio: $NSCsVipBinding"
         $payload = @{"name" = "$NSCsVipName"; "policyname" = "$NSCspName"; "priority" = "$NSCsVipBinding"; "targetlbvserver" = "$NSLbName"; "gotopriorityexpression" = "END"; }
         $response = InvokeNSRestApi -Session $NSSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
-        Write-Verbose "Finished configuring the NetScaler"
+        Write-Verbose "Finished configuring the ADC"
     } catch {
         Write-Verbose "Error Details: $($_.Exception.Message)"
-        throw "ERROR: Could not configure the NetScaler, exiting now"
+        throw "ERROR: Could not configure the ADC, exiting now"
     }
     Start-Sleep -Seconds 2
 }
 
-#endregion NetScaler pre dns
+#endregion ADC pre dns
 
 #region Test NS CS
 
-if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsRequired) -and ($ValidationMethod -eq "http")) {
+if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequired) -and ($ValidationMethod -eq "http")) {
     Write-Host -ForeGroundColor White "Executing some tests, can take a couple of seconds/minutes..."
     Write-Host -ForeGroundColor Yellow "`r`nPlease note that if a test fails, the script still tries to continue!`r`n"
     ForEach ($DNSObject in $DNSObjects ) {
@@ -1140,7 +1147,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($NetScalerActionsR
             Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable internally?"
             Write-Verbose "Output: $($Result| Out-String)"
         }
-		
+        
         try {
             Write-Verbose "Checking if Public IP is available for external DNS testing"
             [ref]$ValidIP = [ipaddress]::None
@@ -1186,18 +1193,18 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         Write-Verbose "Checking validation for `"$($DNSObject.DNSName)`" => $($PAOrderItem.status)"
         if ($PAOrderItem.status -eq "valid") {
             Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
-            Write-Host -ForeGroundColor Green "`"$DNSRecord`""
+            Write-Host -ForeGroundColor Green "`"$($DNSObject.DNSName)`""
             Write-Host -ForeGroundColor White -NoNewLine " -Status: "
             Write-Host -ForeGroundColor Green "=> Still valid"
-        } else {
+        } else { 
             Write-Verbose "New validation required, Start verifying"
             try {
                 $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
-                Write-Verbose "Configuring NetScaler: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
+                Write-Verbose "Configuring ADC: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
                 $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
-				
-                Write-Verbose "Configuring NetScaler: Change Responder Action `"$NSRsaName`" to return "
+                
+                Write-Verbose "Configuring ADC: Change Responder Action `"$NSRsaName`" to return "
                 $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
                 $NSKeyAuthorization = "`"HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)`""
                 Write-Verbose $NSKeyAuthorization
@@ -1205,7 +1212,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderaction -Payload $payload -Action set
                 Write-Verbose "Wait 1 second"
                 Start-Sleep -Seconds 1
-				Write-Verbose -Message "Start submitting Challenge"
+                Write-Verbose -Message "Start submitting Challenge"
                 try {
                     Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
                 } catch {
@@ -1222,7 +1229,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 }
                 $i = 0
                 while (-NOT ($PAValidation.status -eq "valid")) {
-					$i++
+                    $i++
                     Write-Verbose "$i $DNSRecord is not (yet) validated, Wait 2 second"
                     Start-Sleep -Seconds 2
                     Write-Verbose "Retreiving validation status"
@@ -1237,21 +1244,21 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 }
                 switch ($PAValidation.status.ToLower()) {
                     "pending" {
-						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
                         Write-Host -ForeGroundColor Red "=> ERROR"
                         throw "It took to long for the validation ($($DNSObject.DNSName)) to complete, exiting now."
                     }
                     "invalid" {
-						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
                         Write-Host -ForeGroundColor Red "=> ERROR"
                         throw "Validation for `"$($DNSObject.DNSName)`" is invalid! Exiting now."
                     }
                     "valid" {
-						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
                         Write-Host -ForeGroundColor Green "=> validated successfully"
                     }
                     default {
-						Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
+                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
                         Write-Host -ForeGroundColor Red "=> ERROR"
                         throw "Unexpected status for `"$($DNSObject.DNSName)`" is `"$($PAValidation.status)`", exiting now."
                     }
@@ -1267,11 +1274,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
 
 #endregion Validation
 
-#region NetScaler post DNS
+#region ADC post DNS
 
 if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -in "http", "dns"))) {
-    Write-Verbose "Login to NetScaler and save session to global variable"
-    Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential
+    Write-Verbose "Login to ADC and save session to global variable"
+    Connect-ADC -ManagementURL $NSManagementURL -Credential $NSCredential
     try {
         Write-Verbose "Checking if a binding exists for `"$NSCspName`""
         $Filters = @{"policyname" = "$NSCspName"}
@@ -1377,9 +1384,9 @@ if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -in "
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Responder Action" 
     }
-}	
+}    
 
-#endregion NetScaler Post DNS
+#endregion ADC Post DNS
 
 #endregion ACME DNS Verification
 
@@ -1388,7 +1395,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanNS) -or ($ValidationMethod -in "
 #region DNS Challenge
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "dns")) {
-	$PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     $TXTRecords = $PAOrderItems | Select-Object fqdn, `
     @{L = 'TXTName'; E = {"_acme-challenge.$($_.fqdn.Replace('*.',''))"}}, `
     @{L = 'TXTValue'; E = {ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token)}}
@@ -1397,10 +1404,10 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
     Write-Host -ForegroundColor White "* at your DNS provider before continuing!                  *"
     Write-Host -ForegroundColor White "* If not, DNS validation will fail!                        *"
     Write-Host -ForegroundColor White "************************************************************`r`n"
-	Write-Host -ForegroundColor White "$($TXTRecords | Format-List | Out-String)"
+    Write-Host -ForegroundColor White "$($TXTRecords | Format-List | Out-String)"
     Write-Host -ForegroundColor White "************************************************************`r`n"
-	$($TXTRecords | Format-List | Out-String) | clip.exe
-	Write-Host -ForegroundColor Yellow "`r`nNOTE: Data is copied tot the clipboard"
+    $($TXTRecords | Format-List | Out-String) | clip.exe
+    Write-Host -ForegroundColor Yellow "`r`nNOTE: Data is copied tot the clipboard"
     $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
     if (-not ($answer.ToLower() -eq "yes")) {
         Write-Host -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
@@ -1418,16 +1425,16 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         Write-Host -ForegroundColor White "Pre-Checking the TXT records:"
         Foreach ($Record in $TXTRecords) {
             Write-Host -ForegroundColor White -NoNewLine " - $($Record.fqdn): "
-			Write-Verbose "`r`nTrying to retreive the TXT record"
-			$result = $null
-			$dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
-			if ([string]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
-				Write-Verbose -Message "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records"
-				$result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
-			} else {
-				Write-Verbose -Message "Using DNS Server `"$($dnsserver.PrimaryServer)`" for resolving the TXT records"
-				$result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly
-			}
+            Write-Verbose "`r`nTrying to retreive the TXT record"
+            $result = $null
+            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
+            if ([string]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
+                Write-Verbose -Message "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records"
+                $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
+            } else {
+                Write-Verbose -Message "Using DNS Server `"$($dnsserver.PrimaryServer)`" for resolving the TXT records"
+                $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly
+            }
             Write-Verbose "Result:$($result | Format-List | Out-String)"
             if ([string]::IsNullOrWhiteSpace($result.Strings -like "*$($Record.TXTValue)*")) {
                 Write-Host -ForegroundColor Yellow "Could not determine"
@@ -1441,15 +1448,15 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         $issues = $true
     }
     if ($issues) {
-	   Write-Warning "Found issues during the initial test. TXT validation might fail. Waiting an aditional 30 seconds before continuing"
-	   Start-Sleep -Seconds 20
+       Write-Warning "Found issues during the initial test. TXT validation might fail. Waiting an aditional 30 seconds before continuing"
+       Start-Sleep -Seconds 20
     }
 }
 
 #endregion DNS Challenge
 
 #region Finalizing Order
-	
+    
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "dns")) {
     Write-Verbose "Check if DNS Records need to be validated"
     Write-Host -ForeGroundColor White "Verification:"
@@ -1459,10 +1466,10 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
             $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
             #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
             if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
-				Write-Verbose -Message "Start submitting Challenge"
+                Write-Verbose -Message "Start submitting Challenge"
                 try {
-					Write-Verbose "Start submitting Challenge"
-					Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
+                    Write-Verbose "Start submitting Challenge"
+                    Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
                     throw "Error while submitting the Challenge"
@@ -1477,9 +1484,9 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 }
                 #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
                 Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
-			} 
-			
-			$PAOrderItem = $null
+            } 
+            
+            $PAOrderItem = $null
         }
         $Items = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object status -ExpandProperty status
         if (($Items | Where-Object {($_ -notlike "valid") -and ($_ -notlike "invalid")}).Count -eq 0) {
@@ -1496,17 +1503,17 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
     if ($Order.status -eq "ready") {
         Write-Verbose "Order is ready"
     } else {
-		Write-Verbose "Order is still not ready, validation failed?" -Verbose
-	}
-	$NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DnsPlugin Manual -ValidationTimeout 60 -Force -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
-	Write-Verbose "$($NewCertificates | Format-List | Out-String)"
+        Write-Verbose "Order is still not ready, validation failed?" -Verbose
+    }
+    $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DnsPlugin Manual -ValidationTimeout 60 -Force -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
+    Write-Verbose "$($NewCertificates | Format-List | Out-String)"
     Start-Sleep -Seconds 1
 }
-	
+    
 #endregion Finalizing Order
 
 #region Certificates
-	
+    
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     $CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
     $CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
@@ -1575,7 +1582,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
             $CertificatePemFileName = "TST-$CertificateAlias.pem"
             $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
         }
-		
+        
         $CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
         $CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
         $CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
@@ -1591,7 +1598,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 
 #endregion Certificates
 
-#region Upload certificates to NetScaler
+#region Upload certificates to ADC
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     try {
@@ -1604,12 +1611,12 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
             $IntermediateCADetails = $CertDetails.sslcertkey | Where-Object {$_.serial -eq $IntermediateCASerial}
         }
         if (-not ($IntermediateCADetails)) {
-            Write-Verbose "Uploading `"$IntermediateCAFileName`" to the NetScaler"
+            Write-Verbose "Uploading `"$IntermediateCAFileName`" to the ADC"
             $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
             $payload = @{"filename" = "$IntermediateCAFileName"; "filecontent" = "$IntermediateCABase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type systemfile -Payload $payload
             Write-Verbose "Succeeded"
-            Write-Verbose "Add the certificate to the NetScaler config"
+            Write-Verbose "Add the certificate to the ADC config"
             $payload = @{"certkey" = "$IntermediateCACertKeyName"; "cert" = "/nsconfig/ssl/$($IntermediateCAFileName)"; }
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
             Write-Verbose "Succeeded"
@@ -1620,12 +1627,12 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         $ExistingCertificateDetails = $CertDetails.sslcertkey | Where-Object {$_.certkey -eq $NSCertNameToUpdate}
         if (($NSCertNameToUpdate) -and ($ExistingCertificateDetails)) {
             $CertificateCertKeyName = $($ExistingCertificateDetails.certkey)
-            Write-Verbose "Existing certificate `"$($ExistingCertificateDetails.certkey)`" found on the netscaler, start updating"
+            Write-Verbose "Existing certificate `"$($ExistingCertificateDetails.certkey)`" found on the ADC, start updating"
             try {
                 Write-Verbose "Unlinking certificate"
                 $payload = @{"certkey" = "$($ExistingCertificateDetails.certkey)"; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
-				
+                
             } catch {
                 Write-Verbose "Certificate was not linked"
             }
@@ -1648,19 +1655,19 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
         try {
             $payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$PfxPassword"}
-			
+            
             if ($NSUpdating) {
-                Write-Verbose "Update the certificate and key to the NetScaler config"
+                Write-Verbose "Update the certificate and key to the ADC config"
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action update
                 Write-Verbose "Succeeded"
-		
+        
             } else {
-                Write-Verbose "Add the certificate and key to the NetScaler config"
+                Write-Verbose "Add the certificate and key to the ADC config"
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload
                 Write-Verbose "Succeeded"
             }
         } catch {
-            Write-Warning "Caught an error, certificate not added to the NetScaler Config"
+            Write-Warning "Caught an error, certificate not added to the ADC Config"
             Write-Warning "Details: $($_.Exception.Message | Out-String)"
         }
         Write-Verbose "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
@@ -1668,7 +1675,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action link
         Write-Verbose "Succeeded"
         if ($SaveNSConfig) {
-            Write-Verbose "Saving NetScaler configuration"
+            Write-Verbose "Saving ADC configuration"
             InvokeNSRestApi -Session $NSSession -Method POST -Type nsconfig -Action save
         }
         ""
@@ -1685,7 +1692,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         ""
         if ($ValidationMethod -eq "dns") {
             Write-Host -ForeGroundColor Yellow "IMPORTANT: Don't forget to delete the created DNS records!!"
-			Write-Host -ForegroundColor Yellow "$($TXTRecords | Select-Object TXTName | Format-List | Out-String)"
+            Write-Host -ForegroundColor Yellow "$($TXTRecords | Select-Object TXTName | Format-List | Out-String)"
         }
         if (-not $Production) {
             Write-Host -ForeGroundColor Green "You are now ready for the Production version!"
@@ -1696,13 +1703,13 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     }
 }
 
-#endregion Upload certificates to NetScaler
+#endregion Upload certificates to ADC
 
 #region Remove Test Certificates
 
 if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
-    Write-Verbose "Login to NetScaler and save session to global variable"
-    $NSSession = Connect-NetScaler -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
+    Write-Verbose "Login to ADC and save session to global variable"
+    $NSSession = Connect-ADC -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
     $IntermediateCACertKeyName = "Fake LE Intermediate X1"
     $IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
     Write-Verbose "Retreiving existing certificates"
@@ -1719,7 +1726,7 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
         $payload = @{"certkey" = "$($LinkedCertificate.certkey)"; }
         try {
             $response = InvokeNSRestApi -Session $NSSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
-            Write-Host -NoNewLine "NetScaler, unlinked: "
+            Write-Host -NoNewLine "ADC, unlinked: "
             Write-Host -ForeGroundColor Green "$($LinkedCertificate.certkey)"
         } catch {
             Write-Warning "Could not unlink certkey `"$($LinkedCertificate.certkey)`""
@@ -1729,24 +1736,24 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
     ForEach ($FakeCert in $FakeCerts) {
         try {
             $response = InvokeNSRestApi -Session $NSSession -Method DELETE -Type sslcertkey -Resource $($FakeCert.certkey)
-            Write-Host -NoNewLine "NetScaler, removing: "
+            Write-Host -NoNewLine "ADC, removing: "
             Write-Host -ForeGroundColor Green "$($FakeCert.certkey)"
         } catch {
-            Write-Warning "Could not delete certkey `"$($FakeCert.certkey)`" from the netscaler"
+            Write-Warning "Could not delete certkey `"$($FakeCert.certkey)`" from the ADC"
         }
         $CertFilePath = (split-path $($FakeCert.cert) -Parent).Replace("\", "/")
         if ([string]::IsNullOrEmpty($CertFilePath)) {
             $CertFilePath = "/nsconfig/ssl/"
         }
         $CertFileName = split-path $($FakeCert.cert) -Leaf
-        Write-Host -NoNewLine "NetScaler, deleted: "
+        Write-Host -NoNewLine "ADC, deleted: "
         Write-Host -ForeGroundColor Green "$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)"
         $KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\", "/")
         if ([string]::IsNullOrEmpty($KeyFilePath)) {
             $KeyFilePath = "/nsconfig/ssl/"
         }
         $KeyFileName = split-path $($FakeCert.key) -Leaf
-        Write-Host -NoNewLine "NetScaler, deleted: "
+        Write-Host -NoNewLine "ADC, deleted: "
         Write-Host -ForeGroundColor Green "$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)"
         $Arguments = @{"filelocation" = "$CertFilePath"; }
         try {
@@ -1760,7 +1767,7 @@ if ((-not ($CleanNS)) -and $RemoveTestCertificates) {
         } catch {
             Write-Warning "Could not delete file: `"$KeyFileName`" from location: `"$KeyFilePath`""
         }
-		
+        
     }
     $Arguments = @{"filelocation" = "/nsconfig/ssl"; }
     $CertFiles = InvokeNSRestApi -Session $NSSession -Method Get -Type systemfile -Arguments $Arguments
