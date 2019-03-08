@@ -90,12 +90,12 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.0.0
+    Version   : v2.1.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.1.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 3.2.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -257,7 +257,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.0.0"
+$ScriptVersion = "v2.1.0"
 
 #region Functions
 
@@ -477,7 +477,6 @@ function Connect-ADC {
         return $session
     }
 }
-
 function ConvertTo-TxtValue([string]$KeyAuthorization) {
     $keyAuthBytes = [Text.Encoding]::UTF8.GetBytes($KeyAuthorization)
     $sha256 = [Security.Cryptography.SHA256]::Create()
@@ -585,6 +584,7 @@ $DNSObjects += [PSCustomObject]@{
     Match     = $null
     SAN       = $false
     Challenge = $null
+    Done      = $false
 }
 if (-not ([string]::IsNullOrWhiteSpace($SAN))) {
     [string[]]$SAN = @($SAN.Split(","))
@@ -596,6 +596,7 @@ if (-not ([string]::IsNullOrWhiteSpace($SAN))) {
             Match     = $null
             SAN       = $true
             Challenge = $null
+            Done      = $false
         }
     }
 }
@@ -621,8 +622,7 @@ if ($CleanPoshACMEStorage) {
 #region Load Module
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-    #$PoshACMEVersion = "2.6.0"
-    $PoshACMEVersion = "3.1.1"
+    $PoshACMEVersion = "3.2.1"
     Write-Verbose "Try loading the Posh-ACME v$PoshACMEVersion Modules"
     if (-not(Get-Module Posh-ACME)) {
         try {
@@ -1460,33 +1460,42 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "dns")) {
     Write-Verbose "Check if DNS Records need to be validated"
     Write-Host -ForeGroundColor White "Verification:"
+    Foreach ($DNSObject in $DNSObjects) {
+        $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+        Write-Verbose -Message "OrderItem: $($PAOrderItem| Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
+        if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
+            try {
+                Write-Verbose "Start submitting Challenge"
+                Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
+                Write-Verbose "Done"
+            } catch {
+                Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
+                throw "Error while submitting the Challenge"
+            }
+            Write-Verbose -Message "Finished submitting Challenge"
+        } elseif ($PAOrderItem.DNS01Status -like "valid") {
+            Write-Verbose -Message "This order is done"
+            $DNSObject.Done = $true
+        }
+        $PAOrderItem = $null
+    }
     $i = 0
     while ($i -le 10) {
         Foreach ($DNSObject in $DNSObjects) {
-            $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-            #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
-            if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
-                Write-Verbose -Message "Start submitting Challenge"
+            if ($DNSObject.Done -eq $false) {
                 try {
-                    Write-Verbose "Start submitting Challenge"
-                    Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
-                } catch {
-                    Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
-                    throw "Error while submitting the Challenge"
-                }
-                Start-Sleep -Milliseconds 100
-                try {
-                    $PAValidation = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                    Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
+                    $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+                    Write-Verbose -Message "OrderItem: $($PAOrderItem| Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
+                    if ($PAOrderItem.DNS01Status -in "valid","invalid") {
+                        Write-Verbose -Message "This order is done. Status: $($PAOrderItem.DNS01Status)"
+                        $DNSObject.Done = $true
+                    }
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while retreiving validation status"
                 }
-                #$DNSObject.Challenge = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object fqdn, DnsId, HTTP01Status, HTTP01Token, HTTP01Url, DNS01Status, DNS01Token, DNS01Url | Where-Object {$_.fqdn -eq $DNSObject.DNSName }
-                Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
-            } 
-            
-            $PAOrderItem = $null
+                $PAOrderItem = $null
+            }
         }
         $Items = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object status -ExpandProperty status
         if (($Items | Where-Object {($_ -notlike "valid") -and ($_ -notlike "invalid")}).Count -eq 0) {
@@ -1498,14 +1507,17 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         Start-Sleep -Seconds 2
     }
 }
+
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "http", "dns")) {
     $Order = $PAOrder | Posh-ACME\Get-PAOrder -Refresh
+    Write-Verbose -Message "Order state: $($Order.status)"
     if ($Order.status -eq "ready") {
         Write-Verbose "Order is ready"
     } else {
         Write-Verbose "Order is still not ready, validation failed?" -Verbose
     }
-    $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DnsPlugin Manual -ValidationTimeout 60 -Force -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
+    Write-Verbose -Message "Requesting Certificate"
+    $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
     Write-Verbose "$($NewCertificates | Format-List | Out-String)"
     Start-Sleep -Seconds 1
 }
