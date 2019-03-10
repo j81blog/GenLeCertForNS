@@ -90,7 +90,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.1.0
+    Version   : v2.2.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -257,7 +257,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.1.0"
+$ScriptVersion = "v2.2.0"
 
 #region Functions
 
@@ -530,9 +530,11 @@ if ($NetRelease -lt 461308) {
 if ($RemoveTestCertificates -or $CleanNS) {
     $ValidationMethod = $null
 } elseif (($CN -match "\*") -or ($SAN -match "\*")) {
-    Write-Host -ForeGroundColor Yellow "`r`nWARNING: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
-    Write-Host -ForeGroundColor Yellow "`r`nCN:  $CN"
-    Write-Host -ForeGroundColor Yellow "SAN: $($SAN -Join ", ")`r`n"
+    Write-Host -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
+    Write-Host -ForeGroundColor White -NoNewline " -CN...............: "
+    Write-Host -ForeGroundColor Yellow $CN
+    Write-Host -ForeGroundColor White -NoNewline " -SAN(s)...........: "
+    Write-Host -ForeGroundColor Yellow "$($SAN -Join ", ")"
     $ValidationMethod = "dns"
     $DisableIPCheck = $true
 } else {
@@ -690,14 +692,16 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
     Write-Verbose "Login to ADC and save session to global variable"
-    Write-Host -ForeGroundColor White "`r`nADC:"
+    Write-Host -ForeGroundColor White "`r`nADC Info"
     $NSSession = Connect-ADC -ManagementURL $NSManagementURL -Credential $NSCredential -PassThru
-    Write-Host -ForeGroundColor White -NoNewLine "- URL: "
-    Write-Host -ForeGroundColor Green "$NSManagementURL"
-    Write-Host -ForeGroundColor White -NoNewLine "- Username: "
-    Write-Host -ForeGroundColor Green "$($NSSession.Username)"
-    Write-Host -ForeGroundColor White -NoNewLine "- Version: "
-    Write-Host -ForeGroundColor Green "$($NSSession.Version)"
+    Write-Host -ForeGroundColor White -NoNewLine " -URL..............: "
+    Write-Host -ForeGroundColor Blue "$NSManagementURL"
+    Write-Host -ForeGroundColor White -NoNewLine " -Username.........: "
+    Write-Host -ForeGroundColor Blue "$($NSSession.Username)"
+    Write-Host -ForeGroundColor White -NoNewLine " -Password.........: "
+    Write-Host -ForeGroundColor Blue "**********"
+    Write-Host -ForeGroundColor White -NoNewLine " -Version..........: "
+    Write-Host -ForeGroundColor Blue "$($NSSession.Version)"
     try {
         $NSVersion = [double]$($NSSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
         if ($NSVersion -lt 11) {
@@ -706,7 +710,10 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
             Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
             Exit (1)
         }
-    } catch {}
+    } catch {
+        Write-Verbose "Caught an error while retrieving the version!"
+        Write-Verbose "Error Details: $($_.Exception.Message)"
+    }
     if ($ValidationMethod -eq "http") {
         try {
             Write-Verbose "Verifying Content Switch"
@@ -720,67 +727,72 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
                 ($response.csvserver.curstate -eq "UP") -and `
                 ($response.csvserver.servicetype -eq "HTTP") -and `
                 ($response.csvserver.port -eq "80") ) {
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
-                Write-Host -ForeGroundColor Green "`"$NSCsVipName`" -> Found"
-                Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor Blue -NoNewLine "`"$NSCsVipName`""
+                Write-Host -ForeGroundColor Green " (found)"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
                 Write-Host -ForeGroundColor Green "OK`r`n"
             } elseif ($ExceptMessage -like "*(404) Not Found*") {
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
-                Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!"
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
                 Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
-                Write-Host -ForeGroundColor Red "FAILED!`r`n"
-                Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
                 Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
-                Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
                 Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
-                Write-Host -ForeGroundColor Red "FAILED!`r`n"
-                Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
-                Write-Host -ForeGroundColor Red "ERROR: Content Switch is $($response.csvserver.servicetype) and NOT HTTP`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor Red "ERROR: Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP"
                 if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
-                    Write-Host -ForeGroundColor White -NoNewLine "- Error message: "
-                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
                 }
-                Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
-                Write-Host -ForeGroundColor Red "FAILED!`r`n"
-                Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+                Write-Host -ForeGroundColor Yellow "`r`n  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } else {
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
                 Write-Host -ForeGroundColor Green "Found"
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch state: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -State...........: "
                 if ($response.csvserver.curstate -eq "UP") {
                     Write-Host -ForeGroundColor Green "UP"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
                 }
-                Write-Host -ForeGroundColor White -NoNewLine "- Content Switch type: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -Type............: "
                 if ($response.csvserver.type -eq "CONTENT") {
                     Write-Host -ForeGroundColor Green "CONTENT"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
                 }
                 if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
-                    Write-Host -ForeGroundColor White -NoNewLine "`r`n- Error message: "
-                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
                 }
-                Write-Host -ForeGroundColor White -NoNewLine "- Data: "
-                $response.csvserver  | Format-List -Property * | Out-String
-                Write-Host -ForeGroundColor White -NoNewLine "- Connection: "
-                Write-Host -ForeGroundColor Red "FAILED!`r`n"
-                Write-Host -ForeGroundColor Red "  Exiting now`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Data.............: "
+                Write-Host -ForeGroundColor Yellow $($response.csvserver  | Format-List -Property * | Out-String)
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             }
+        }
+    } elseif ($ValidationMethod -eq "dns") {
+        Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+        if (-Not [string]::IsNullOrEmpty($NSSession.Version)) {
+            Write-Host -ForeGroundColor Green "OK"
+        } else {
+            Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
+            Exit (1)
         }
     }
 }
@@ -788,8 +800,8 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
 #endregion ADC Check
 
 #region Services
-
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
+    Write-Host -NoNewLine -ForeGroundColor Yellow "`r`nIMPORTANT: By running this script you agree with the terms specified by Let's Encrypt."
     if ($Production) {
         $BaseService = "LE_PROD"
         Write-Verbose "Using the production service for real certificates"
@@ -797,6 +809,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
         $BaseService = "LE_STAGE"
         Write-Verbose "Using the staging service for test certificates"
     }
+    ""
     Posh-ACME\Set-PAServer $BaseService
     $PAServer = Posh-ACME\Get-PAServer -Refresh
     Write-Verbose "All account data is being saved to `"$ACMEStorage`""
@@ -806,8 +819,6 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates)) {
 #region Registration
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-    Write-Host -NoNewLine -ForeGroundColor Yellow "`n`nIMPORTANT: "
-    Write-Host -ForeGroundColor White "By running this script you agree with the terms specified by Let's Encrypt."
     try {
         Write-Verbose "Try to retrieve the existing Registration"
         $PARegistration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh | Where-Object {$_.status -eq "valid"}
@@ -851,7 +862,6 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         Write-Verbose "Setting Account as default for new order"
         Posh-ACME\Set-PAAccount -ID $PARegistration.id -Force
     }
-    Write-Host -ForeGroundColor Yellow "`n`n`nTerms of Agreement:`n$($PAServer.meta.termsOfService)`n`n`n"
 }
 
 #endregion Registration
@@ -893,9 +903,6 @@ if ($ValidationMethod -in "http", "dns") {
                 $DNSObject.Challenge = $PAChallenge
             }
             if ($DisableIPCheck) {
-                if ($ValidationMethod -eq "http") {
-                    Write-Warning "Skipping IP check"
-                }
                 $DNSObject.IPAddress = "NoIPCheck"
                 $DNSObject.Match = $true
                 $DNSObject.Status = $true
@@ -985,8 +992,8 @@ if ((-not $CleanNS) -and (-not ($RemoveTestCertificates)) -and ($ValidationMetho
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
     Write-Verbose "Checking if validation is required"
-    $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
-    $ValidationRequired = $PAOrderItem | Where-Object {$_.status -ne "valid"}
+    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    $ValidationRequired = $PAOrderItems | Where-Object {$_.status -ne "valid"}
     Write-Verbose "$($ValidationRequired.Count) validations required: $($ValidationRequired | Select-Object fqdn,status,HTTP01Status,Expires| Format-Table | Out-String)"
     if ($ValidationRequired.Count -eq 0) {
         Write-Verbose "Validation NOT required"
@@ -1125,10 +1132,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and $ADCActionsRequired
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequired) -and ($ValidationMethod -eq "http")) {
     Write-Host -ForeGroundColor White "Executing some tests, can take a couple of seconds/minutes..."
-    Write-Host -ForeGroundColor Yellow "`r`nPlease note that if a test fails, the script still tries to continue!`r`n"
+    Write-Host -ForeGroundColor Yellow "`r`n    NOTE: Should a DNS test fails, the script will try to continue!`r`n"
+    Write-Host -ForeGroundColor White "`r`nChecking DNS"
     ForEach ($DNSObject in $DNSObjects ) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Checking: => "
-        Write-Host -ForeGroundColor Yellow "`"$($DNSObject.DNSName)`" ($($DNSObject.IPAddress))"
+        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+        Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
         $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
         Write-Verbose "Testing if the Content Switch is available on `"http://$($DNSObject.DNSName)`" (via internal DNS)"
         try {
@@ -1140,10 +1148,10 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequire
             Write-Verbose "Internal check failed, error Details: $($_.Exception.Message)"
         }
         if ($Result.RawContent -eq "HTTP/1.0 200 OK" + "`r`n`r`n" + "XXXX") {
-            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS): "
+            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS)..: "
             Write-Host -ForeGroundColor Green "OK"
         } else {
-            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS): "
+            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS)..: "
             Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable internally?"
             Write-Verbose "Output: $($Result| Out-String)"
         }
@@ -1155,7 +1163,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequire
                 Write-Verbose "Testing if the Content Switch is available on `"$TestURL`" (via external DNS)"
                 $TestURL = "http://$($DNSObject.IPAddress)/.well-known/acme-challenge/XXXX"
                 $Headers = @{"Host" = "$($DNSObject.DNSName)"}
-                Write-Verbose "Retreiving data"
+                Write-Verbose "Retrieving data"
                 $Result = Invoke-WebRequest -URI $TestURL -Headers $Headers -TimeoutSec 2
                 Write-Verbose "Success, output: $($Result| Out-String)"
             } else {
@@ -1168,11 +1176,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequire
         [ref]$ValidIP = [ipaddress]::None
         if (([ipaddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($DisableIPCheck))) {
             if ($Result.RawContent -eq "HTTP/1.0 200 OK" + "`r`n`r`n" + "XXXX") {
-                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS): "
+                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS)..: "
                 Write-Host -ForeGroundColor Green "OK"
             } else {
-                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS): "
-                Write-Host -ForeGroundColor Yellow "Not successfull, maybe not resolvable externally?"
+                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS)..: "
+                Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable externally?"
                 Write-Verbose "Output: $($Result| Out-String)"
             }
         }
@@ -1185,25 +1193,29 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequire
 #region Validation
 
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
-    Write-Verbose "Check if Records need to be validated"
-    Write-Host -ForeGroundColor White "Verification:"
+    Write-Verbose "OrderItems: $($PAOrderItems | Select-Object * | Format-List | Out-String)"
+    Write-Verbose "PAOrderItems: $($PAOrderItems | Select-Object fqdn,status | Format-Table | Out-String)"
+    Write-Host -ForeGroundColor White "`r`nVerification"
     foreach ($DNSObject in $DNSObjects) {
         $NSKeyAuthorization = $null
-        $PAOrderItem = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+        $PAOrderItem = $PAOrderItems | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
         Write-Verbose "Checking validation for `"$($DNSObject.DNSName)`" => $($PAOrderItem.status)"
         if ($PAOrderItem.status -eq "valid") {
-            Write-Host -ForeGroundColor White -NoNewLine " -DNS: "
-            Write-Host -ForeGroundColor Green "`"$($DNSObject.DNSName)`""
-            Write-Host -ForeGroundColor White -NoNewLine " -Status: "
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+            Write-Host -ForeGroundColor White -NoNewLine " -Validation.......: "
             Write-Host -ForeGroundColor Green "=> Still valid"
         } else { 
             Write-Verbose "New validation required, Start verifying"
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+            Write-Host -ForeGroundColor White -NoNewLine " -Validation.......: "
             try {
                 $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
                 Write-Verbose "Configuring ADC: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
                 $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
                 $response = InvokeNSRestApi -Session $NSSession -Method POST -Type responderpolicy -Payload $payload -Action set
-                
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-Verbose "Configuring ADC: Change Responder Action `"$NSRsaName`" to return "
                 $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
                 $NSKeyAuthorization = "`"HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)`""
@@ -1213,54 +1225,55 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 Write-Verbose "Wait 1 second"
                 Start-Sleep -Seconds 1
                 Write-Verbose -Message "Start submitting Challenge"
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 try {
                     Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while submitting the Challenge"
                 }
+                Write-Verbose "Wait 1 seconds"
+                Start-Sleep -Seconds 1
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-Verbose "Retreiving validation status"
                 try {
-                    $PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                    Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
+                    $webrequest = Invoke-WebRequest -Uri $PAOrderItem.HTTP01Url | ConvertFrom-Json
+                    Write-Verbose "Status: $($webrequest.status)"
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while retreiving validation status"
                 }
                 $i = 0
-                while (-NOT ($PAValidation.status -eq "valid")) {
+                while (-NOT ($webrequest.status -eq "valid")) {
+                    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                     $i++
-                    Write-Verbose "$i $DNSRecord is not (yet) validated, Wait 2 second"
+                    Write-Verbose "$i $DNSRecord is not (yet) validated, Wait 3 second"
                     Start-Sleep -Seconds 2
                     Write-Verbose "Retreiving validation status"
                     try {
-                        $PAValidation = Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                        Write-Verbose "$($PAValidation | Select-Object fqdn,status,expires | Format-List | Out-String)"
+                        $webrequest = Invoke-WebRequest -Uri $PAOrderItem.HTTP01Url | ConvertFrom-Json
+                        Write-Verbose "Status: $($webrequest.status)"
                     } catch {
                         Write-Verbose "Error Details: $($_.Exception.Message)"
                         throw "Error while retreiving validation status"
                     }
-                    if (($i -ge 60) -or ($PAValidation.status.ToLower() -eq "invalid")) {break}
+                    if (($i -ge 20) -or ($webrequest.status.ToLower() -eq "invalid")) {break}
                 }
-                switch ($PAValidation.status.ToLower()) {
+                switch ($webrequest.status.ToLower()) {
                     "pending" {
-                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
-                        Write-Host -ForeGroundColor Red "=> ERROR"
+                        Write-Host -ForeGroundColor Red " ERROR [$($webrequest.status)]"
                         throw "It took to long for the validation ($($DNSObject.DNSName)) to complete, exiting now."
                     }
                     "invalid" {
-                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
-                        Write-Host -ForeGroundColor Red "=> ERROR"
+                        Write-Host -ForeGroundColor Red " ERROR [$($webrequest.status)]"
                         throw "Validation for `"$($DNSObject.DNSName)`" is invalid! Exiting now."
                     }
                     "valid" {
-                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
-                        Write-Host -ForeGroundColor Green "=> validated successfully"
+                        Write-Host -ForeGroundColor Green " $($webrequest.status)"
                     }
                     default {
-                        Write-Host -ForeGroundColor White -NoNewLine " -$($DNSObject.DNSName): "
-                        Write-Host -ForeGroundColor Red "=> ERROR"
-                        throw "Unexpected status for `"$($DNSObject.DNSName)`" is `"$($PAValidation.status)`", exiting now."
+                        Write-Host -ForeGroundColor Red " ERROR  [$($webrequest.status)]"
+                        throw "Unexpected status for `"$($DNSObject.DNSName)`" is `"$($webrequest.status)`", exiting now."
                     }
                 }
             } catch {
@@ -1269,7 +1282,9 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
             }
         }
     }
-    ""
+    Write-Verbose "Final check"
+    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    Write-Verbose "PAOrderItems: $($PAOrderItems | Select-Object fqdn,status | Format-Table | Out-String)"
 }
 
 #endregion Validation
@@ -1399,15 +1414,23 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
     $TXTRecords = $PAOrderItems | Select-Object fqdn, `
     @{L = 'TXTName'; E = {"_acme-challenge.$($_.fqdn.Replace('*.',''))"}}, `
     @{L = 'TXTValue'; E = {ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token)}}
-    Write-Host -ForegroundColor White "`r`n`r`n************************************************************"
-    Write-Host -ForegroundColor White "* Make sure the following TXT records are configured       *"
-    Write-Host -ForegroundColor White "* at your DNS provider before continuing!                  *"
-    Write-Host -ForegroundColor White "* If not, DNS validation will fail!                        *"
-    Write-Host -ForegroundColor White "************************************************************`r`n"
-    Write-Host -ForegroundColor White "$($TXTRecords | Format-List | Out-String)"
-    Write-Host -ForegroundColor White "************************************************************`r`n"
-    $($TXTRecords | Format-List | Out-String) | clip.exe
-    Write-Host -ForegroundColor Yellow "`r`nNOTE: Data is copied tot the clipboard"
+    Write-Host -ForegroundColor White "`r`n********************************************************************"
+    Write-Host -ForegroundColor White "* Make sure the following TXT records are configured at your DNS   *"
+    Write-Host -ForegroundColor White "* provider before continuing! If not, DNS validation will fail!    *"
+    Write-Host -ForegroundColor White "********************************************************************"
+    foreach ($Record in $TXTRecords) {
+        ""
+        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+        Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
+        Write-Host -ForeGroundColor White -NoNewLine " -TXT Record Name..: "
+        Write-Host -ForeGroundColor Yellow "$($Record.TXTName)"
+        Write-Host -ForeGroundColor White -NoNewLine " -TXT Record Value.: "
+        Write-Host -ForeGroundColor Yellow "$($Record.TXTValue)"
+    }
+    ""        
+    Write-Host -ForegroundColor White "********************************************************************"
+    $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
+    Write-Host -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
     $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
     if (-not ($answer.ToLower() -eq "yes")) {
         Write-Host -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
@@ -1422,9 +1445,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
     Write-Verbose -Message "Start verifying the TXT records."
     $issues = $false
     try {
-        Write-Host -ForegroundColor White "Pre-Checking the TXT records:"
+        Write-Host -ForegroundColor White "`r`nPre-Checking the TXT records"
         Foreach ($Record in $TXTRecords) {
-            Write-Host -ForegroundColor White -NoNewLine " - $($Record.fqdn): "
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
+            Write-Host -ForeGroundColor White -NoNewLine " -TXT Record check.: "
             Write-Verbose "`r`nTrying to retreive the TXT record"
             $result = $null
             $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
@@ -1448,6 +1473,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         $issues = $true
     }
     if ($issues) {
+       ""
        Write-Warning "Found issues during the initial test. TXT validation might fail. Waiting an aditional 30 seconds before continuing"
        Start-Sleep -Seconds 20
     }
@@ -1455,40 +1481,68 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
 
 #endregion DNS Challenge
 
-#region Finalizing Order
+#region Finalizing DNS Order
     
 if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "dns")) {
     Write-Verbose "Check if DNS Records need to be validated"
-    Write-Host -ForeGroundColor White "Verification:"
+    Write-Host -ForeGroundColor White "`r`nSending Acknowledgment"
     Foreach ($DNSObject in $DNSObjects) {
+        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+        Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+        Write-Host -ForeGroundColor White -NoNewLine " -Send Ack.........: "
         $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+        Write-Host -ForeGroundColor Yellow -NoNewLine "*"
         Write-Verbose -Message "OrderItem: $($PAOrderItem| Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
         if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
             try {
                 Write-Verbose "Start submitting Challenge"
                 Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-Verbose "Done"
             } catch {
+                Write-Host -ForeGroundColor Red " ERROR"
                 Write-Verbose "Error Details: $($_.Exception.Message)" -Verbose
                 throw "Error while submitting the Challenge"
             }
             Write-Verbose -Message "Finished submitting Challenge"
+            Write-Host -ForeGroundColor Green " Sent Successfully"
         } elseif ($PAOrderItem.DNS01Status -like "valid") {
             Write-Verbose -Message "This order is done"
             $DNSObject.Done = $true
+            Write-Host -ForeGroundColor Green " Still valid"
         }
         $PAOrderItem = $null
     }
-    $i = 0
-    while ($i -le 10) {
+    $i = 1
+    Write-Host -ForeGroundColor White "`r`nValidation"
+    while ($i -le 20) {
+        Write-Host -ForeGroundColor White " -Attempt..........: $i"
+        $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
         Foreach ($DNSObject in $DNSObjects) {
             if ($DNSObject.Done -eq $false) {
+                Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+                Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
                 try {
-                    $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
-                    Write-Verbose -Message "OrderItem: $($PAOrderItem| Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
-                    if ($PAOrderItem.DNS01Status -in "valid","invalid") {
-                        Write-Verbose -Message "This order is done. Status: $($PAOrderItem.DNS01Status)"
-                        $DNSObject.Done = $true
+                    $PAOrderItem = $PAOrderItems | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+                    Write-Verbose -Message "OrderItem: $($PAOrderItem | Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
+                    Write-Host -ForeGroundColor White -NoNewLine " -Status...........: "
+                    switch ($PAOrderItem.DNS01Status.ToLower()) {
+                        "pending" {
+                            Write-Host -ForeGroundColor Yellow "$($PAOrderItem.DNS01Status)"
+                        }
+                        "invalid" {
+                            Write-Verbose -Message "This order is done. Status: $($PAOrderItem.DNS01Status)"
+                            $DNSObject.Done = $true
+                            Write-Host -ForeGroundColor Red "$($PAOrderItem.DNS01Status)"
+                        }
+                        "valid" {
+                            Write-Verbose -Message "This order is done. Status: $($PAOrderItem.DNS01Status)"
+                            $DNSObject.Done = $true
+                            Write-Host -ForeGroundColor Green "$($PAOrderItem.DNS01Status)"
+                        }
+                        default {
+                            Write-Host -ForeGroundColor Red "UNKNOWN [$($PAOrderItem.DNS01Status)]"
+                        }
                     }
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
@@ -1497,14 +1551,22 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
                 $PAOrderItem = $null
             }
         }
-        $Items = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Select-Object status -ExpandProperty status
-        if (($Items | Where-Object {($_ -notlike "valid") -and ($_ -notlike "invalid")}).Count -eq 0) {
-            Write-Verbose -Message "All items verified"
+        if (-NOT ($DNSObjects | Where-Object {$_.Done -eq $false})) {
+            Write-Verbose -Message "All items validated"
+            if ($PAOrderItems | Where-Object {$_.DNS01Status -eq "invalid"}) {
+                Write-Host -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
+                Exit (1)
+            }
+            if ($PAOrderItems | Where-Object {$_.DNS01Status -eq "pending"}) {
+                Write-Host -ForegroundColor Red "`r`nERROR: Validation Failed, still pending items left! Exiting now!"
+                Exit (1)
+            }
             break
         }
-        $i++
         Write-Verbose -Message "Waiting, round: $i"
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
+        $i++
+        ""
     }
 }
 
@@ -1522,7 +1584,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
     Start-Sleep -Seconds 1
 }
     
-#endregion Finalizing Order
+#endregion Finalizing DNS Order
 
 #region Certificates
     
@@ -1693,22 +1755,36 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         ""
         if ($PfxPasswordGenerated) {
             Write-Warning "No Password was specified, so a random password was generated!"
-            Write-Host -ForeGroundColor Yellow "`r`n***********************"
-            Write-Host -ForeGroundColor Yellow "*   PFX Password:     *"
-            Write-Host -ForeGroundColor Yellow "*                     *"
-            Write-Host -ForeGroundColor Yellow "*   $PfxPassword   *"
-            Write-Host -ForeGroundColor Yellow "*                     *"
-            Write-Host -ForeGroundColor Yellow "***********************`r`n"
+            Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
+            Write-Host -ForeGroundColor Yellow "PFX Password.......: $PfxPassword"
+            Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
         }
+        Write-Host -ForegroundColor White "Certificates"
+        Write-Host -ForegroundColor White " -Cert Dir.........: $CertificateDirectory"
+        Write-Host -ForegroundColor White " -CRT Filename.....: $CertificateFileName"
+        Write-Host -ForegroundColor White " -KEY Filename.....: $CertificateKeyFileName"
+        Write-Host -ForegroundColor White " -PFX Filename.....: $CertificatePfxFileName"
+        Write-Host -ForegroundColor White " -PFX (with Chain).: $CertificatePfxWithChainFileName"
+        ""
         Write-Host -ForeGroundColor Green "Finished with the certificates!"
         ""
         if ($ValidationMethod -eq "dns") {
-            Write-Host -ForeGroundColor Yellow "IMPORTANT: Don't forget to delete the created DNS records!!"
-            Write-Host -ForegroundColor Yellow "$($TXTRecords | Select-Object TXTName | Format-List | Out-String)"
+            Write-Host -ForegroundColor Yellow "`r`n********************************************************************"
+            Write-Host -ForegroundColor Yellow "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
+            Write-Host -ForegroundColor Yellow "********************************************************************"
+            foreach ($Record in $TXTRecords) {
+                ""
+                Write-Host -ForeGroundColor Yellow -NoNewLine " -DNS Hostname.....: "
+                Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
+                Write-Host -ForeGroundColor Yellow -NoNewLine " -TXT Record Name..: "
+                Write-Host -ForeGroundColor Yellow "$($Record.TXTName)"
+            }
+            ""        
+            Write-Host -ForegroundColor Yellow "********************************************************************"
         }
         if (-not $Production) {
-            Write-Host -ForeGroundColor Green "You are now ready for the Production version!"
-            Write-Host -ForeGroundColor Green "Add the `"-Production`" parameter and rerun the same script."
+            Write-Host -ForeGroundColor Green "`r`nYou are now ready for the Production version!"
+            Write-Host -ForeGroundColor Green "Add the `"-Production`" parameter and rerun the same script.`r`n"
         }
     } catch {
         throw "ERROR. Certificate completion failed, details: $($_.Exception.Message | Out-String)"
