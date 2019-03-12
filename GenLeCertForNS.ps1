@@ -90,7 +90,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.2.0
+    Version   : v2.2.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
