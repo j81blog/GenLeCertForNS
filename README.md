@@ -4,7 +4,7 @@ This script helps you to create a Let's Encrypt certificate for your NetScaler
 More info: https://blog.j81.nl/2017/04/06/lets-encrypt-certificates-on-a-netscaler/
 
 Latest version with the wildcard support (v2-api): 
-https://github.com/j81blog/GenLeCertForNS/archive/v2.2.0.zip
+https://github.com/j81blog/GenLeCertForNS/releases/tag/v2.2.1
 
 Requires:
 - PowerShell v5.1 and up
