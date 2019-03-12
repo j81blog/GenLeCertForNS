@@ -59,4 +59,4 @@ SET OPTIONS=%OPTIONS% -NSCertNameToUpdate "san_domain_com"
 rem SET OPTIONS=%OPTIONS% -Production
 SET OPTIONS=%OPTIONS% -Verbose
 
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NoLogo -NonInteractive -ExecutionPolicy Bypass -File "%~dp0GenLeCertForNS.ps1" %OPTIONS%
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%~dp0GenLeCertForNS.ps1" %OPTIONS%
