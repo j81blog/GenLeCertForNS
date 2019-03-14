@@ -90,7 +90,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.2.1
+    Version   : v2.2.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -257,7 +257,8 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.2.0"
+$ScriptVersion = "v2.2.2
+"
 
 #region Functions
 
@@ -1589,11 +1590,11 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
 #region Certificates
     
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-    $CertificateAlias = "CRT-SAN-$SessionDateTime-$CN"
+    $CertificateAlias = "CRT-SAN-$SessionDateTime-$($CN.Replace('*.',''))"
     $CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
     Write-Verbose "Create directory `"$CertificateDirectory`" for storing the new certificates"
     New-Item $CertificateDirectory -ItemType directory -force | Out-Null
-    $CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$cn"
+    $CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$($CN.Replace('*.',''))"
     if (Test-Path $CertificateDirectory) {
         if ($Production) {
             Write-Verbose "Writing production certificates"
