@@ -90,13 +90,13 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.2.2
+    Version   : v2.3.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.2.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
-                Microsoft .NET Framework 4.7.1 (when using Posh-ACME/WildCard certificates)
+                Posh-ACME 3.5.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
 #>
@@ -257,7 +257,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.2.2
+$ScriptVersion = "v2.3.0
 "
 
 #region Functions
@@ -625,7 +625,7 @@ if ($CleanPoshACMEStorage) {
 #region Load Module
 
 if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
-    $PoshACMEVersion = "3.2.1"
+    $PoshACMEVersion = "3.5.0"
     Write-Verbose "Try loading the Posh-ACME v$PoshACMEVersion Modules"
     if (-not(Get-Module Posh-ACME)) {
         try {
@@ -851,6 +851,7 @@ if ((-not ($CleanNS)) -and (-not ($RemoveTestCertificates))) {
         Write-Verbose "Error Details: $($_.Exception.Message)"
     }
     $PARegistration = Posh-ACME\Get-PAAccount -List -Contact $EmailAddress -Refresh | Where-Object {$_.status -eq "valid"}
+	Write-Verbose "Registration: $($PARegistration | Format-List | Out-String)"
     if (-not ($PARegistration.Contact -contains "mailto:$($EmailAddress)")) {
         throw "User registration failed"
         exit(1)
@@ -1580,7 +1581,7 @@ if ((-not $CleanNS) -and (-not $RemoveTestCertificates) -and ($ValidationMethod 
         Write-Verbose "Order is still not ready, validation failed?" -Verbose
     }
     Write-Verbose -Message "Requesting Certificate"
-    $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -FriendlyName $FriendlyName -PfxPass $PfxPassword
+    $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -CertKeyLength $KeyLength -FriendlyName $FriendlyName -PfxPass $PfxPassword
     Write-Verbose "$($NewCertificates | Format-List | Out-String)"
     Start-Sleep -Seconds 1
 }
