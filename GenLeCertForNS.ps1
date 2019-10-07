@@ -591,6 +591,12 @@ if ($EnableLogging) {
 Write-Verbose "Script version: $ScriptVersion"
 Write-Verbose "Script was started with the following Parameters: $($PSBoundParameters | Out-String)"
 
+if ($GetValuesFromExistingCertificate) {
+    ""
+    Write-Warning "The option -GetValuesFromExistingCertificate is still BETA!"
+    ""
+}
+
 #endregion Script Basics
 
 #region Help
