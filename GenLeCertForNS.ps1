@@ -1810,13 +1810,14 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Write-Verbose "Retreiving existing CA Intermediate Certificate"
         $Filters = @{"serial" = "$($ChainFile.SerialNumber)"}
         $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
-        if ([string]::IsNullOrEmpty($ADCIntermediateCA.sslcertkey)) {
+        if ([string]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
+            Write-Verbose "Second attempt, trying without leading zero's"
             $Filters = @{"serial" = "$($ChainFile.SerialNumber.TrimStart("00"))"}
             $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
         }
         Write-Verbose "Details: $($ADCIntermediateCA.sslcertkey | Select-Object certkey,issuer,subject,serial,clientcertnotbefore,clientcertnotafter | Format-List | Out-String)"
         Write-Verbose "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists"
-        if ([string]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey))) {
+        if ([string]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
             try {
                 Write-Verbose "Uploading `"$IntermediateCAFileName`" to the ADC"
                 $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
@@ -1827,7 +1828,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
                 Write-Verbose "Finished"
             } catch {
-                Write-Warning "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action mey be required"
+                Write-Warning "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required"
             }
         } else {
             $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
