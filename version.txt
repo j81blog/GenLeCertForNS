@@ -1,9 +1,0 @@
-<<<<<<< HEAD
-branch,version
-prod,2.2.2
-dev,2.4.0
-=======
-branch;version
-master;2.2.2
-dev;2.4.0
->>>>>>> dev
