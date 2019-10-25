@@ -6,7 +6,11 @@ More info: https://blog.j81.nl/2017/04/06/lets-encrypt-certificates-on-a-netscal
 Latest version with the wildcard support (v2-api): 
 https://github.com/j81blog/GenLeCertForNS/releases/tag/v2.2.2
 
+<<<<<<< HEAD
 If you experience any issues please also checkout the development area:
+=======
+If you experience any issues please also checkout the development area: 
+>>>>>>> dev
 https://github.com/j81blog/GenLeCertForNS/tree/dev
 
 Requires:
