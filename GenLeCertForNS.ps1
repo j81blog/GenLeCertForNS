@@ -51,6 +51,11 @@
     Default: 2048
 .PARAMETER EmailAddress
     The email address used to request the certificates and receive a notification when the certificates (almost) expires
+.PARAMETER GetValuesFromExistingCertificate
+    Set this switch to extract the CommonName (ad if present also the SAN records) from an existing certificate already present on the Citrix ADC.
+    If you set this switch -ExistingCertificateName must also be configured.
+.PARAMETER ExistingCertificateName
+    The name of an existing certificate on the ADC. Us the CertKeyName (Name visible in the GUI, not the filename)
 .PARAMETER CN
     (Common Name) The Primary (first) dns record for the certificate
     Example: "domain.com"
@@ -90,12 +95,12 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.4.0
+    Version   : v2.4.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.5.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 3.8.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -282,7 +287,7 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.4.0"
+$ScriptVersion = "v2.4.1"
 
 #region Functions
 
