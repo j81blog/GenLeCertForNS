@@ -187,6 +187,8 @@ param(
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [string[]]$SAN = @(),
     
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [string]$FriendlyName = $CN,
     
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
