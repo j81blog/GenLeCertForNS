@@ -553,7 +553,7 @@ function Get-ADCCurrentCertificate {
         $currentCert = $adcCert.sslcertkey
         Write-Verbose -Message "Certificate match: $($currentCert | Select-Object certkey,subject,status,clientcertnotbefore,clientcertnotafter | Format-List | Out-String)"
         if ($currentCert.certKey -eq $Name){
-            $payload = @{"filename" = "$($currentCert.cert)"; "filelocation" = "/nsconfig/ssl/" }
+            $payload = @{"filename" = "$(($currentCert.cert).Replace('/nsconfig/ssl/',''))"; "filelocation" = "/nsconfig/ssl/" }
             $response = Invoke-ADCRestApi -Session $Session -Method GET -Type systemfile -Arguments $payload -ErrorAction SilentlyContinue
             if (-Not ([string]::IsNullOrWhiteSpace($response.systemfile.filecontent))){
                 Write-Verbose "Certificate available, getting the details"
@@ -741,41 +741,39 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
 
 #region ADC Check
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
-    Write-Verbose "Login to ADC and save session to global variable"
-    Write-Host -ForeGroundColor White "`r`nADC Info"
-    $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-    Write-Host -ForeGroundColor White -NoNewLine " -URL..............: "
-    Write-Host -ForeGroundColor Blue "$ManagementURL"
-    Write-Host -ForeGroundColor White -NoNewLine " -Username.........: "
-    Write-Host -ForeGroundColor Blue "$($ADCSession.Username)"
-    Write-Host -ForeGroundColor White -NoNewLine " -Password.........: "
-    Write-Host -ForeGroundColor Blue "**********"
-    Write-Host -ForeGroundColor White -NoNewLine " -Version..........: "
-    Write-Host -ForeGroundColor Blue "$($ADCSession.Version)"
-    try {
-        $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
-        if ($NSVersion -lt 11) {
-            Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
-            Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version of this script!"
-            Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
-            Exit (1)
-        }
-    } catch {
-        Write-Verbose "Caught an error while retrieving the version!"
-        Write-Verbose "Error Details: $($_.Exception.Message)"
+Write-Verbose "Login to ADC and save session to global variable"
+Write-Host -ForeGroundColor White "`r`nADC Info"
+$ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
+Write-Host -ForeGroundColor White -NoNewLine " -URL..............: "
+Write-Host -ForeGroundColor Blue "$ManagementURL"
+Write-Host -ForeGroundColor White -NoNewLine " -Username.........: "
+Write-Host -ForeGroundColor Blue "$($ADCSession.Username)"
+Write-Host -ForeGroundColor White -NoNewLine " -Password.........: "
+Write-Host -ForeGroundColor Blue "**********"
+Write-Host -ForeGroundColor White -NoNewLine " -Version..........: "
+Write-Host -ForeGroundColor Blue "$($ADCSession.Version)"
+try {
+    $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
+    if ($NSVersion -lt 11) {
+        Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
+        Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version of this script!"
+        Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
+        Exit (1)
     }
-
+} catch {
+    Write-Verbose "Caught an error while retrieving the version!"
+    Write-Verbose "Error Details: $($_.Exception.Message)"
 }
 
 #endregion ADC Check
 
 #region Cert Values Check
-
+if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
     Write-Host -ForeGroundColor White -NoNewline "`r`n -Keysize..........: "
     Write-Host -ForeGroundColor Blue "$KeyLength"
+}
 
-if ($GetValuesFromExistingCertificate) {
+if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
     $CurrentCertificateValues = Get-ADCCurrentCertificate -Session $ADCSession -Name $ExistingCertificateName
     Write-Verbose "Retreived the following certificate data: $($CurrentCertificateValues | Out-String)"
     if (-Not [string]::IsNullOrEmpty($($CurrentCertificateValues.CN))){
@@ -800,7 +798,7 @@ if ($GetValuesFromExistingCertificate) {
 }
 
 if ($RemoveTestCertificates -or $CleanADC) {
-    $ValidationMethod = $null
+    #skip
 } elseif (($CN -match "\*") -or ($SAN -match "\*")) {
     Write-Host -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
     Write-Host -ForeGroundColor White -NoNewline " -CN...............: "
@@ -811,7 +809,7 @@ if ($RemoveTestCertificates -or $CleanADC) {
     $DisableIPCheck = $true
 } else {
     $ValidationMethod = $ValidationMethod.ToLower()
-    if ((-not ($RemoveTestCertificates)) -and (-not $CleanADC) -and (([string]::IsNullOrWhiteSpace($NSCsVipName)) -and ($ValidationMethod -eq "http"))) {
+    if (([string]::IsNullOrWhiteSpace($NSCsVipName)) -and ($ValidationMethod -eq "http")) {
         Write-Host -ForeGroundColor Red "`r`nERROR: The `"-NSCsVipName`" cannot be empty!`r`n"
         Exit (1)
     }
@@ -954,7 +952,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
     }
     ""
     Posh-ACME\Set-PAServer $BaseService
-    $PAServer = Posh-ACME\Get-PAServer -Refresh
+    Posh-ACME\Get-PAServer -Refresh | Out-Null
     Write-Verbose "All account data is being saved to `"$ACMEStorage`""
 }
 #endregion Services
@@ -1033,7 +1031,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
 #endregion Order
 
 #region DNS Validation
-if ($ValidationMethod -in "http", "dns") {
+if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $RemoveTestCertificates)) {
     Write-Verbose "Validating DNS record(s)"
     Foreach ($DNSObject in $DNSObjects) {
         $DNSObject.IPAddress = "0.0.0.0"
@@ -1974,6 +1972,7 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
     }
     $FakeCerts = $CertDetails.sslcertkey | Where-Object {$_.issuer -match $IntermediateCACertKeyName}
     ForEach ($FakeCert in $FakeCerts) {
+        Write-Verbose "Test Cert data: $($FakeCert | Format-List | Out-String)"
         try {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type sslcertkey -Resource $($FakeCert.certkey)
             Write-Host -NoNewLine "ADC, removing: "
@@ -1988,26 +1987,36 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
         $CertFileName = split-path $($FakeCert.cert) -Leaf
         Write-Host -NoNewLine "ADC, deleted: "
         Write-Host -ForeGroundColor Green "$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)"
-        $KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\", "/")
+        try {
+            $KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\", "/")
+        } catch {
+            $KeyFilePath = "/nsconfig/ssl/"
+        }
         if ([string]::IsNullOrEmpty($KeyFilePath)) {
             $KeyFilePath = "/nsconfig/ssl/"
         }
-        $KeyFileName = split-path $($FakeCert.key) -Leaf
-        Write-Host -NoNewLine "ADC, deleted: "
-        Write-Host -ForeGroundColor Green "$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)"
+        try {
+            $KeyFileName = split-path $($FakeCert.key) -Leaf
+        }
+        catch {
+            $KeyFileName = $null
+        }
         $Arguments = @{"filelocation" = "$CertFilePath"; }
         try {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $CertFileName -Arguments $Arguments
+            Write-Host -NoNewLine "ADC, deleted: "
+            Write-Host -ForeGroundColor Green "$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)"
         } catch {
             Write-Warning "Could not delete file: `"$CertFileName`" from location: `"$CertFilePath`""
         }
-        $Arguments = @{"filelocation" = "$KeyFilePath"; }
-        try {
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $KeyFileName -Arguments $Arguments
-        } catch {
-            Write-Warning "Could not delete file: `"$KeyFileName`" from location: `"$KeyFilePath`""
+        if (-Not ($CertFilePath -eq $KeyFilePath)) {
+            $Arguments = @{"filelocation" = "$KeyFilePath"; }
+            try {
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $KeyFileName -Arguments $Arguments
+            } catch {
+                Write-Warning "Could not delete file: `"$KeyFileName`" from location: `"$KeyFilePath`""
+            }
         }
-        
     }
     $Arguments = @{"filelocation" = "/nsconfig/ssl"; }
     $CertFiles = Invoke-ADCRestApi -Session $ADCSession -Method Get -Type systemfile -Arguments $Arguments
