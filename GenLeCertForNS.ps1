@@ -438,7 +438,7 @@ function Connect-ADC {
     )
     # https://github.com/devblackops/NetScaler
 
-    function Ignore-SSLCertificates {
+    function IgnoreSSLCerts {
         $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
         $Provider.CreateCompiler() | Out-Null
         $Params = New-Object System.CodeDom.Compiler.CompilerParameters
@@ -465,7 +465,7 @@ function Connect-ADC {
     }
 	if ($ManagementURL -like "https://*") {
         Write-Verbose "SSL Connection"
-        Ignore-SSLCertificates
+        IgnoreSSLCerts
 	}
     Write-Verbose -Message "Connecting to $ManagementURL..."
     try {
