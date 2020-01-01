@@ -95,12 +95,12 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.4.1
+    Version   : v2.5.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.8.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 3.12.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -289,7 +289,9 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.4.1"
+$ScriptVersion = "v2.5.0"
+$PoshACMEVersion = "3.12.0"
+$VersionURI = "https://raw.githubusercontent.com/j81blog/GenLeCertForNS/master/version.txt"
 
 #region Functions
 
@@ -585,6 +587,33 @@ function Get-ADCCurrentCertificate {
     }
 }
 
+function Invoke-CheckScriptVersions {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$URI
+    )
+	try {
+        Write-Verbose "Invoke-CheckScriptVersions: Retreiving data for URI: $URI"
+        $WebContent = Invoke-WebRequest -Uri "$URI" -TimeoutSec 5 -Method Get
+	    if ($WebContent.StatusCode -eq 200) {
+	        Write-Verbose "Invoke-CheckScriptVersions: Successfully retreived the requested data"
+	    	$RawVersionData = $WebContent.Content
+            Write-Verbose "Invoke-CheckScriptVersions: Data received $($RawVersionData | Out-String)"
+            $AvailableVersions = $RawVersionData | ConvertFrom-Csv -Delimiter ";"
+	    	if ([string]::IsNullOrEmpty($AvailableVersions.master) -or [string]::IsNullOrEmpty($AvailableVersions.dev)) {
+                Write-Verbose "Invoke-CheckScriptVersions: No Usable data found"
+                $AvailableVersions = $null
+            }
+	    }
+    } catch {
+        Write-Verbose "Could not retreive version info"
+        Write-Verbose "Details: $($_.Exception.Message | Out-String)"
+        $AvailableVersions = $null
+    }
+    return $AvailableVersions
+}
+
 #endregion Functions
 
 #region Script Basics
@@ -681,10 +710,32 @@ if ($CleanPoshACMEStorage) {
 
 #endregion CleanPoshACMEStorage 
 
+#region VersionInfo
+
+Write-Host -ForeGroundColor White "`r`nVersion Info"
+Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
+Write-Host -ForeGroundColor Blue "$ScriptVersion"
+try {
+    $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
+    Write-Host -ForeGroundColor White -NoNewLine " -Master Version........: "
+    Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
+    if ([version]$AvailableVersions.master -gt [version]$ScriptVersion.TrimStart("v")) {
+        Write-Host -ForeGroundColor White -NoNewLine " -Master URL............: "
+        Write-Host -ForeGroundColor Blue "NEW version available, please visit `"$($AvailableVersions.masterurl)`""
+    }
+    Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
+    Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
+    if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion.TrimStart("v")) {
+        Write-Host -ForeGroundColor White -NoNewLine " -Develop URL...........: "
+        Write-Host -ForeGroundColor Blue "NEW Test version available, visit `"$($AvailableVersions.devurl)`""
+    }
+}
+catch {}
+#endregion VersionInfo
+
 #region Load Module
 
 if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
-    $PoshACMEVersion = "3.8.0"
     Write-Verbose "Try loading the Posh-ACME v$PoshACMEVersion Modules"
     $modules = Get-Module -ListAvailable -Verbose:$false | Where-Object {($_.Name -like "*Posh-ACME*") -And ($_.Version -ge [System.Version]$PoshACMEVersion) }
     if ([string]::IsNullOrEmpty($modules)) {
@@ -727,6 +778,10 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Warning "Posh-ACME: https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
                 Start-Process "https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
                 Exit (1)
+            } finally {
+                Write-Host -ForeGroundColor White -NoNewLine " -Posh-ACME Version.: "
+                Write-Host -ForeGroundColor Blue "$PoshACMEVersion"
+
             }
 		}
 	} else {
@@ -744,13 +799,13 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
 Write-Verbose "Login to ADC and save session to global variable"
 Write-Host -ForeGroundColor White "`r`nADC Info"
 $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-Write-Host -ForeGroundColor White -NoNewLine " -URL..............: "
+Write-Host -ForeGroundColor White -NoNewLine " -URL...................: "
 Write-Host -ForeGroundColor Blue "$ManagementURL"
-Write-Host -ForeGroundColor White -NoNewLine " -Username.........: "
+Write-Host -ForeGroundColor White -NoNewLine " -Username..............: "
 Write-Host -ForeGroundColor Blue "$($ADCSession.Username)"
-Write-Host -ForeGroundColor White -NoNewLine " -Password.........: "
+Write-Host -ForeGroundColor White -NoNewLine " -Password..............: "
 Write-Host -ForeGroundColor Blue "**********"
-Write-Host -ForeGroundColor White -NoNewLine " -Version..........: "
+Write-Host -ForeGroundColor White -NoNewLine " -Version...............: "
 Write-Host -ForeGroundColor Blue "$($ADCSession.Version)"
 try {
     $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
@@ -769,7 +824,7 @@ try {
 
 #region Cert Values Check
 if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
-    Write-Host -ForeGroundColor White -NoNewline "`r`n -Keysize..........: "
+    Write-Host -ForeGroundColor White -NoNewline "`r`n -Keysize...............: "
     Write-Host -ForeGroundColor Blue "$KeyLength"
 }
 
@@ -779,7 +834,7 @@ if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($Remov
     if (-Not [string]::IsNullOrEmpty($($CurrentCertificateValues.CN))){
         $CN = $CurrentCertificateValues.CN
         Write-Host -ForeGroundColor White "`r`n  Got the following values from an existing certificate"
-        Write-Host -ForeGroundColor White -NoNewline " -Existing CN......: "
+        Write-Host -ForeGroundColor White -NoNewline " -Existing CN...........: "
         Write-Host -ForeGroundColor Blue $CN
         } else {
         Write-Verbose "No SAN entries received"
@@ -788,7 +843,7 @@ if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($Remov
     }
     if (-Not [string]::IsNullOrEmpty($($CurrentCertificateValues.SAN))) {
         $SAN = $CurrentCertificateValues.SAN
-        Write-Host -ForeGroundColor White -NoNewline " -Existing SAN(s)..: "
+        Write-Host -ForeGroundColor White -NoNewline " -Existing SAN(s).......: "
         Write-Host -ForeGroundColor Blue "$($SAN -Join "`r`n                     ")"
     } else {
         Write-Verbose "No SAN entries received"
@@ -801,9 +856,9 @@ if ($RemoveTestCertificates -or $CleanADC) {
     #skip
 } elseif (($CN -match "\*") -or ($SAN -match "\*")) {
     Write-Host -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
-    Write-Host -ForeGroundColor White -NoNewline " -CN...............: "
+    Write-Host -ForeGroundColor White -NoNewline " -CN....................: "
     Write-Host -ForeGroundColor Yellow $CN
-    Write-Host -ForeGroundColor White -NoNewline " -SAN(s)...........: "
+    Write-Host -ForeGroundColor White -NoNewline " -SAN(s)................: "
     Write-Host -ForeGroundColor Yellow "$($SAN -Join ", ")"
     $ValidationMethod = "dns"
     $DisableIPCheck = $true
@@ -817,14 +872,16 @@ if ($RemoveTestCertificates -or $CleanADC) {
 
 
 $DNSObjects = @()
+$ResponderPrio = 10
 $DNSObjects += [PSCustomObject]@{
-    DNSName   = $CN
-    IPAddress = $null
-    Status    = $null
-    Match     = $null
-    SAN       = $false
-    Challenge = $null
-    Done      = $false
+    DNSName         = $CN
+    IPAddress       = $null
+    Status          = $null
+    Match           = $null
+    SAN             = $false
+    Challenge       = $null
+    ResponderPrio   = $ResponderPrio
+    Done            = $false
 }
 if (-not ([string]::IsNullOrWhiteSpace($SAN))) {
     [string[]]$SAN = @($SAN.Split(","))
@@ -837,15 +894,17 @@ if (-not ([string]::IsNullOrWhiteSpace($SAN))) {
         Write-Verbose "No double SAN values found"
     }
     Foreach ($Entry in $SAN) {
+        $ResponderPrio += 10
         if (-Not ($Entry -eq $CN)) {
             $DNSObjects += [PSCustomObject]@{
-                DNSName   = $Entry
-                IPAddress = $null
-                Status    = $null
-                Match     = $null
-                SAN       = $true
-                Challenge = $null
-                Done      = $false
+                DNSName         = $Entry
+                IPAddress       = $null
+                Status          = $null
+                Match           = $null
+                SAN             = $true
+                Challenge       = $null
+                ResponderPrio   = $ResponderPrio
+                Done            = $false
             }
         } else {
             Write-Warning "Double record found, SAN value `"$Entry`" is the same as CN value `"$CN`". Removed double SAN entry"
@@ -868,67 +927,67 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 ($response.csvserver.curstate -eq "UP") -and `
                 ($response.csvserver.servicetype -eq "HTTP") -and `
                 ($response.csvserver.port -eq "80") ) {
-                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
-                Write-Host -ForeGroundColor Blue -NoNewLine "`"$NSCsVipName`""
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Blue -NoNewLine "$NSCsVipName"
                 Write-Host -ForeGroundColor Green " (found)"
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Green "OK`r`n"
             } elseif ($ExceptMessage -like "*(404) Not Found*") {
-                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!"
-                Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
                 Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
-                Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
                 Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP"
                 if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
-                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
                     Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
                 }
                 Write-Host -ForeGroundColor Yellow "`r`n  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             } else {
-                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch...: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Green "Found"
-                Write-Host -ForeGroundColor White -NoNewLine "  -State...........: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -State................: "
                 if ($response.csvserver.curstate -eq "UP") {
                     Write-Host -ForeGroundColor Green "UP"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
                 }
-                Write-Host -ForeGroundColor White -NoNewLine "  -Type............: "
+                Write-Host -ForeGroundColor White -NoNewLine "  -Type.................: "
                 if ($response.csvserver.type -eq "CONTENT") {
                     Write-Host -ForeGroundColor Green "CONTENT"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
                 }
                 if (-not ([string]::IsNullOrWhiteSpace($ExceptMessage))) {
-                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message...: "
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
                     Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
                 }
-                Write-Host -ForeGroundColor White -NoNewLine " -Data.............: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Data..................: "
                 Write-Host -ForeGroundColor Yellow $($response.csvserver  | Format-List -Property * | Out-String)
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Exit (1)
             }
         }
     } elseif ($ValidationMethod -eq "dns") {
-        Write-Host -ForeGroundColor White -NoNewLine " -Connection.......: "
+        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
         if (-Not [string]::IsNullOrEmpty($ADCSession.Version)) {
             Write-Host -ForeGroundColor Green "OK"
         } else {
@@ -1207,40 +1266,111 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_service_binding -Payload $payload
             }
         }
-        try {
-            Write-Verbose "Configuring ADC: Check if Responder Action exists"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Resource $NSRsaName
-            try {
-                Write-Verbose "Yep it exists, continuing"
-                Write-Verbose "Configuring ADC: Change Responder Action to default values"
-                $payload = @{"name" = "$NSRsaName"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action set
-            } catch {
-                throw "Something went wrong with re-configuring the existing action `"$NSRsaName`", exiting now..."
-            }    
-        } catch {
-            $payload = @{"name" = "$NSRsaName"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
-        }
+#        try {
+#            Write-Verbose "Configuring ADC: Check if Responder Action exists"
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Resource $NSRsaName
+#            try {
+#                Write-Verbose "Yep it exists, continuing"
+#                Write-Verbose "Configuring ADC: Change Responder Action to default values"
+#                $payload = @{"name" = "$NSRsaName"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
+#                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action set
+#            } catch {
+#                throw "Something went wrong with re-configuring the existing action `"$NSRsaName`", exiting now..."
+#            }    
+#        } catch {
+#            $payload = @{"name" = "$NSRsaName"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
+#        }
+#        try { 
+#            Write-Verbose "Configuring ADC: Check if Responder Policy exists"
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Resource $NSRspName
+#            try {
+#                Write-Verbose "Yep it exists, continuing"
+#                Write-Verbose "Configuring ADC: Change Responder Policy to default values"
+#                $payload = @{"name" = "$NSRspName"; "action" = "rsa_letsencrypt"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
+#                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action set
+#
+#            } catch {
+#                throw "Something went wrong with re-configuring the existing policy `"$NSRspName`", exiting now..."
+#            }    
+#        } catch {
+#            $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
+#        } finally {
+#            $payload = @{"name" = "$NSLbName"; "policyname" = "$NSRspName"; "priority" = 100; }
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
+#        }
+        Write-Verbose "Configuring ADC: Checking if Responder Policies exists starting with `"$NSRspName`""
         try { 
-            Write-Verbose "Configuring ADC: Check if Responder Policy exists"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Resource $NSRspName
-            try {
-                Write-Verbose "Yep it exists, continuing"
-                Write-Verbose "Configuring ADC: Change Responder Policy to default values"
-                $payload = @{"name" = "$NSRspName"; "action" = "rsa_letsencrypt"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action set
-
-            } catch {
-                throw "Something went wrong with re-configuring the existing policy `"$NSRspName`", exiting now..."
-            }    
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name="/$NSRspName/"}
         } catch {
-            $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
-        } finally {
-            $payload = @{"name" = "$NSLbName"; "policyname" = "$NSRspName"; "priority" = 100; }
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
+            Write-Verbose "Configuring ADC: Failed to retreive Responder Policies. Error Details: $($_.Exception.Message)"
         }
+        if (-Not([string]::IsNullOrEmpty($($response.responderpolicy)))) {
+            Write-Verbose "Configuring ADC: Responder Policies found:`r`n$($response.responderpolicy.name | Out-String)"
+            ForEach($ResponderPolicy in $response.responderpolicy) {
+                try {
+                    Write-Verbose "Configuring ADC: Checking if policy `"$($ResponderPolicy.name)`" is bound to LoadBalancer"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
+                    ForEach ($ResponderBinding in $response.responderpolicy_binding) {
+                        try {
+                            Write-Verbose "Configuring ADC: Trying to unbind `"$($ResponderBinding.responderpolicy_lbvserver_binding.name)`""
+                            $args = @{"bindpoint" = "REQUEST" ;"policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
+                            Write-Verbose "Configuring ADC: Success"
+                        } catch {
+                            Write-Verbose "Configuring ADC: Failed to unbind. Error Details: $($_.Exception.Message)"
+                        }
+                    }
+                } catch {
+                    Write-Verbose "Configuring ADC: Something went wrong while retreiving data. Error Details: $($_.Exception.Message)"
+                }
+        
+                try {
+                    Write-Verbose "Configuring ADC: Trying to remove the Responder Policy `"$($ResponderPolicy.name)`""
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$($ResponderPolicy.name)"
+                    Write-Verbose "Configuring ADC: Success"
+                } catch {
+                    Write-Verbose "Configuring ADC: Failed to remove. Error Details: $($_.Exception.Message)"
+                }
+            }
+        
+        } else {
+            Write-Verbose "Configuring ADC: No Responder Policies found"
+        }
+         
+        Write-Verbose "Configuring ADC: Checking if Responder Actions exists starting with `"$NSRsaName`""
+        try { 
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name="/$NSRsaName/"}
+        } catch {
+            Write-Verbose "Configuring ADC: Failed to retreive Responder Actions. Error Details: $($_.Exception.Message)"
+        }
+        if (-Not([string]::IsNullOrEmpty($($response.responderaction)))) {
+            Write-Verbose "Configuring ADC: Responder Actions found:`r`n$($response.responderaction.name | Out-String)"
+            ForEach($ResponderAction in $response.responderaction) {
+                try {
+                    Write-Verbose "Configuring ADC: Trying to remove the Responder Action `"$($ResponderAction.name)`""
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
+                    Write-Verbose "Configuring ADC: Success"
+                } catch {
+                    Write-Verbose "Configuring ADC: Failed to remove. Error Details: $($_.Exception.Message)"
+                }
+            }
+        
+        } else {
+            Write-Verbose "Configuring ADC: No Responder Actions found"
+        }
+
+        Write-Verbose "Configuring ADC: Creating a test Responder Action"
+        $payload = @{"name" = "$($NSRsaName)_test"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
+        Write-Verbose "Configuring ADC: Creating a test Responder Policy"
+        $payload = @{"name" = "$($NSRspName)_test"; "action" = "$($NSRsaName)_test"; "rule" = 'HTTP.REQ.URL.CONTAINS(".well-known/acme-challenge/XXXX")'; }
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
+        Write-Verbose "Configuring ADC: Binding Responder Policy `"$($NSRspName)_test`" to LoadBalancer: `"$NSLbName`""
+        $payload = @{"name" = "$NSLbName"; "policyname" = "$($NSRspName)_test"; "priority" = 5; }
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
+
         try { 
             Write-Verbose "Configuring ADC: Check if Content Switch Policy exists"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource $NSCspName
@@ -1266,7 +1396,6 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
     }
     Start-Sleep -Seconds 2
 }
-
 #endregion ADC pre dns
 
 #region Test NS CS
@@ -1276,7 +1405,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
     Write-Host -ForeGroundColor Yellow "`r`n    NOTE: Should a DNS test fails, the script will try to continue!`r`n"
     Write-Host -ForeGroundColor White "`r`nChecking DNS"
     ForEach ($DNSObject in $DNSObjects ) {
-        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
         Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
         $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
         Write-Verbose "Testing if the Content Switch is available on `"http://$($DNSObject.DNSName)`" (via internal DNS)"
@@ -1289,10 +1418,10 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
             Write-Verbose "Internal check failed, error Details: $($_.Exception.Message)"
         }
         if ($Result.RawContent -eq "HTTP/1.0 200 OK" + "`r`n`r`n" + "XXXX") {
-            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS)..: "
+            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS).......: "
             Write-Host -ForeGroundColor Green "OK"
         } else {
-            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS)..: "
+            Write-Host -ForeGroundColor White -NoNewLine " -Test (Int. DNS).......: "
             Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable internally?"
             Write-Verbose "Output: $($Result| Out-String)"
         }
@@ -1334,37 +1463,116 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
 #region Validation
 
 if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
-    Write-Verbose "OrderItems: $($PAOrderItems | Select-Object * | Format-List | Out-String)"
     Write-Verbose "PAOrderItems: $($PAOrderItems | Select-Object fqdn,status | Format-Table | Out-String)"
-    Write-Host -ForeGroundColor White "`r`nVerification"
+    Write-Host -ForeGroundColor White "`r`nADC Preparation"
+    Write-Verbose "Configuring the ADC Responder Policies/Actions required for the validation"
+    foreach ($DNSObject in $DNSObjects) {
+        $ADCKeyAuthorization = $null
+        $PAOrderItem = $PAOrderItems | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
+        if ($PAOrderItem.status -eq "valid") {
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
+            Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+            Write-Host -ForeGroundColor White -NoNewLine " -Ready for Validation..: "
+            Write-Host -ForeGroundColor Green "=> N/A, Still valid"
+
+        } else {
+            Write-Verbose "New validation required, Start configuring the ADC"
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
+            Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+            Write-Host -ForeGroundColor White -NoNewLine " -Ready for Validation..: "
+            $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
+            $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
+            $ADCKeyAuthorization = "HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)"
+            $RspName = "{0}_{1}" -f $NSRspName,$DNSObject.ResponderPrio
+            $RsaName = "{0}_{1}" -f $NSRsaName,$DNSObject.ResponderPrio
+            Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+            try {
+                Write-Verbose "Configuring ADC: Add Responder Action `"$RsaName`" to return `"$ADCKeyAuthorization`""
+                $payload = @{"name" = "$RsaName"; "type" = "respondwith"; "target" = "`"$ADCKeyAuthorization`""; }
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
+                Write-Verbose "Success"
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+                try {
+                    Write-Verbose "Configuring ADC: Add Responder Policy `"$RspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
+                    $payload = @{"name" = "$RspName"; "action" = "$RsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
+                    Write-Verbose "Success"
+                    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+                    try {
+                        $payload = @{"name" = "$NSLbName"; "policyname" = "$RspName"; "priority" = "$($DNSObject.ResponderPrio)"; }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
+                
+                        try {
+                            Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
+                        } catch {
+                            Write-Verbose "Error Details: $($_.Exception.Message)"
+                            throw "Error while submitting the Challenge"
+                        }
+                        Write-Host -ForeGroundColor Green " Ready"
+                    } catch {
+                        Write-Verbose "Failed to bind Responder Policy to LoadBalancer. Error Details: $($_.Exception.Message)"
+                        Write-Host -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
+                        $ValidationMethod = $null
+                        throw  $($_.Exception.Message)
+                    }
+                } catch {
+                    Write-Verbose "Failed to add Responder Policy. Error Details: $($_.Exception.Message)"
+                    Write-Host -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
+                    throw  $($_.Exception.Message)
+            }
+            } catch {
+                Write-Verbose "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
+                Write-Host -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
+                throw  $($_.Exception.Message)
+            }
+        }
+    }
+    Write-Verbose "Retreiving validation status"
+    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+    Write-Verbose "PAOrderItems: $($PAOrderItems | Select-Object fqdn,status | Format-Table | Out-String)"
+    $WaitLoop = 10
+    Write-Host -ForeGroundColor White "`r`nWaiting for Order completion"
+    Write-Host -ForeGroundColor White -NoNewLine " -Completion............: "
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+    while (($WaitLoop -gt 0) -and (($PAOrderItems | Where-Object {$_.status -eq "pending"}).Count -gt 0)) {
+        Write-Verbose "Still $(($PAOrderItems | Where-Object {$_.status -eq "pending"}).Count) `"pending`" items left. Waiting an extra couple of seconds. $($PAOrderItems | Where-Object {$_.status -eq "pending"} | Out-String)"
+        Start-Sleep -Seconds 6
+        $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+        $WaitLoop--
+        Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+    }
+    if ($PAOrderItems | Where-Object {$_.status -ne "valid"}) {
+        Write-Host -ForeGroundColor Red "Failed"
+        Write-Verbose "Unfortunately there are invalid items"
+        Write-Host -ForeGroundColor White "`r`nInvalid items:"
+        ForEach($Item in $($PAOrderItems | Where-Object {$_.status -ne "valid"})) {
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
+            Write-Host -ForeGroundColor Blue "$($Item.fqdn)"
+            Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
+            Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
+        }
+        throw "There are some items invalid"
+    } else {
+        Write-Host -ForeGroundColor Green " Completed!"
+    }
+
+<#
     foreach ($DNSObject in $DNSObjects) {
         $NSKeyAuthorization = $null
         $PAOrderItem = $PAOrderItems | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
         Write-Verbose "Checking validation for `"$($DNSObject.DNSName)`" => $($PAOrderItem.status)"
         if ($PAOrderItem.status -eq "valid") {
-            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
             Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
-            Write-Host -ForeGroundColor White -NoNewLine " -Validation.......: "
+            Write-Host -ForeGroundColor White -NoNewLine " -Validation............: "
             Write-Host -ForeGroundColor Green "=> Still valid"
         } else { 
             Write-Verbose "New validation required, Start verifying"
-            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
             Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
-            Write-Host -ForeGroundColor White -NoNewLine " -Validation.......: "
+            Write-Host -ForeGroundColor White -NoNewLine " -Validation............: "
             try {
-                $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
-                Write-Verbose "Configuring ADC: Change Responder Policy `"$NSRspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
-                $payload = @{"name" = "$NSRspName"; "action" = "$NSRsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action set
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-                Write-Verbose "Configuring ADC: Change Responder Action `"$NSRsaName`" to return "
-                $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
-                $NSKeyAuthorization = "`"HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)`""
-                Write-Verbose $NSKeyAuthorization
-                $payload = @{"name" = "$NSRsaName"; "target" = $NSKeyAuthorization; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action set
-                Write-Verbose "Wait 1 second"
-                Start-Sleep -Seconds 1
                 Write-Verbose -Message "Start submitting Challenge"
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 try {
@@ -1378,12 +1586,15 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-Verbose "Retreiving validation status"
                 try {
-                    $webrequest = Invoke-WebRequest -Uri $PAOrderItem.HTTP01Url -UseBasicParsing | ConvertFrom-Json
-                    Write-Verbose "Status: $($webrequest.status)"
+                    #$webrequest = Invoke-WebRequest -Uri $PAOrderItem.HTTP01Url -UseBasicParsing | ConvertFrom-Json
+                    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+                    #Write-Verbose "Status: $($webrequest.status)"
+                    Write-Verbose "PAOrderItems: $($PAOrderItems | Format-Table | Out-String)"
                 } catch {
                     Write-Verbose "Error Details: $($_.Exception.Message)"
                     throw "Error while retreiving validation status"
                 }
+                exit
                 $i = 0
                 while (-NOT ($webrequest.status -eq "valid")) {
                     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
@@ -1426,6 +1637,8 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     Write-Verbose "Final check"
     $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     Write-Verbose "PAOrderItems: $($PAOrderItems | Select-Object fqdn,status | Format-Table | Out-String)"
+#>
+
 }
 
 #endregion Validation
@@ -1433,6 +1646,8 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
 #region ADC post DNS
 
 if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in "http", "dns"))) {
+    Write-Host -ForeGroundColor White "`r`nADC Cleanup"
+    Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     Write-Verbose "Login to ADC and save session to global variable"
     Connect-ADC -ManagementURL $ManagementURL -Credential $Credential
     try {
@@ -1450,6 +1665,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Content Switch Loadbalance Binding"
     }
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
         Write-Verbose "Checking if Content Switch Policy `"$NSCspName`" exists"
         try { 
@@ -1465,6 +1681,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Content Switch Policy" 
     }
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
         Write-Verbose "Checking if Load Balance vServer `"$NSLbName`" exists"
         try { 
@@ -1480,6 +1697,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Load Balance vserver" 
     }
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
         Write-Verbose "Checking if Service `"$NSSvcName`" exists"
         try { 
@@ -1495,6 +1713,7 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Service" 
     }
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
         Write-Verbose "Checking if server `"$NSSvcDestination`" exists"
         try { 
@@ -1510,36 +1729,95 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-Verbose "Error Details: $($_.Exception.Message)"
         Write-Warning "Not able to remove the Server" 
     }
-    try {
-        Write-Verbose "Checking if Responder Policy `"$NSRspName`" exists"
-        try { 
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Resource "$NSRspName"
-        } catch {}
-        if ($response.responderpolicy.name -eq $NSRspName) {
-            Write-Verbose "Removing Responder Policy `"$NSRspName`""
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$NSRspName" 
-        } else {
-            Write-Verbose "Responder Policy not found"
-        }
-    } catch { 
-        Write-Verbose "Error Details: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Responder Policy" 
+#    try {
+#        Write-Verbose "Checking if Responder Policy `"$NSRspName`" exists"
+#        try { 
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Resource "$NSRspName"
+#        } catch {}
+#        if ($response.responderpolicy.name -eq $NSRspName) {
+#            Write-Verbose "Removing Responder Policy `"$NSRspName`""
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$NSRspName" 
+#        } else {
+#            Write-Verbose "Responder Policy not found"
+#        }
+#    } catch { 
+#        Write-Verbose "Error Details: $($_.Exception.Message)"
+#        Write-Warning "Not able to remove the Responder Policy" 
+#    }
+#    try {
+#        Write-Verbose "Checking if Responder Action `"$NSRsaName`" exists"
+#        try { 
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Resource "$NSRsaName"
+#        } catch {}
+#        if ($response.responderaction.name -eq $NSRsaName) {
+#            Write-Verbose "Removing Responder Action `"$NSRsaName`""
+#            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource $NSRsaName
+#        } else {
+#            Write-Verbose "Responder Action not found"
+#        }
+#    } catch { 
+#        Write-Verbose "Error Details: $($_.Exception.Message)"
+#        Write-Warning "Not able to remove the Responder Action" 
+#    }
+    Write-Verbose "Checking if Responder Policies exists starting with `"$NSRspName`""
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+    try { 
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name="/$NSRspName/"}
+    } catch {
+        Write-Verbose "Failed to retreive Responder Policies. Error Details: $($_.Exception.Message)"
     }
-    try {
-        Write-Verbose "Checking if Responder Action `"$NSRsaName`" exists"
-        try { 
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Resource "$NSRsaName"
-        } catch {}
-        if ($response.responderaction.name -eq $NSRsaName) {
-            Write-Verbose "Removing Responder Action `"$NSRsaName`""
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource $NSRsaName
-        } else {
-            Write-Verbose "Responder Action not found"
+    if (-Not([string]::IsNullOrEmpty($response.responderpolicy))) {
+        Write-Verbose "Responder Policies found:`r`n$($response.responderpolicy.name | Out-String)"
+        ForEach($ResponderPolicy in $response.responderpolicy) {
+            try {
+                Write-Verbose "Checking if policy `"$($ResponderPolicy.name)`" is bound to LoadBalancer"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
+                ForEach ($ResponderBinding in $response.responderpolicy_binding) {
+                    try {
+                        Write-Verbose "Trying to unbind `"$($ResponderBinding.responderpolicy_lbvserver_binding.name)`""
+                        $args = @{"bindpoint" = "REQUEST" ;"policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
+                        Write-Verbose "Success"
+                    } catch {
+                        Write-Verbose "Failed to unbind. Error Details: $($_.Exception.Message)"
+                    }
+                }
+            } catch {
+                Write-Verbose "Something went wrong while retreiving data. Error Details: $($_.Exception.Message)"
+            }
+            try {
+                Write-Verbose "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`""
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$($ResponderPolicy.name)"
+                Write-Verbose "Success"
+            } catch {
+                Write-Verbose "Failed to remove. Error Details: $($_.Exception.Message)"
+            }
         }
-    } catch { 
-        Write-Verbose "Error Details: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Responder Action" 
+    } else {
+        Write-Verbose "No Responder Policies found"
     }
+    Write-Verbose "Checking if Responder Actions exists starting with `"$NSRsaName`""
+    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+    try { 
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name="/$NSRsaName/"}
+    } catch {
+        Write-Verbose "Failed to retreive Responder Actions. Error Details: $($_.Exception.Message)"
+    }
+    if (-Not([string]::IsNullOrEmpty($response.responderaction))) {
+        Write-Verbose "Responder Actions found:`r`n$($response.responderaction.name | Out-String)"
+        ForEach($ResponderAction in $response.responderaction) {
+            try {
+                Write-Verbose "Trying to remove the Responder Action `"$($ResponderAction.name)`""
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
+                Write-Verbose "Success"
+            } catch {
+                Write-Verbose "Failed to remove. Error Details: $($_.Exception.Message)"
+            }
+        }
+    } else {
+        Write-Verbose "No Responder Actions found"
+    }
+    Write-Host -ForeGroundColor Green " Finished!"
 }    
 
 #endregion ADC Post DNS
@@ -1588,9 +1866,9 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     try {
         Write-Host -ForegroundColor White "`r`nPre-Checking the TXT records"
         Foreach ($Record in $TXTRecords) {
-            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
             Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
-            Write-Host -ForeGroundColor White -NoNewLine " -TXT Record check.: "
+            Write-Host -ForeGroundColor White -NoNewLine " -TXT Record check......: "
             Write-Verbose "`r`nTrying to retreive the TXT record"
             $result = $null
             $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
@@ -1628,9 +1906,9 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     Write-Verbose "Check if DNS Records need to be validated"
     Write-Host -ForeGroundColor White "`r`nSending Acknowledgment"
     Foreach ($DNSObject in $DNSObjects) {
-        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+        Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
         Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
-        Write-Host -ForeGroundColor White -NoNewLine " -Send Ack.........: "
+        Write-Host -ForeGroundColor White -NoNewLine " -Send Ack..............: "
         $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
         Write-Verbose -Message "OrderItem: $($PAOrderItem| Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
@@ -1657,16 +1935,16 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     $i = 1
     Write-Host -ForeGroundColor White "`r`nValidation"
     while ($i -le 20) {
-        Write-Host -ForeGroundColor White " -Attempt..........: $i"
+        Write-Host -ForeGroundColor White " -Attempt...............: $i"
         $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
         Foreach ($DNSObject in $DNSObjects) {
             if ($DNSObject.Done -eq $false) {
-                Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname.....: "
+                Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
                 Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
                 try {
                     $PAOrderItem = $PAOrderItems | Where-Object {$_.fqdn -eq $DNSObject.DNSName}
                     Write-Verbose -Message "OrderItem: $($PAOrderItem | Select-Object fqdn,status,DNS01Status,expires | Format-List | Out-String)"
-                    Write-Host -ForeGroundColor White -NoNewLine " -Status...........: "
+                    Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
                     switch ($PAOrderItem.DNS01Status.ToLower()) {
                         "pending" {
                             Write-Host -ForeGroundColor Yellow "$($PAOrderItem.DNS01Status)"
@@ -1900,23 +2178,28 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         } catch {
 
         }
+        Write-Host -ForeGroundColor White "`r`nADC Configuration"
+        Write-Host -ForeGroundColor White -NoNewLine " -Config Saved..........: "
         if ($SaveNSConfig) {
             Write-Verbose "Saving ADC configuration"
             Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save
+            Write-Host -ForeGroundColor Green "Saved!"
+        } else {
+            Write-Host -ForeGroundColor Yellow "NOT Saved!"
         }
         ""
         if ($PfxPasswordGenerated) {
             Write-Warning "No Password was specified, so a random password was generated!"
             Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
-            Write-Host -ForeGroundColor Yellow "PFX Password.......: $PfxPassword"
+            Write-Host -ForeGroundColor Yellow "PFX Password............: $PfxPassword"
             Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
         }
         Write-Host -ForegroundColor White "Certificates"
-        Write-Host -ForegroundColor White " -Cert Dir.........: $CertificateDirectory"
-        Write-Host -ForegroundColor White " -CRT Filename.....: $CertificateFileName"
-        Write-Host -ForegroundColor White " -KEY Filename.....: $CertificateKeyFileName"
-        Write-Host -ForegroundColor White " -PFX Filename.....: $CertificatePfxFileName"
-        Write-Host -ForegroundColor White " -PFX (with Chain).: $CertificatePfxWithChainFileName"
+        Write-Host -ForegroundColor White " -Cert Dir..............: $CertificateDirectory"
+        Write-Host -ForegroundColor White " -CRT Filename..........: $CertificateFileName"
+        Write-Host -ForegroundColor White " -KEY Filename..........: $CertificateKeyFileName"
+        Write-Host -ForegroundColor White " -PFX Filename..........: $CertificatePfxFileName"
+        Write-Host -ForegroundColor White " -PFX (with Chain)......: $CertificatePfxWithChainFileName"
         ""
         Write-Host -ForeGroundColor Green "Finished with the certificates!"
         ""
@@ -1926,9 +2209,9 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             Write-Host -ForegroundColor Yellow "********************************************************************"
             foreach ($Record in $TXTRecords) {
                 ""
-                Write-Host -ForeGroundColor Yellow -NoNewLine " -DNS Hostname.....: "
+                Write-Host -ForeGroundColor Yellow -NoNewLine " -DNS Hostname..........: "
                 Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
-                Write-Host -ForeGroundColor Yellow -NoNewLine " -TXT Record Name..: "
+                Write-Host -ForeGroundColor Yellow -NoNewLine " -TXT Record Name.......: "
                 Write-Host -ForeGroundColor Yellow "$($Record.TXTName)"
             }
             ""        
