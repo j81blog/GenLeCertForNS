@@ -717,18 +717,18 @@ Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
 Write-Host -ForeGroundColor Blue "$ScriptVersion"
 try {
     $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
-   if ([version]$AvailableVersions.master -gt [version]$ScriptVersion.TrimStart("v")) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Production Version....: "
-        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
+    if ([version]$AvailableVersions.master -gt [version]$ScriptVersion.TrimStart("v")) {
         Write-Host -ForeGroundColor White -NoNewLine " -Production URL........: "
         Write-Host -ForeGroundColor Blue "NEW version available, please visit `"$($AvailableVersions.masterurl)`""
+        Write-Host -ForeGroundColor White -NoNewLine " -Production Version....: "
+        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
     }
     if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion.TrimStart("v")) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
-        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
         Write-Host -ForeGroundColor White -NoNewLine " -Develop URL...........: "
         Write-Host -ForeGroundColor Blue "NEW Develop/Test version available, visit `"$($AvailableVersions.devurl)`""
-    }
+        Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
+        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
+   }
 }
 catch {}
 #endregion VersionInfo
