@@ -1,3 +1,0 @@
-branch;version
-master;2.4.1
-dev;2.4.1
