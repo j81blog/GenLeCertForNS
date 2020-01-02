@@ -289,9 +289,9 @@ param(
 
 #requires -version 5.1
 #requires -runasadministrator
-$ScriptVersion = "v2.5.0"
+$ScriptVersion = "v2.5.1"
 $PoshACMEVersion = "3.12.0"
-$VersionURI = "https://raw.githubusercontent.com/j81blog/GenLeCertForNS/master/version.txt"
+$VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
 
@@ -717,17 +717,17 @@ Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
 Write-Host -ForeGroundColor Blue "$ScriptVersion"
 try {
     $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
-    Write-Host -ForeGroundColor White -NoNewLine " -Master Version........: "
-    Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
-    if ([version]$AvailableVersions.master -gt [version]$ScriptVersion.TrimStart("v")) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Master URL............: "
+   if ([version]$AvailableVersions.master -gt [version]$ScriptVersion.TrimStart("v")) {
+        Write-Host -ForeGroundColor White -NoNewLine " -Production Version....: "
+        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
+        Write-Host -ForeGroundColor White -NoNewLine " -Production URL........: "
         Write-Host -ForeGroundColor Blue "NEW version available, please visit `"$($AvailableVersions.masterurl)`""
     }
-    Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
-    Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
     if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion.TrimStart("v")) {
+        Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
+        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
         Write-Host -ForeGroundColor White -NoNewLine " -Develop URL...........: "
-        Write-Host -ForeGroundColor Blue "NEW Test version available, visit `"$($AvailableVersions.devurl)`""
+        Write-Host -ForeGroundColor Blue "NEW Develop/Test version available, visit `"$($AvailableVersions.devurl)`""
     }
 }
 catch {}
