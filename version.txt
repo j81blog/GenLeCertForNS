@@ -1,2 +1,0 @@
-master;masterurl;dev;devurl
-2.4.1;https://github.com/j81blog/GenLeCertForNS/;2.5.0;https://github.com/j81blog/GenLeCertForNS/tree/dev
