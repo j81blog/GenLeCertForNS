@@ -76,6 +76,19 @@
     Force cleanup of the Posh-Acme certificates located in "%LOCALAPPDATA%\Posh-ACME"
 .PARAMETER SaveNSConfig
     Save the ADC config after all the changes
+.PARAMETER SendMail
+    Specify this parameter if you want to send a mail at the end, don't forget to specify SMTPTo, SMTPFrom, SMTPServer and if required SMTPCredential
+.PARAMETER SMTPTo
+    Specify one or more email addresses.
+    Email addresses can be specified as "user.name@domain.com" or "User Name <user.name@domain.com>"
+    If specifying multiple email addresses, separate them wit a comma.
+.PARAMETER SMTPFrom
+    Specify the Email address where mails are send from
+    The email addres can be specified as "user.name@domain.com" or "User Name <user.name@domain.com>"
+.PARAMETER SMTPServer
+    Specify the SMTP Mail server fqdn or IP-address
+.PARAMETER SMTPCredential
+    Specify the Mail server credentials, only if credentials are required to send mails
 .PARAMETER EnableLogging
     Start logging to file. The name of the log file can be specified with the "-LogLocation" parameter
 .PARAMETER LogLocation
@@ -103,7 +116,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.6.3
+    Version   : v2.6.4
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -120,27 +133,27 @@
 param(
     [Parameter(ParameterSetName = "Help", Mandatory = $true)]
     [alias("h")]
-    [switch]$Help,
+    [Switch]$Help,
 
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $true)]
     [alias("CleanNS")]
-    [switch]$CleanADC,
+    [Switch]$CleanADC,
 
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
-    [switch]$GetValuesFromExistingCertificate,
+    [Switch]$GetValuesFromExistingCertificate,
 
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [String]$ExistingCertificateName,
 
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
-    [switch]$RemoveTestCertificates,
+    [Switch]$RemoveTestCertificates,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanPoshACMEStorage", Mandatory = $true)]
-    [switch]$CleanPoshACMEStorage,
+    [Switch]$CleanPoshACMEStorage,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
@@ -274,18 +287,29 @@ param(
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [switch]$DisableIPCheck,
+    [Switch]$DisableIPCheck,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [switch]$SaveNSConfig,
+    [Switch]$SaveNSConfig,
+
+    [Switch]$SendMail,
+
+    [String[]]$SMTPTo,
+
+    [String]$SMTPFrom,
+
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]$SMTPCredential = [System.Management.Automation.PSCredential]::Empty,
+
+    [String]$SMTPServer,
 
     [Parameter(Mandatory = $false)]
-    [switch]$EnableLogging,
+    [Switch]$EnableLogging,
 
     [Parameter(Mandatory = $false)]
-    [switch]$DisableLogging,
+    [Switch]$DisableLogging,
 
     [ValidateNotNullOrEmpty()]
     [alias("LogLocation")]
@@ -296,13 +320,13 @@ param(
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [switch]$Production
+    [Switch]$Production
 
 )
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.6.3"
+$ScriptVersion = "2.6.4"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -404,19 +428,19 @@ function Write-ToLogFile {
 
         [Parameter(ParameterSetName = "Block", Mandatory = $false)]
         [Alias("BI")]
-        [switch]$BlockIndent,
+        [Switch]$BlockIndent,
 
         [Parameter(ParameterSetName = "Error")]
-        [switch]$E,
+        [Switch]$E,
 
         [Parameter(ParameterSetName = "Warning")]
-        [switch]$W,
+        [Switch]$W,
 
         [Parameter(ParameterSetName = "Info")]
-        [switch]$I,
+        [Switch]$I,
 
         [Parameter(ParameterSetName = "Debug")]
-        [switch]$D,
+        [Switch]$D,
 
         [Parameter(ParameterSetName = "Error")]
         [Parameter(ParameterSetName = "Warning")]
@@ -430,7 +454,7 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
         [Alias("ND")]
-        [switch]$NoDate,
+        [Switch]$NoDate,
 
         [Parameter(ParameterSetName = "Error")]
         [Parameter(ParameterSetName = "Warning")]
@@ -446,7 +470,7 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Debug")]
         [Parameter(ParameterSetName = "Block")]
         [Alias("S")]
-        [switch]$Show,
+        [Switch]$Show,
 
         [String]$LogFile = "$PSScriptRoot\Log.txt",
 
@@ -469,17 +493,17 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Debug")]
         [Parameter(ParameterSetName = "Block")]
         [Alias("NH", "NoHead")]
-        [switch]$NoLogHeader,
+        [Switch]$NoLogHeader,
         
         [Parameter(ParameterSetName = "Head")]
         [Alias("H", "Head")]
-        [switch]$WriteHeader,
+        [Switch]$WriteHeader,
 
         [Alias("HI")]
         [String]$ExtraHeaderInfo = $null,
 
         [Alias("NL")]
-        [switch]$NewLog
+        [Switch]$NewLog
     )
     # Set Message Type to Informational if nothing is defined.
     if ((-Not $I) -and (-Not $W) -and (-Not $E) -and (-Not $D) -and (-Not $Block) -and (-Not $WriteHeader)) {
@@ -661,7 +685,7 @@ function Invoke-ADCRestApi {
 
         [hashtable]$Arguments = @{ },
 
-        [switch]$Stat = $false,
+        [Switch]$Stat = $false,
 
         [ValidateScript( { $Method -eq 'GET' })]
         [hashtable]$Filters = @{ },
@@ -669,7 +693,7 @@ function Invoke-ADCRestApi {
         [ValidateScript( { $Method -ne 'GET' })]
         [hashtable]$Payload = @{ },
 
-        [switch]$GetWarning = $false,
+        [Switch]$GetWarning = $false,
 
         [ValidateSet('EXIT', 'CONTINUE', 'ROLLBACK')]
         [String]$OnErrorAction = 'EXIT'
@@ -790,7 +814,47 @@ function TerminateScript {
     if (-Not [String]::IsNullOrEmpty($ExitMessage)) {
         Write-ToLogFile -I -C Final -M "$ExitMessage"
     }
-    Write-ToLogFile -I -C Final -M "Script Terminated, ExitCode: $ExitCode"
+    if ($SendMail) {
+        Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
+        if (-Not ($ExitCode -eq 0)) {
+            $SMTPSubject = "GenLeCertForNS Finished with an Error"
+            $SMTPBody = @"
+GenLeCertForNS Finished with an Error!
+$ExitMessage
+
+Check log for error details.
+"@
+        } else {
+            $SMTPSubject = "GenLeCertForNS Finished Successfully"
+            $SMTPBody = @"
+GenLeCertForNS Finished Successfully
+
+$($MailData | Out-String)
+"@
+        }
+        try {
+            $message = New-Object System.Net.Mail.MailMessage
+            $message.From = $SMTPFrom
+            foreach ($to in $SMTPTo) {
+                $message.To.Add($to)
+            }
+            $message.Subject = $SMTPSubject
+            $message.IsBodyHTML = $false
+        
+            $message.Body = $SMTPBody
+            $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $LogFile))
+            $smtp = New-Object Net.Mail.SmtpClient($SMTPServer)
+            if (-Not ($SMTPCredential -eq [PSCredential]::Empty)) {
+                $smtp.Credentials = $SMTPCredential
+            }
+            $smtp.Send($message)
+        } catch {
+            Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
+        }
+    } else {
+        Write-ToLogFile -I -C Final -M "Script Terminated, ExitCode: $ExitCode"
+    }
+    
     exit $ExitCode
 }
 
@@ -805,7 +869,7 @@ function Connect-ADC {
 
         [int]$Timeout = 3600,
 
-        [switch]$PassThru
+        [Switch]$PassThru
     )
     # https://github.com/devblackops/NetScaler
 
@@ -1015,11 +1079,61 @@ if ($GetValuesFromExistingCertificate) {
 
 #endregion ScriptBasics
 
+#region EmailSetup
+
+$MailData = @()
+if ($SendMail) {
+    $SMTPError = $false
+    Write-Host -ForeGroundColor White "`r`nEmail Details"
+    Write-Host -ForeGroundColor White -NoNewLine " -Email To Address......: "
+    if ([String]::IsNullOrEmpty($SMTPTo)) {
+        Write-Host -ForeGroundColor Red "None"
+        Write-ToLogFile -E -C EmailSettings -M "No To Address specified"
+        $SMTPError = $true
+    } else {
+        Write-Host -ForeGroundColor Blue "$SMTPTo"
+        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPTo"
+    }
+    Write-Host -ForeGroundColor White -NoNewLine " -Email From Address....: "
+    if ([String]::IsNullOrEmpty($SMTPTo)) {
+        Write-Host -ForeGroundColor Red "None"
+        Write-ToLogFile -E -C EmailSettings -M "No From Address specified"
+        $SMTPError = $true
+    } else {
+        Write-Host -ForeGroundColor Blue "$SMTPFrom"
+        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPFrom"
+    }
+    Write-Host -ForeGroundColor White -NoNewLine " -Email Server..........: "
+    if ([String]::IsNullOrEmpty($SMTPServer)) {
+        Write-Host -ForeGroundColor Red "None"
+        Write-ToLogFile -E -C EmailSettings -M "No Email Server specified"
+        $SMTPError = $true
+    } else {
+        Write-Host -ForeGroundColor Blue "$SMTPServer"
+        Write-ToLogFile -I -C EmailSettings -M "Email Server: $SMTPServer"
+    }
+    Write-Host -ForeGroundColor White -NoNewLine " -Email Credentials.....: "
+    if ($SMTPCredential -eq [PSCredential]::Empty) {
+        Write-Host -ForeGroundColor Blue "None"
+        Write-ToLogFile -I -C EmailSettings -M "No Email Credential specified"
+    } else {
+        Write-Host -ForeGroundColor Blue "$($SMTPCredential.UserName) (Credential)"
+        Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($SMTPCredential.UserName)"
+    }
+    if ($SMTPError){
+        $SendMail = $false
+        TerminateScript 1
+    }
+}
+
+#endregion MailSetup
+
 #region Help
 
 if ($Help -or ($PSBoundParameters.Count -eq 0)) {
     Get-Help "$PSScriptRoot\GenLeCertForNS.ps1" -Detailed
     TerminateScript 0 "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
+    $SendMail = $false
 }
 #endregion Help
 
@@ -2597,6 +2711,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         } else {
             Write-Host -ForeGroundColor Yellow "NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
             Write-ToLogFile -I -C ADC-CertUpload -M "ADC configuration NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
+            $MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
         }
         ""
         if ($PfxPasswordGenerated) {
@@ -2621,6 +2736,12 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
         Write-ToLogFile -I -C ADC-CertUpload -M "PFX (with Chain): $CertificatePfxWithChainFileName"
         Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificates!"
+
+        $MailData += "Certificates stored in: $CertificateDirectory"
+        try {
+            $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
+            $MailData += "New certificate is valid until: $($MailCertificate.NotAfter.ToUniversalTime())"
+        } catch {}
 
         if ($ValidationMethod -eq "dns") {
             Write-Host -ForegroundColor Yellow "`r`n********************************************************************"
