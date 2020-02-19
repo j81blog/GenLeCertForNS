@@ -103,7 +103,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.6.1
+    Version   : v2.6.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -302,7 +302,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.6.1"
+$ScriptVersion = "2.6.2"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -922,7 +922,7 @@ function Get-ADCCurrentCertificate {
     )
     try {
         Write-ToLogFile -I -C Get-ADCCurrentCertificate -M "Trying to retrieve current certificate data from the Citrix ADC."
-        $adcCert = Invoke-ADCRestApi -Session $Session -Method GET -Type sslcertkey -Resource $Name -ErrorAction SilentlyContinue
+        $adcCert = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $Name -ErrorAction SilentlyContinue
         $currentCert = $adcCert.sslcertkey
         Write-ToLogFile -D -C Get-ADCCurrentCertificate -M "Certificate match:"
         $currentCert | Select-Object certkey, subject, status, clientcertnotbefore, clientcertnotafter | ForEach-Object {
@@ -930,7 +930,7 @@ function Get-ADCCurrentCertificate {
         }
         if ($currentCert.certKey -eq $Name) {
             $payload = @{"filename" = "$(($currentCert.cert).Replace('/nsconfig/ssl/',''))"; "filelocation" = "/nsconfig/ssl/" }
-            $response = Invoke-ADCRestApi -Session $Session -Method GET -Type systemfile -Arguments $payload -ErrorAction SilentlyContinue
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $payload -ErrorAction SilentlyContinue
             if (-Not ([String]::IsNullOrWhiteSpace($response.systemfile.filecontent))) {
                 Write-ToLogFile -D -C Get-ADCCurrentCertificate -M "Certificate available, getting the details."
                 $content = [System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($response.systemfile.filecontent))
