@@ -103,7 +103,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.6.2
+    Version   : v2.6.3
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -302,7 +302,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.6.2"
+$ScriptVersion = "2.6.3"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -973,8 +973,7 @@ function Invoke-CheckScriptVersions {
     )
     try {
         Write-ToLogFile -D -C Invoke-CheckScriptVersions -M "Retrieving data for URI: $URI"
-        $response = Invoke-RestMethod -Method Get -UseBasicParsing -Uri $URI -ErrorAction SilentlyContinue
-        $AvailableVersions = $response | ConvertFrom-Json -ErrorAction Stop | ConvertTo-Json -Compress -ErrorAction Stop
+        $AvailableVersions = Invoke-RestMethod -Method Get -UseBasicParsing -Uri $URI -ErrorAction SilentlyContinue
         Write-ToLogFile -D -C Invoke-CheckScriptVersions -M "Successfully retrieved the requested data"
     } catch {
         Write-ToLogFile -D -C Invoke-CheckScriptVersions -M "Could not retrieve version info. Exception Message: $($_.Exception.Message)"
