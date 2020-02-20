@@ -55,7 +55,8 @@
     Set this switch to extract the CommonName (ad if present also the SAN records) from an existing certificate already present on the Citrix ADC.
     If you set this switch -ExistingCertificateName must also be configured.
 .PARAMETER ExistingCertificateName
-    The name of an existing certificate on the ADC. Us the CertKeyName (Name visible in the GUI, not the filename)
+    The name of an existing certificate on the ADC. Use the CertKeyName (Name visible in the GUI, not the filename)
+    This option will not update this certificate (Use NSCertNameToUpdate parameter for this) instead it will read the values (cn and san) from the certificate.
 .PARAMETER CN
     (Common Name) The Primary (first) dns record for the certificate
     Example: "domain.com"
@@ -116,7 +117,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.6.4
+    Version   : v2.7.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -326,7 +327,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.6.4"
+$ScriptVersion = "2.7.0"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -822,7 +823,7 @@ function TerminateScript {
 GenLeCertForNS Finished with an Error!
 $ExitMessage
 
-Check log for error details.
+Check log for error more details.
 "@
         } else {
             $SMTPSubject = "GenLeCertForNS Finished Successfully"
@@ -833,6 +834,9 @@ $($MailData | Out-String)
 "@
         }
         try {
+            Write-Host -ForeGroundColor White "`r`nEmail"
+            Write-Host -ForeGroundColor White -NoNewLine " -Sending Mail..........: "
+        
             $message = New-Object System.Net.Mail.MailMessage
             $message.From = $SMTPFrom
             foreach ($to in $SMTPTo) {
@@ -842,19 +846,35 @@ $($MailData | Out-String)
             $message.IsBodyHTML = $false
         
             $message.Body = $SMTPBody
-            $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $LogFile))
+            try {
+                $message.Attachments.Add($(New-Object System.Net.Mail.Attachment "$LogFile"))
+            } catch {
+                Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
+                Write-Host -ForeGroundColor Red -NoNewLine "Could not attach LogFile "
+            }
             $smtp = New-Object Net.Mail.SmtpClient($SMTPServer)
             if (-Not ($SMTPCredential -eq [PSCredential]::Empty)) {
                 $smtp.Credentials = $SMTPCredential
             }
             $smtp.Send($message)
+            Write-Host -ForeGroundColor Green "Successfully Send"
         } catch {
             Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
+            Write-Host -ForeGroundColor Red "ERROR, Could not send mail: $($_.Exception.Message)"
         }
+        
     } else {
         Write-ToLogFile -I -C Final -M "Script Terminated, ExitCode: $ExitCode"
+        
     }
-    
+
+    if ($ExitCode -eq 0) {
+        ""
+        Write-Host -ForegroundColor Green "Finished! $ExitMessage"
+    } else {
+        ""
+        Write-Host -ForegroundColor Red "Finished with Errors! $ExitMessage"
+    }
     exit $ExitCode
 }
 
@@ -925,7 +945,7 @@ function Connect-ADC {
         if ($response.severity -eq 'ERROR') {
             Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)"
             Write-Error "Error. See log"
-            TerminateScript 1
+            TerminateScript 1 "Error. See log"
         } else {
             Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)"
         }
@@ -1056,11 +1076,24 @@ if ($EnableLogging) {
 if ($DisableLogging) {
     $LogLevel = "None"
 } else {
+    $LogPath = Split-Path -Path $LogFile -Parent -ErrorAction SilentlyContinue
+    if ([String]::IsNullOrEmpty($LogPath)) {
+        if ([String]::IsNullOrEmpty($PSScriptRoot)) {
+            $LogPath = "."
+        } else {
+            $LogPath = "$PSScriptRoot"
+        }
+    }
+    $LogPath = Resolve-Path $LogPath
+    $LogFileName = Split-Path -Path $LogFile -Leaf
+    $LogFile = Join-Path -Path $LogPath -ChildPath $LogFileName
+    $Global:LogFile = $LogFile
     $ExtraHeaderInfo = @"
+PSScriptRoot: $PSScriptRoot
 Script Version: $ScriptVersion
 PoSH ACME Version: $PoshACMEVersion
 PSBoundParameters:
-$($PSBoundParameters | out-String)
+$($PSBoundParameters | Out-String)
 "@
     Write-ToLogFile -I -C ScriptBasics -M "Starting a new log" -NewLog -ExtraHeaderInfo $ExtraHeaderInfo
     Write-Host -ForeGroundColor White "`r`nLogging Active"
@@ -1083,22 +1116,22 @@ if ($GetValuesFromExistingCertificate) {
 
 $MailData = @()
 if ($SendMail) {
-    $SMTPError = $false
+    $SMTPError = @()
     Write-Host -ForeGroundColor White "`r`nEmail Details"
     Write-Host -ForeGroundColor White -NoNewLine " -Email To Address......: "
     if ([String]::IsNullOrEmpty($SMTPTo)) {
         Write-Host -ForeGroundColor Red "None"
-        Write-ToLogFile -E -C EmailSettings -M "No To Address specified"
-        $SMTPError = $true
+        Write-ToLogFile -E -C EmailSettings -M "No To Address specified (-SMTPTo)"
+        $SMTPError += "No To Address specified (-SMTPTo)"
     } else {
         Write-Host -ForeGroundColor Blue "$SMTPTo"
         Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPTo"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Email From Address....: "
-    if ([String]::IsNullOrEmpty($SMTPTo)) {
+    if ([String]::IsNullOrEmpty($SMTPFrom)) {
         Write-Host -ForeGroundColor Red "None"
-        Write-ToLogFile -E -C EmailSettings -M "No From Address specified"
-        $SMTPError = $true
+        Write-ToLogFile -E -C EmailSettings -M "No From Address specified (-SMTPFrom)"
+        $SMTPError += "No From Address specified (-SMTPFrom)"
     } else {
         Write-Host -ForeGroundColor Blue "$SMTPFrom"
         Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPFrom"
@@ -1106,23 +1139,23 @@ if ($SendMail) {
     Write-Host -ForeGroundColor White -NoNewLine " -Email Server..........: "
     if ([String]::IsNullOrEmpty($SMTPServer)) {
         Write-Host -ForeGroundColor Red "None"
-        Write-ToLogFile -E -C EmailSettings -M "No Email Server specified"
-        $SMTPError = $true
+        Write-ToLogFile -E -C EmailSettings -M "No Email (SMTP) Server specified (-SMTPServer)"
+        $SMTPError += "No Email (SMTP) Server specified (-SMTPServer)"
     } else {
         Write-Host -ForeGroundColor Blue "$SMTPServer"
         Write-ToLogFile -I -C EmailSettings -M "Email Server: $SMTPServer"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Email Credentials.....: "
     if ($SMTPCredential -eq [PSCredential]::Empty) {
-        Write-Host -ForeGroundColor Blue "None"
-        Write-ToLogFile -I -C EmailSettings -M "No Email Credential specified"
+        Write-Host -ForeGroundColor Blue "(Optional) None"
+        Write-ToLogFile -I -C EmailSettings -M "No Email Credential specified, this is optional"
     } else {
         Write-Host -ForeGroundColor Blue "$($SMTPCredential.UserName) (Credential)"
         Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($SMTPCredential.UserName)"
     }
-    if ($SMTPError){
+    if (-Not [String]::IsNullOrEmpty($SMTPError)) {
         $SendMail = $false
-        TerminateScript 1
+        TerminateScript 1 "Incorrect values, check mail settings.`r`n$($SMTPError | Out-String)"
     }
 }
 
@@ -1145,7 +1178,7 @@ if ($NetRelease -lt 461308) {
     Write-Host -NoNewLine -ForeGroundColor RED "`n`nWARNING: "
     Write-Host ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
     Start-Process https://www.microsoft.com/net/download/dotnet-framework-runtime
-    TerminateScript 1
+    TerminateScript 1 ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
 } else {
     Write-ToLogFile -I -C DOTNETCheck -M ".NET Framework 4.7.1 or higher is installed."
 }
@@ -1247,7 +1280,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             Write-ToLogFile -W -C LoadModule -M "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management."
             Write-ToLogFile -W -C LoadModule -M "Posh-ACME: https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
             Start-Process "https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
-            TerminateScript 1
+            TerminateScript 1 "PackageManagement is not available please install this first or manually install Posh-ACME"
         } else {
             try {
                 if (-not ((Get-PackageProvider | Where-Object { $_.Name -like "*nuget*" }).Version -ge [System.Version]"2.8.5.208")) {
@@ -1282,7 +1315,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-ToLogFile -W -C LoadModule -M "PackageManagement is not available please install this first or manually install Posh-ACME."
                 Write-ToLogFile -W -C LoadModule -M "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management."
                 Write-ToLogFile -W -C LoadModule -M "Posh-ACME: https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
-                TerminateScript 1
+                TerminateScript 1 "PackageManagement is not available please install this first or manually install Posh-ACME."
             } finally {
                 Write-Host -ForeGroundColor White -NoNewLine " -Posh-ACME Version.: "
                 Write-Host -ForeGroundColor Blue "v$PoshACMEVersion"
@@ -1295,7 +1328,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         } catch {
             Write-ToLogFile -E -C LoadModule -M "Importing module Posh-ACME failed."
             Write-Error "Importing module Posh-ACME failed"
-            TerminateScript 1
+            TerminateScript 1 "Importing module Posh-ACME failed"
         }
     }
     Write-ToLogFile -I -C LoadModule -M "Posh-ACME loaded successfully."
@@ -1321,10 +1354,10 @@ try {
     $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
     if ($NSVersion -lt 11) {
         Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
-        Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version of this script!"
-        Write-ToLogFile -E -C ADC-Check -M "Only ADC version 11 and up is supported, please use an older version of this script!"
+        Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
+        Write-ToLogFile -E -C ADC-Check -M "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
         Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
-        TerminateScript 1
+        TerminateScript 1 "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
     }
 } catch {
     Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
@@ -1350,9 +1383,9 @@ if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($Remov
         Write-ToLogFile -I -C CertificatePreCheck -M "Got the following values from an existing certificate."
         Write-ToLogFile -I -C CertificatePreCheck -M "Using existing CN: $CN"
     } else {
-        Write-ToLogFile -E -C CertificatePreCheck -M "No SAN entries received, could not retrieve CN from certificate `"$NSCertNameToUpdate`"."
-        Write-Error "Could not retrieve CN from certificate `"$NSCertNameToUpdate`""
-        TerminateScript 1
+        Write-ToLogFile -E -C CertificatePreCheck -M "No SAN entries received, could not retrieve CN from certificate `"$ExistingCertificateName`"."
+        Write-Error "Could not retrieve CN from certificate `"$ExistingCertificateName`""
+        TerminateScript 1 "Could not retrieve CN from certificate `"$ExistingCertificateName`""
     }
     if (-Not [String]::IsNullOrEmpty($($CurrentCertificateValues.SAN))) {
         $SAN = $CurrentCertificateValues.SAN
@@ -1388,11 +1421,10 @@ if ($RemoveTestCertificates -or $CleanADC) {
     if (([String]::IsNullOrWhiteSpace($NSCsVipName)) -and ($ValidationMethod -eq "http")) {
         Write-Host -ForeGroundColor Red "`r`nERROR: The `"-NSCsVipName`" cannot be empty!`r`n"
         Write-ToLogFile -E -C DNSPreCheck -M "The `"-NSCsVipName`" cannot be empty!"
-        TerminateScript 1
+        TerminateScript 1 "The `"-NSCsVipName`" cannot be empty!"
     }
     Write-ToLogFile -I -C DNSPreCheck -M "continuing with the `"$ValidationMethod`" validation method!"
 }
-
 
 $DNSObjects = @()
 $ResponderPrio = 10
@@ -1471,7 +1503,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Write-ToLogFile -E -C DNSPreCheck -M "The Content Switch `"$NSCsVipName`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                TerminateScript 1
+                TerminateScript 1 "The Content Switch `"$NSCsVipName`" does NOT exist! Please make sure a HTTP Content Switch is available."
             } elseif ($ExceptMessage -like "*The remote server returned an error*") {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
@@ -1480,7 +1512,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Write-ToLogFile -E -C DNSPreCheck -M "Unknown error found while checking the Content Switch"
-                TerminateScript 1
+                TerminateScript 1 "Unknown error found while checking the Content Switch"
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP"
@@ -1492,7 +1524,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Write-ToLogFile -E -C DNSPreCheck -M "Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                TerminateScript 1
+                TerminateScript 1 "Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
             } else {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Green "Found"
@@ -1522,7 +1554,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
                 Write-ToLogFile -E -C DNSPreCheck -M "Content Switch verification failed."
-                TerminateScript 1
+                TerminateScript 1 "Content Switch verification failed."
             }
         }
     } elseif ($ValidationMethod -eq "dns") {
@@ -1601,12 +1633,12 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
     if (-not ($PARegistration.Contact -contains "mailto:$($EmailAddress)")) {
         Write-ToLogFile -E -C Registration -M "User registration failed."
         Write-Error "User registration failed"
-        TerminateScript 1
+        TerminateScript 1 "User registration failed"
     }
     if ($PARegistration.status -ne "valid") {
         Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
         Write-Error  "Account status is $($Account.status)"
-        TerminateScript 1
+        TerminateScript 1 "Account status is $($Account.status)"
     } else {
         Write-ToLogFile -I -C Registration -M "Registration ID: $($PARegistration.id), Status: $($PARegistration.status)."
         Write-ToLogFile -I -C Registration -M "Setting Account as default for new order."
@@ -1637,9 +1669,10 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
         
         Write-ToLogFile -I -C Order -M "Order created successfully."
     } catch {
-        Write-ToLogFile -E -C Order -M "Could not create the order. Exception Message: $($_.Exception.Message)"
-        Write-Host -ForeGroundColor Red "ERROR: Could not create the order."
-        TerminateScript 1
+        Write-ToLogFile -E -C Order -M "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter. "
+        Write-ToLogFile -E -C Order -M "Exception Message: $($_.Exception.Message)"
+        Write-Host -ForeGroundColor Red "ERROR: Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
+        TerminateScript 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
     }
 }
 
@@ -1658,7 +1691,7 @@ if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $Remo
             if ([String]::IsNullOrWhiteSpace($PAChallenge)) {
                 Write-ToLogFile -E -C DNS-Validation -M "No valid validation found."
                 Write-Error "No valid validation found"
-                TerminateScript 1
+                TerminateScript 1 "No valid validation found"
             } else {
                 $DNSObject.Challenge = $PAChallenge
             }
@@ -1673,7 +1706,7 @@ if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $Remo
                 if ([String]::IsNullOrWhiteSpace($PublicIP)) {
                     Write-ToLogFile -E -C DNS-Validation -M "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`"."
                     Write-Error "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
-                    TerminateScript 1
+                    TerminateScript 1 "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
                 } elseif ($PublicIP -is [system.array]) {
                     Write-ToLogFile -W -C DNS-Validation -M "More than one ip address found:"
                     $PublicIP | ForEach-Object {
@@ -1701,7 +1734,7 @@ if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $Remo
             } else {
                 Write-Host -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
                 Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter."
-                TerminateScript 1
+                TerminateScript 1 "You can try to re-run the script with the -DisableIPCheck parameter."
             }
         }
         if ($DNSObject.SAN) {
@@ -1740,7 +1773,7 @@ if ((-not $CleanADC) -and (-not ($RemoveTestCertificates)) -and ($ValidationMeth
         $DNSObjects | Select-Object DNSName, IPAddress -First 1 | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
         $InvalidDNS | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Red "$_" }
         Write-Error -Message "Invalid (not registered?) DNS Record(s) found!"
-        TerminateScript 1
+        TerminateScript 1 "Invalid (not registered?) DNS Record(s) found!"
     } else {
         Write-ToLogFile -I -C DNS-Validation -M "None found, continuing"
     }
@@ -1763,7 +1796,7 @@ if ((-not $CleanADC) -and (-not ($RemoveTestCertificates)) -and ($ValidationMeth
         $DNSObjects[0] | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
         $DNSNoMatch | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Red "$_" }
         Write-Error "Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))."
-        TerminateScript 1
+        TerminateScript 1 "Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))."
     } elseif ($DisableIPCheck) {
         Write-ToLogFile -I -C DNS-Validation -M "IP Addresses checking was skipped."
     } else {
@@ -1814,20 +1847,20 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
             $ExceptMessage = $_.Exception.Message
             Write-ToLogFile -E -C ConfigureADC -M "Could not find/read out the content switch `"$NSCsVipName`" not available? Exception Message: $ExceptMessage"
             Write-Error "Could not find/read out the content switch `"$NSCsVipName`" not available?"
-            TerminateScript 1
+            TerminateScript 1 "Could not find/read out the content switch `"$NSCsVipName`" not available?"
             if ($ExceptMessage -like "*(404) Not Found*") {
                 Write-Host -ForeGroundColor Red "The Content Switch `"$NSCsVipName`" does NOT exist!"
                 Write-ToLogFile -E -C ConfigureADC -M "The Content Switch `"$NSCsVipName`" does NOT exist!"
-                TerminateScript 1
+                TerminateScript 1 "The Content Switch `"$NSCsVipName`" does NOT exist!"
             } elseif ($ExceptMessage -like "*The remote server returned an error*") {
                 Write-Host -ForeGroundColor Red "Unknown error found while checking the Content Switch: `"$NSCsVipName`"."
                 Write-Host -ForeGroundColor Red "Error message: `"$ExceptMessage`""
                 Write-ToLogFile -E -C ConfigureADC -M "Unknown error found while checking the Content Switch: `"$NSCsVipName`". Exception Message: $ExceptMessage"
-                TerminateScript 1
+                TerminateScript 1 "Unknown error found while checking the Content Switch: `"$NSCsVipName`". Exception Message: $ExceptMessage"
             } elseif (-Not [String]::IsNullOrEmpty($ExceptMessage)) {
                 Write-Host -ForeGroundColor Red "Unknown Error, `"$ExceptMessage`""
                 Write-ToLogFile -E -C ConfigureADC -M "Caught an unknown error. Exception Message: $ExceptMessage"
-                TerminateScript 1
+                TerminateScript 1 "Caught an unknown error. Exception Message: $ExceptMessage"
             }
         } 
         try {
@@ -1869,7 +1902,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
         }
         if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
             Write-ToLogFile -D -C ConfigureADC -M "Responder Policies found:"
-            $response.responderpolicy.name | Select-Object DNSName, SAN | ForEach-Object {
+            $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
                 Write-ToLogFile -D -C ConfigureADC -M "$($_ | ConvertTo-Json -Compress)"
             }
             ForEach ($ResponderPolicy in $response.responderpolicy) {
@@ -1878,27 +1911,26 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
                     ForEach ($ResponderBinding in $response.responderpolicy_binding) {
                         try {
-                            Write-ToLogFile -I -C ConfigureADC -M "Trying to unbind `"$($ResponderBinding.responderpolicy_binding.name)`"."
-                            $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_binding.priority)"; }
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy_binding -Arguments $args -Resource $NSLbName
-                            Write-ToLogFile -I -C ConfigureADC -M "Unbind was successful"
+                            $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                            Write-ToLogFile -I -C ConfigureADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
+                            Write-ToLogFile -I -C ConfigureADC -M "Responder Policy unbound successfully."
                         } catch {
-                            Write-ToLogFile -E -C ConfigureADC -M "Failed to unbind. Exception Message: $($_.Exception.Message)"
+                            Write-ToLogFile -E -C ConfigureADC -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
                         }
                     }
                 } catch {
-                    Write-ToLogFile -E -C ConfigureADC -M "Something went wrong while retrieving data. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -E -C ConfigureADC -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
                 }
-
                 try {
                     Write-ToLogFile -I -C ConfigureADC -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$($ResponderPolicy.name)"
-                    Write-ToLogFile -I -C ConfigureADC -M "Removed successfully."
+                    Write-ToLogFile -I -C ConfigureADC -M "Responder Policy removed successfully."
                 } catch {
-                    Write-ToLogFile -E -C ConfigureADC -M "Failed to remove. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -E -C ConfigureADC -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
                 }
             }
-
+    
         } else {
             Write-ToLogFile -I -C ConfigureADC -M "No Responder Policies found."
         }
@@ -1911,23 +1943,21 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
         }
         if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
             Write-ToLogFile -D -C ConfigureADC -M "Responder Actions found:"
-            $response.responderaction.name | Select-Object DNSName, SAN | ForEach-Object {
+            $response.responderaction | Select-Object name, target | ForEach-Object {
                 Write-ToLogFile -D -C ConfigureADC -M "$($_ | ConvertTo-Json -Compress)"
             }
             ForEach ($ResponderAction in $response.responderaction) {
                 try {
-                    Write-ToLogFile -I -C ConfigureADC -M "Trying to remove the Responder Action `"$($ResponderAction.name)`"."
+                    Write-ToLogFile -I -C ConfigureADC -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
-                    Write-ToLogFile -I -C ConfigureADC -M "Removed successfully."
+                    Write-ToLogFile -I -C ConfigureADC -M "Responder Action removed successfully."
                 } catch {
-                    Write-ToLogFile -E -C ConfigureADC -M "Failed to remove. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -E -C ConfigureADC -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
                 }
             }
-
         } else {
             Write-ToLogFile -I -C ConfigureADC -M "No Responder Actions found."
         }
-
         Write-ToLogFile -D -C ConfigureADC -M "Creating a test Responder Action."
         $payload = @{"name" = "$($NSRsaName)_test"; "type" = "respondwith"; "target" = '"HTTP/1.0 200 OK" +"\r\n\r\n" + "XXXX"'; }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
@@ -1959,7 +1989,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
     } catch {
         Write-ToLogFile -E -C ConfigureADC -M "Could not configure the ADC. Exception Message: $($_.Exception.Message)"
         Write-Error "Could not configure the ADC!"
-        TerminateScript 1
+        TerminateScript 1 "Could not configure the ADC!"
     }
     Start-Sleep -Seconds 2
 }
@@ -2091,7 +2121,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
                             Write-Error "Error while submitting the Challenge."
-                            TerminateScript 1
+                            TerminateScript 1 "Error while submitting the Challenge."
                         }
                         Write-Host -ForeGroundColor Green " Ready"
                     } catch {
@@ -2099,19 +2129,19 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                         Write-Host -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
                         $ValidationMethod = $null
                         Write-Error  $($_.Exception.Message)
-                        TerminateScript 1
+                        TerminateScript 1 "Failed to bind Responder Policy to Load Balance VIP"
                     }
                 } catch {
                     Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
                     Write-Host -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
                     Write-Error  $($_.Exception.Message)
-                    TerminateScript 1
+                    TerminateScript 1 "Failed to add Responder Policy"
                 }
             } catch {
                 Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
                 Write-Host -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
                 Write-Error  $($_.Exception.Message)
-                TerminateScript 1
+                TerminateScript 1 "Failed to add Responder Action"
             }
         }
     }
@@ -2144,7 +2174,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
             Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
         }
         Write-Error "There are some items invalid"
-        TerminateScript 1
+        TerminateScript 1 "There are some items invalid"
     } else {
         Write-Host -ForeGroundColor Green " Completed!"
         Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
@@ -2250,9 +2280,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-ToLogFile -E -C CleanupADC -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
     }
     if (-Not([String]::IsNullOrEmpty($response.responderpolicy))) {
-        Write-ToLogFile -I -C CleanupADC -M "Responder Policies found."
-        Write-ToLogFile -D -C CleanupADC -M "Responder Policies:"
-        $response.responderpolicy.name | ForEach-Object {
+        Write-ToLogFile -D -C CleanupADC -M "Responder Policies found:"
+        $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
             Write-ToLogFile -D -C CleanupADC -M "$($_ | ConvertTo-Json -Compress)"
         }
         ForEach ($ResponderPolicy in $response.responderpolicy) {
@@ -2261,8 +2290,9 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
                 ForEach ($ResponderBinding in $response.responderpolicy_binding) {
                     try {
-                        Write-ToLogFile -I -C CleanupADC -M "Trying to unbind `"$($ResponderBinding.responderpolicy_binding.name)`""
-                        $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_binding.priority)"; }
+                        $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                        Write-ToLogFile -I -C CleanupADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
+
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
                         Write-ToLogFile -I -C CleanupADC -M "Responder Policy unbound successfully."
                     } catch {
@@ -2291,9 +2321,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         Write-ToLogFile -E -C CleanupADC -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
     }
     if (-Not([String]::IsNullOrEmpty($response.responderaction))) {
-        Write-ToLogFile -I -C CleanupADC -M "Responder Actions found."
-        Write-ToLogFile -D -C CleanupADC -M "Responder Actions:"
-        $response.responderaction.name | ForEach-Object {
+        Write-ToLogFile -D -C CleanupADC -M "Responder Actions found:"
+        $response.responderaction | Select-Object name, target | ForEach-Object {
             Write-ToLogFile -D -C CleanupADC -M "$($_ | ConvertTo-Json -Compress)"
         }
         ForEach ($ResponderAction in $response.responderaction) {
@@ -2419,7 +2448,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                 Write-Host -ForeGroundColor Red " ERROR"
                 Write-ToLogFile -E -C FinalizingOrder -M "Caught an error. Exception Message: $($_.Exception.Message)"
                 Write-Error "Error while submitting the Challenge"
-                TerminateScript 1
+                TerminateScript 1 "Error while submitting the Challenge"
             }
             Write-Host -ForeGroundColor Green " Sent Successfully"
         } elseif ($PAOrderItem.DNS01Status -like "valid") {
@@ -2469,7 +2498,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                 } catch {
                     Write-ToLogFile -E -C FinalizingOrder -M "Error while Retrieving validation status. Exception Message: $($_.Exception.Message)"
                     Write-Error "Error while Retrieving validation status"
-                    TerminateScript 1
+                    TerminateScript 1 "Error while Retrieving validation status"
                 }
                 $PAOrderItem = $null
             }
@@ -2479,12 +2508,12 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
             if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "invalid" }) {
                 Write-Host -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
                 Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, invalid items found!"
-                TerminateScript 1
+                TerminateScript 1 "Validation Failed, invalid items found!"
             }
             if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "pending" }) {
                 Write-Host -ForegroundColor Red "`r`nERROR: Validation Failed, still pending items left! Exiting now!"
                 Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, still pending items left!"
-                TerminateScript 1
+                TerminateScript 1 "Validation Failed, still pending items left!"
             }
             break
         }
@@ -2645,7 +2674,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         } else {
             Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was configured, trying to retrieve data."
             $Filters = @{"certkey" = "$NSCertNameToUpdate" }
-            $ExistingCertificateDetails = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
+            $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $NSCertNameToUpdate -ErrorAction SilentlyContinue } catch { $null }
         }
         if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
             $CertificateCertKeyName = $($ExistingCertificateDetails.sslcertkey.certkey)
@@ -2660,11 +2689,18 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             }
             $NSUpdating = $true
         } else {
-            $CertificateCertKeyName = $CertificateName
-            $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
-            if (-Not [String]::IsNullOrEmpty($ExistingCertificateDetails)) {
-                Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually"
-                TerminateScript 1
+            Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$NSCertNameToUpdate`" NOT found on the ADC."
+            if (-Not [String]::IsNullOrEmpty($NSCertNameToUpdate)) {
+                $CertificateCertKeyName = $NSCertNameToUpdate
+                Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$NSCertNameToUpdate`""
+            } else {
+                $CertificateCertKeyName = $CertificateName
+                $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
+                if (-Not [String]::IsNullOrEmpty($ExistingCertificateDetails)) {
+                    Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
+                    Write-ToLogFile -W -C ADC-CertUpload -M "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
+                    TerminateScript 1 "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
+                }
             }
             $NSUpdating = $false
         }
@@ -2728,6 +2764,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Write-Host -ForegroundColor White " -PFX Filename..........: $CertificatePfxFileName"
         Write-Host -ForegroundColor White " -PFX (with Chain)......: $CertificatePfxWithChainFileName"
         ""
+        Write-Host -ForegroundColor White -NoNewline " -Certificate State.....: "
         Write-Host -ForeGroundColor Green "Finished with the certificates!"
         ""
         Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
@@ -2741,7 +2778,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         try {
             $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
             $MailData += "New certificate is valid until: $($MailCertificate.NotAfter.ToUniversalTime())"
-        } catch {}
+        } catch { }
 
         if ($ValidationMethod -eq "dns") {
             Write-Host -ForegroundColor Yellow "`r`n********************************************************************"
@@ -2760,14 +2797,14 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             Write-Host -ForegroundColor Yellow "********************************************************************"
         }
         if (-not $Production) {
-            Write-Host -ForeGroundColor Green "`r`nYou are now ready for the Production version!"
-            Write-Host -ForeGroundColor Green "Add the `"-Production`" parameter and rerun the same script.`r`n"
+            Write-Host -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
+            Write-Host -ForeGroundColor Yellow "Add the `"-Production`" parameter and rerun the same script.`r`n"
             Write-ToLogFile -I -C ADC-CertUpload -M "You are now ready for the Production version! Add the `"-Production`" parameter and rerun the same script."
         }
     } catch {
         Write-ToLogFile -E -C ADC-CertUpload -M "Certificate completion failed. Exception Message: $($_.Exception.Message)"
         Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
-        TerminateScript 1
+        TerminateScript 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
     }
 }
 
