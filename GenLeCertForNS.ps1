@@ -117,7 +117,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.0
+    Version   : v2.7.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -327,7 +327,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.0"
+$ScriptVersion = "2.7.1"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -857,7 +857,7 @@ $($MailData | Out-String)
                 $smtp.Credentials = $SMTPCredential
             }
             $smtp.Send($message)
-            Write-Host -ForeGroundColor Green "Successfully Send"
+            Write-Host -ForeGroundColor Green "OK"
         } catch {
             Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
             Write-Host -ForeGroundColor Red "ERROR, Could not send mail: $($_.Exception.Message)"
@@ -2777,7 +2777,13 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         $MailData += "Certificates stored in: $CertificateDirectory"
         try {
             $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
-            $MailData += "New certificate is valid until: $($MailCertificate.NotAfter.ToUniversalTime())"
+            $MailData += "CRT Filename: $CertificateFileName"
+            $MailData += "PFX Filename: $CertificatePfxFileName"
+            $MailData += "Valid until: $($MailCertificate.NotAfter.ToUniversalTime())"
+            $MailData += "Approved by CA: $($MailCertificate.Issuer)"
+            $MailData += "CN: $($MailCertificate.Subject)"
+            $MailData += "SANs: $($MailCertificate.DnsNameList.Unicode -Join ", ")"
+            $MailData += "Public Key Size: $($MailCertificate.PublicKey.key.KeySize)"
         } catch { }
 
         if ($ValidationMethod -eq "dns") {
