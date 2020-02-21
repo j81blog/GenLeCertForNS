@@ -117,7 +117,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.1
+    Version   : v2.7.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -327,7 +327,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.1"
+$ScriptVersion = "2.7.2"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -818,7 +818,7 @@ function TerminateScript {
     if ($SendMail) {
         Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
         if (-Not ($ExitCode -eq 0)) {
-            $SMTPSubject = "GenLeCertForNS Finished with an Error"
+            $SMTPSubject = "GenLeCertForNS Finished with an Error - $CN"
             $SMTPBody = @"
 GenLeCertForNS Finished with an Error!
 $ExitMessage
@@ -826,7 +826,7 @@ $ExitMessage
 Check log for error more details.
 "@
         } else {
-            $SMTPSubject = "GenLeCertForNS Finished Successfully"
+            $SMTPSubject = "GenLeCertForNS Finished Successfully - $CN"
             $SMTPBody = @"
 GenLeCertForNS Finished Successfully
 
