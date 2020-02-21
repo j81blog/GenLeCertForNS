@@ -117,7 +117,7 @@
     Removing ALL the test certificates from your ADC.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.4
+    Version   : v2.7.5
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -337,7 +337,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.4"
+$ScriptVersion = "2.7.5"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1256,19 +1256,39 @@ Write-ToLogFile -I -C VersionInfo -M "Current script version: v$($ScriptVersion)
 try {
     $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
     if ([version]$AvailableVersions.master -gt [version]$ScriptVersion) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Production URL........: "
-        Write-Host -ForeGroundColor Blue "NEW script version available, please visit `"$($AvailableVersions.masterurl)`""
-        Write-Host -ForeGroundColor White -NoNewLine " -Production Version....: "
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production Note...: "
+        Write-Host -ForeGroundColor Blue "$($AvailableVersions.masternote)"
+        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.masternote)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production Version: "
         Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
-        Write-ToLogFile -I -C VersionInfo -M "New script version (v$($AvailableVersions.master)) is available, check `"$($AvailableVersions.masterurl)`"."
-        $MailData += "New script version (v$($AvailableVersions.master)) is available, check `"$($AvailableVersions.masterurl)`"."
+        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.master)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production URL....: "
+        Write-Host -ForeGroundColor Blue "$($AvailableVersions.masterurl)"
+        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
+        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
+            ""
+            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
+            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
+            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
+        }
+        $MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
     }
     if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion) {
-        Write-Host -ForeGroundColor White -NoNewLine " -Develop URL...........: "
-        Write-Host -ForeGroundColor Blue "NEW Develop/Test script version available, visit `"$($AvailableVersions.devurl)`""
-        Write-Host -ForeGroundColor White -NoNewLine " -Develop Version.......: "
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Note......: "
+        Write-Host -ForeGroundColor Blue "$($AvailableVersions.devnote)"
+        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.devnote)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Version...: "
         Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
-        Write-ToLogFile -I -C VersionInfo -M "New script version (v$($AvailableVersions.dev)) is available, check `"$($AvailableVersions.devurl)`"."
+        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.dev)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop URL.......: "
+        Write-Host -ForeGroundColor Blue "$($AvailableVersions.devurl)"
+        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.devurl)"
+        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
+            ""
+            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
+            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.devimportant)"
+            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.devimportant)"
+        }
     }
 } catch {
     Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
