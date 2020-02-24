@@ -75,8 +75,14 @@
     If you want to skip the IP Address verification, specify this parameter
 .PARAMETER CleanPoshACMEStorage
     Force cleanup of the Posh-Acme certificates located in "%LOCALAPPDATA%\Posh-ACME"
-.PARAMETER SaveNSConfig
-    Save the ADC config after all the changes
+.PARAMETER ExportSettingsFile
+    Save all the "curent" parameters to a xml file of your choosing for later reuse of the same parameters.
+.PARAMETER ImportSettings
+    Import all parameters from an xml file saved with the "-ExportSettingsFile" parameter.
+    By default it will create Test (Staging) certificates, if you wat production certificates specify the "-Production" parameter
+.PARAMETER TestBeforeProduction
+    Run the script to generate a test certificate first if successful the script will run with the same parameters but with the "-Production" parameter.    
+    Can be used together with the "-ImportSettings" parameter.
 .PARAMETER SendMail
     Specify this parameter if you want to send a mail at the end, don't forget to specify SMTPTo, SMTPFrom, SMTPServer and if required SMTPCredential
 .PARAMETER SMTPTo
@@ -103,21 +109,24 @@
     You can also define a (Global) variable in your script $LogLevel, the function will use this level instead (if not specified with the command)
     Default value: Info
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -NSCertNameToUpdate "san_domain_com" -LogLevel Debug -Production
     Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -NSCertNameToUpdate "san_domain_com" -Production -Verbose
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -NSCertNameToUpdate "san_domain_com" -LogLevel Debug -Production
     Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
     NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CleanADC -ManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -Verbose
-    Cleaning left over configuration from this script when something went wrong during a previous attempt to generate new certificates and generating Verbose output.
+    .\GenLeCertForNS.ps1 -CleanADC -ManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot"
+    Cleaning left over configuration from this script when something went wrong during a previous attempt to generate new certificates.
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -RemoveTestCertificates -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -Verbose
+    .\GenLeCertForNS.ps1 -RemoveTestCertificates -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot"
     Removing ALL the test certificates from your ADC.
+.EXAMPLE
+    .\GenLeCertForNS.ps1 -ImportSettings ".\GenLe-Config.xml" -TestBeforeProduction
+    Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.5
+    Version   : v2.7.6
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -153,7 +162,6 @@ param(
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanPoshACMEStorage", Mandatory = $true)]
     [Switch]$CleanPoshACMEStorage,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
@@ -168,6 +176,7 @@ param(
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [ValidateNotNullOrEmpty()]
     [alias("User", "NSUsername")]
     [String]$Username,
 
@@ -175,11 +184,11 @@ param(
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [ValidateNotNullOrEmpty()]
     [ValidateScript( {
             if ($_ -is [SecureString]) {
                 return $true
             } elseif ($_ -is [String]) {
-                $Script:Password = ConvertTo-SecureString -String $_ -AsPlainText -Force
                 return $true
             } else {
                 throw "You passed an unexpected object type for the credential (-Password)"
@@ -191,17 +200,9 @@ param(
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
-    [ValidateScript( {
-            if ($_ -is [System.Management.Automation.PSCredential]) {
-                return $true
-            } elseif ($_ -is [String]) {
-                $Script:Credential = Get-Credential -Credential $_
-                return $true
-            } else {
-                throw "You passed an unexpected object type for the credential (-Credential)"
-            }
-        })][alias("NSCredential")]
-    [object]$Credential,
+    [alias("NSCredential")]
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]$Credential = [System.Management.Automation.PSCredential]::Empty,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -217,12 +218,108 @@ param(
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [ValidateSet('http', 'dns', IgnoreCase = $true)]
-    [String]$ValidationMethod = "http",
+    [String]$ValidationMethod,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [String]$NSCertNameToUpdate,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [String]$CertDir,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [ValidateScript( {
+            if ($_ -is [SecureString]) {
+                return $true
+            } elseif ($_ -is [String]) {
+                return $true
+            } else {
+                throw "You passed an unexpected object type for the credential (-PfxPassword)"
+            }
+        })][object]$PfxPassword = $null,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
+    [String]$EmailAddress,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [ValidateScript( {
+            if ($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
+                throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
+            } else {
+                $true
+            }
+        })][int32]$KeyLength = 2048,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "ImportSettings", Mandatory = $false)]
+    [Switch]$Production,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Switch]$DisableLogging,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [ValidateNotNullOrEmpty()]
+    [alias("LogLocation")]
+    [String]$LogFile = "<DEFAULT>",
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
+    [String]$LogLevel = "Info",
+   
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Switch]$SaveNSConfig,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Switch]$SendMail,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [String[]]$SMTPTo,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [String]$SMTPFrom,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]$SMTPCredential = [System.Management.Automation.PSCredential]::Empty,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [String]$SMTPServer,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Switch]$DisableIPCheck,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSCsVipName,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [String]$NSCspName = "csp_letsencrypt",
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
@@ -254,90 +351,23 @@ param(
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSRsaName = "rsa_letsencrypt",
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [String]$NSCspName = "csp_NSCertCsp",
+    [Parameter(ParameterSetName = "ImportSettings", Mandatory = $false)]
+    [Switch]$TestBeforeProduction,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [String]$NSCertNameToUpdate,
+    [String]$ExportSettingsFile = $null,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
+    [Parameter(ParameterSetName = "ImportSettings", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [String]$CertDir,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [String]$PfxPassword = $null,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [ValidateScript( {
-            if ($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
-                throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
-            } else {
-                $true
-            }
-        })][int32]$KeyLength = 2048,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
-    [String]$EmailAddress,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [Switch]$DisableIPCheck,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Switch]$SaveNSConfig,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [Switch]$SendMail,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [String[]]$SMTPTo,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [String]$SMTPFrom,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$SMTPCredential = [System.Management.Automation.PSCredential]::Empty,
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [String]$SMTPServer,
-
-    [Parameter(Mandatory = $false)]
-    [Switch]$EnableLogging,
-
-    [Parameter(Mandatory = $false)]
-    [Switch]$DisableLogging,
-
-    [ValidateNotNullOrEmpty()]
-    [alias("LogLocation")]
-    [String]$LogFile = "$($PSScriptRoot)\GenLeCertForNS_log.txt",
-
-    [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
-    [String]$LogLevel = "Info",
-
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
-    [Switch]$Production
+    [Alias("Import")]
+    [String]$ImportSettings = $null
 
 )
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.5"
+$ScriptVersion = "2.7.6"
 $PoshACMEVersion = "3.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -422,8 +452,7 @@ function Write-ToLogFile {
     #requires -version 5.1
 
     [CmdletBinding(DefaultParameterSetName = "Info")]
-    Param
-    (
+    Param (
         [Parameter(ParameterSetName = "Error", Mandatory = $true, Position = 0)]
         [Parameter(ParameterSetName = "Warning", Mandatory = $true, Position = 0)]
         [Parameter(ParameterSetName = "Info", Mandatory = $true, Position = 0)]
@@ -985,18 +1014,21 @@ function Connect-ADC {
             $session.version = $version
         }
         Write-ToLogFile -I -C Connect-ADC -M "Connected"
+        Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)"
     } catch {
         Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)"
         Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)"
     }
-    $Script:NSSession = $session
-
     if ($PassThru) {
         return $session
     }
 }
 
-function ConvertTo-TxtValue([String]$KeyAuthorization) {
+function ConvertTo-TxtValue {
+    [cmdletbinding()]
+    param(
+        [String]$KeyAuthorization
+    ) 
     $keyAuthBytes = [Text.Encoding]::UTF8.GetBytes($KeyAuthorization)
     $sha256 = [Security.Cryptography.SHA256]::Create()
     $keyAuthHash = $sha256.ComputeHash($keyAuthBytes)
@@ -1076,27 +1108,122 @@ function Invoke-CheckScriptVersions {
     return $AvailableVersions
 }
 
+function ResolveFullPath {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, Position = 0)]
+        [String]$FilePath,
+
+        [Parameter(Mandatory = $false, Position = 1)]
+        [String]$FileNamePrefix
+    )
+    $Path = Split-Path -Path $FilePath -Parent -ErrorAction SilentlyContinue
+    if ([String]::IsNullOrEmpty($Path)) {
+        if ([String]::IsNullOrEmpty($PSScriptRoot)) {
+            $Path = "."
+        } else {
+            $Path = "$PSScriptRoot"
+        }
+    }
+    $Path = Resolve-Path $Path
+    $FileName = "{0}{1}" -f $FileNamePrefix, $(Split-Path -Path $FilePath -Leaf)
+    $FilePath = Join-Path -Path $Path -ChildPath $FileName
+    Return $FilePath
+}
+
+function Get-PlainText {
+    [CmdletBinding()]
+    param	(
+        [parameter(Mandatory = $true)]
+        [System.Security.SecureString]$SecureString
+    )
+    Begin { 
+    } Process	{
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString);
+        try {
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr);
+        } finally {
+            [Runtime.InteropServices.Marshal]::FreeBSTR($bstr);
+        }
+    } End { }
+}
+
 #endregion Functions
 
 #region ScriptBasics
 
+#region ConvertToSecureValues
+try {
+    if (-Not [String]::IsNullOrEmpty($ImportSettings)) {
+        $ImportSettings = ResolveFullPath -FilePath $ImportSettings
+        $ProdValue = $Production
+        $PSBoundParameters.Clear()
+        (Import-Clixml -Path $ImportSettings).GetEnumerator() | ForEach-Object { 
+            Set-Variable -Name $_.key -Value $_.value 
+            $PSBoundParameters.Add($_.key, $_.value)
+        }
+        $Production = $ProdValue
+        $PSBoundParameters.Add("Production", $ProdValue)
+    }
+    if (($Password -is [String]) -and ($Password.Length -gt 0)) {
+        [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
+        $PSBoundParameters.Remove("Password") | Out-Null
+        $PSBoundParameters.Add('Password', $Password)
+    }
+    if ((($Password.Length -gt 0) -and ($Username.Length -gt 0))) {
+        $Credential = New-Object System.Management.Automation.PSCredential -ArgumentList $Username, $Password
+        $PSBoundParameters.Add('Credential', $Credential)
+        $PSBoundParameters.Remove("Username") | Out-Null
+        Remove-Variable -Name Username
+        $PSBoundParameters.Remove("Password") | Out-Null
+        Remove-Variable -Name Password
+    }
+    if (([PSCredential]::Empty -eq $Credential) -or ($null -eq $Credential)) {
+        $Credential = Get-Credential -Message "Citrix ADC Credentials"
+        $PSBoundParameters.Remove("Credential") | Out-Null
+        $PSBoundParameters.Add('Credential', $Credential)
+    }
+    if (([PSCredential]::Empty -eq $Credential) -or ($null -eq $Credential)) {
+        throw "No valid credential found, -Username & -Password or -Credential not specified!"
+    }
+
+    if ([String]::IsNullOrEmpty($PfxPassword)) {
+        $length = 20
+        Add-Type -AssemblyName System.Web | Out-Null
+        [SecureString]$PfxPassword = ConvertTo-SecureString -String $([System.Web.Security.Membership]::GeneratePassword($length, 2)) -AsPlainText -Force
+        $PfxPasswordGenerated = $true
+        $PSBoundParameters.Remove("PfxPassword") | Out-Null
+        $PSBoundParameters.Add('PfxPassword', $PfxPassword)
+    } elseif ($PfxPassword -is [String]) {
+        [SecureString]$PfxPassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
+        $PfxPasswordGenerated = $false
+        $PSBoundParameters.Remove("PfxPassword") | Out-Null
+        $PSBoundParameters.Add('PfxPassword', $PfxPassword)
+    } else {
+        $PfxPasswordGenerated = $false
+    }
+} catch {
+    throw "Could not convert to Secure Values! Exception Message: $($_.Exception.Message)"
+}
+
+#endregion ConvertToSecureValues
+
 if ($EnableLogging) {
-    Write-Warning "-EnableLogging is deprecated"
+    Write-Warning "-EnableLogging is deprecated, Logging is enabled by default."
 }
 if ($DisableLogging) {
     $LogLevel = "None"
 } else {
-    $LogPath = Split-Path -Path $LogFile -Parent -ErrorAction SilentlyContinue
-    if ([String]::IsNullOrEmpty($LogPath)) {
-        if ([String]::IsNullOrEmpty($PSScriptRoot)) {
-            $LogPath = "."
-        } else {
-            $LogPath = "$PSScriptRoot"
-        }
+    if ($LogFile -eq "<DEFAULT>") {
+        $LogFile = Join-Path -Path $PSScriptRoot -ChildPath "GenLeCertForNS_log.txt"
     }
-    $LogPath = Resolve-Path $LogPath
-    $LogFileName = Split-Path -Path $LogFile -Leaf
-    $LogFile = Join-Path -Path $LogPath -ChildPath $LogFileName
+    if (-Not [String]::IsNullOrEmpty($ImportSettings) -and (-Not $Production)) {
+        $LogFile = ResolveFullPath -FilePath $LogFile -FileNamePrefix "T-"
+    } elseif (-Not [String]::IsNullOrEmpty($ImportSettings) -and $Production) {
+        $LogFile = ResolveFullPath -FilePath $LogFile -FileNamePrefix "P-"
+    } else {
+        $LogFile = ResolveFullPath -FilePath $LogFile
+    }
     $Global:LogFile = $LogFile
     $ExtraHeaderInfo = @"
 PSScriptRoot: $PSScriptRoot
@@ -1108,9 +1235,13 @@ $($PSBoundParameters | Out-String)
     Write-ToLogFile -I -C ScriptBasics -M "Starting a new log" -NewLog -ExtraHeaderInfo $ExtraHeaderInfo
     Write-Host -ForeGroundColor White "`r`nLogging Active"
     Write-Host -ForeGroundColor White -NoNewLine " -Log File..............: "
-    Write-Host -ForeGroundColor Blue "$LogFile"
+    Write-Host -ForeGroundColor Cyan "$LogFile"
     Write-Host -ForeGroundColor White -NoNewLine " -Log Level.............: "
-    Write-Host -ForeGroundColor Blue "$LogLevel"
+    if ($LogLevel -eq "Debug") {
+        Write-Host -ForeGroundColor Yellow "$LogLevel - WARNING: Passwords may be visible in the log!"
+    } else {
+        Write-Host -ForeGroundColor Cyan "$LogLevel"
+    }
 }
 
 if ($GetValuesFromExistingCertificate) {
@@ -1134,7 +1265,7 @@ if ($SendMail) {
         Write-ToLogFile -E -C EmailSettings -M "No To Address specified (-SMTPTo)"
         $SMTPError += "No To Address specified (-SMTPTo)"
     } else {
-        Write-Host -ForeGroundColor Blue "$SMTPTo"
+        Write-Host -ForeGroundColor Cyan "$SMTPTo"
         Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPTo"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Email From Address....: "
@@ -1143,7 +1274,7 @@ if ($SendMail) {
         Write-ToLogFile -E -C EmailSettings -M "No From Address specified (-SMTPFrom)"
         $SMTPError += "No From Address specified (-SMTPFrom)"
     } else {
-        Write-Host -ForeGroundColor Blue "$SMTPFrom"
+        Write-Host -ForeGroundColor Cyan "$SMTPFrom"
         Write-ToLogFile -I -C EmailSettings -M "Email To Address: $SMTPFrom"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Email Server..........: "
@@ -1152,15 +1283,15 @@ if ($SendMail) {
         Write-ToLogFile -E -C EmailSettings -M "No Email (SMTP) Server specified (-SMTPServer)"
         $SMTPError += "No Email (SMTP) Server specified (-SMTPServer)"
     } else {
-        Write-Host -ForeGroundColor Blue "$SMTPServer"
+        Write-Host -ForeGroundColor Cyan "$SMTPServer"
         Write-ToLogFile -I -C EmailSettings -M "Email Server: $SMTPServer"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Email Credentials.....: "
     if ($SMTPCredential -eq [PSCredential]::Empty) {
-        Write-Host -ForeGroundColor Blue "(Optional) None"
+        Write-Host -ForeGroundColor Cyan "(Optional) None"
         Write-ToLogFile -I -C EmailSettings -M "No Email Credential specified, this is optional"
     } else {
-        Write-Host -ForeGroundColor Blue "$($SMTPCredential.UserName) (Credential)"
+        Write-Host -ForeGroundColor Cyan "$($SMTPCredential.UserName) (Credential)"
         Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($SMTPCredential.UserName)"
     }
     if (-Not [String]::IsNullOrEmpty($SMTPError)) {
@@ -1175,8 +1306,8 @@ if ($SendMail) {
 
 if ($Help -or ($PSBoundParameters.Count -eq 0)) {
     Get-Help "$PSScriptRoot\GenLeCertForNS.ps1" -Detailed
-    TerminateScript 0 "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
     $SendMail = $false
+    TerminateScript 0 "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
 }
 #endregion Help
 
@@ -1197,7 +1328,12 @@ if ($NetRelease -lt 461308) {
 
 #region ScriptVariables
 
-Write-ToLogFile -I -C ScriptVariables -M "ValidationMethod is set to: `"$ValidationMethod`"."
+if (((-Not [String]::IsNullOrEmpty($CN)) -or ($GetValuesFromExistingCertificate)) -and (-Not ($ValidationMethod -eq "dns"))) {
+    $ValidationMethod = "http"
+}
+if ($ValidationMethod -in "http", "dns") {
+    Write-ToLogFile -I -C ScriptVariables -M "ValidationMethod is set to: `"$ValidationMethod`"."
+}
 $PublicDnsServer = "1.1.1.1"
 
 Write-ToLogFile -D -C ScriptVariables -M "Setting session DATE/TIME variable."
@@ -1205,35 +1341,15 @@ Write-ToLogFile -D -C ScriptVariables -M "Setting session DATE/TIME variable."
 [String]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
 Write-ToLogFile -D -C ScriptVariables -M "Session DATE/TIME variable value: `"$SessionDateTime`"."
 
-if (-not $PfxPassword) {
-    try {
-        $length = 15
-        Add-Type -AssemblyName System.Web | Out-Null
-        $PfxPassword = [System.Web.Security.Membership]::GeneratePassword($length, 2)
-        $PfxPasswordGenerated = $true
+if (($ValidationMethod -in "http", "dns") -or ($GetValuesFromExistingCertificate)) {
+    if ($PfxPasswordGenerated) {
         Write-ToLogFile -I -C ScriptVariables -M "No PfxPassword was specified therefore a new one was generated."
-    } catch {
-        Write-ToLogFile -E -C ScriptVariables -M "An error occurred while generating a Password. Exception Message: $($_.Exception.Message)"
+    } else {
+        Write-ToLogFile -I -C ScriptVariables -M "PfxPassword was specified via parameter."
     }
-} else {
-    $PfxPasswordGenerated = $false
-    Write-ToLogFile -I -C ScriptVariables -M "PfxPassword was specified via parameter."
 }
 
-if (-not([String]::IsNullOrWhiteSpace($Credential))) {
-    Write-ToLogFile -D -C ScriptVariables -M "Using Credential."
-} elseif ((-not([String]::IsNullOrWhiteSpace($Username))) -and (-not([String]::IsNullOrWhiteSpace($Password)))) {
-    Write-ToLogFile -D -C ScriptVariables -M "Using Username / Password."
-    if (-not ($Password -is [SecureString])) {
-        [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
-    }
-    [PSCredential]$Credential = New-Object System.Management.Automation.PSCredential ($Username, $Password)
-} else {
-    Write-ToLogFile -W -C ScriptVariables -M "No valid Username/password or credential specified. Requested for credentials."
-    [PSCredential]$Credential = Get-Credential -Message "ADC Username and password:"
-}
 Write-ToLogFile -I -C ScriptVariables -M "Starting new session."
-
 
 #endregion ScriptVariables
 
@@ -1251,19 +1367,19 @@ if ($CleanPoshACMEStorage) {
 
 Write-Host -ForeGroundColor White "`r`nVersion Info"
 Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
-Write-Host -ForeGroundColor Blue "v$ScriptVersion"
+Write-Host -ForeGroundColor Cyan "v$ScriptVersion"
 Write-ToLogFile -I -C VersionInfo -M "Current script version: v$($ScriptVersion), checking if a new version is available."
 try {
     $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
     if ([version]$AvailableVersions.master -gt [version]$ScriptVersion) {
         Write-Host -ForeGroundColor White -NoNewLine " -New Production Note...: "
-        Write-Host -ForeGroundColor Blue "$($AvailableVersions.masternote)"
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masternote)"
         Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.masternote)"
         Write-Host -ForeGroundColor White -NoNewLine " -New Production Version: "
-        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.master)"
+        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.master)"
         Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.master)"
         Write-Host -ForeGroundColor White -NoNewLine " -New Production URL....: "
-        Write-Host -ForeGroundColor Blue "$($AvailableVersions.masterurl)"
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
         if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
             ""
@@ -1275,13 +1391,13 @@ try {
     }
     if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion) {
         Write-Host -ForeGroundColor White -NoNewLine " -New Develop Note......: "
-        Write-Host -ForeGroundColor Blue "$($AvailableVersions.devnote)"
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devnote)"
         Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.devnote)"
         Write-Host -ForeGroundColor White -NoNewLine " -New Develop Version...: "
-        Write-Host -ForeGroundColor Blue "v$($AvailableVersions.dev)"
+        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.dev)"
         Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.dev)"
         Write-Host -ForeGroundColor White -NoNewLine " -New Develop URL.......: "
-        Write-Host -ForeGroundColor Blue "$($AvailableVersions.devurl)"
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.devurl)"
         if (-Not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
             ""
@@ -1298,9 +1414,9 @@ Write-ToLogFile -I -C VersionInfo -M "Version check finished."
 
 #region LoadModule
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+if (($ValidationMethod -in "http", "dns") -or ($GetValuesFromExistingCertificate)) {
     Write-ToLogFile -I -C LoadModule -M "Try loading the Posh-ACME v$PoshACMEVersion Modules."
-    $modules = Get-Module -ListAvailable -Verbose:$false | Where-Object { ($_.Name -like "*Posh-ACME*") -And ($_.Version -ge [System.Version]$PoshACMEVersion) }
+    $modules = Get-Module -ListAvailable -Verbose:$false | Where-Object { ($_.Name -like "*Posh-ACME*") -and ($_.Version -ge [System.Version]$PoshACMEVersion) }
     if ([String]::IsNullOrEmpty($modules)) {
         Write-ToLogFile -D -C LoadModule -M "Checking for PackageManagement."
         if ([String]::IsNullOrWhiteSpace($(Get-Module -ListAvailable -Verbose:$false | Where-Object { $_.Name -eq "PackageManagement" }))) {
@@ -1349,7 +1465,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 TerminateScript 1 "PackageManagement is not available please install this first or manually install Posh-ACME."
             } finally {
                 Write-Host -ForeGroundColor White -NoNewLine " -Posh-ACME Version.: "
-                Write-Host -ForeGroundColor Blue "v$PoshACMEVersion"
+                Write-Host -ForeGroundColor Cyan "v$PoshACMEVersion"
             }
         }
     } else {
@@ -1373,14 +1489,13 @@ Write-ToLogFile -I -C ADC-Check -M "Trying to login into the Citrix ADC."
 Write-Host -ForeGroundColor White "`r`nADC Info"
 $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
 Write-Host -ForeGroundColor White -NoNewLine " -URL...................: "
-Write-Host -ForeGroundColor Blue "$ManagementURL"
+Write-Host -ForeGroundColor Cyan "$ManagementURL"
 Write-Host -ForeGroundColor White -NoNewLine " -Username..............: "
-Write-Host -ForeGroundColor Blue "$($ADCSession.Username)"
+Write-Host -ForeGroundColor Cyan "$($ADCSession.Username)"
 Write-Host -ForeGroundColor White -NoNewLine " -Password..............: "
-Write-Host -ForeGroundColor Blue "**********"
+Write-Host -ForeGroundColor Cyan "**********"
 Write-Host -ForeGroundColor White -NoNewLine " -Version...............: "
-Write-Host -ForeGroundColor Blue "$($ADCSession.Version)"
-Write-ToLogFile -I -C ADC-Check -M "Connected to Citrix ADC $ManagementURL, as user $($ADCSession.Username), ADC Version $($ADCSession.Version)"
+Write-Host -ForeGroundColor Cyan "$($ADCSession.Version)"
 try {
     $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
     if ($NSVersion -lt 11) {
@@ -1397,22 +1512,23 @@ try {
 #endregion ADC-Check
 
 #region CertificatePreCheck
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+if (($ValidationMethod -in "http", "dns") -or ($GetValuesFromExistingCertificate)) {
     Write-Host -ForeGroundColor White -NoNewline "`r`n -Keysize...............: "
-    Write-Host -ForeGroundColor Blue "$KeyLength"
+    Write-Host -ForeGroundColor Cyan "$KeyLength"
     Write-ToLogFile -I -C CertificatePreCheck -M "Keysize: $KeyLength"
 }
 
-if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+if ($GetValuesFromExistingCertificate) {
     $CurrentCertificateValues = Get-ADCCurrentCertificate -Session $ADCSession -Name $ExistingCertificateName
     Write-ToLogFile -D -C CertificatePreCheck -M "Retrieved the following certificate data: $($CurrentCertificateValues | ConvertTo-Json -Compress)"
     if (-Not [String]::IsNullOrEmpty($($CurrentCertificateValues.CN))) {
         $CN = $CurrentCertificateValues.CN
         Write-Host -ForeGroundColor White "`r`n  Got the following values from an existing certificate"
         Write-Host -ForeGroundColor White -NoNewline " -Existing CN...........: "
-        Write-Host -ForeGroundColor Blue $CN
+        Write-Host -ForeGroundColor Cyan $CN
         Write-ToLogFile -I -C CertificatePreCheck -M "Got the following values from an existing certificate."
         Write-ToLogFile -I -C CertificatePreCheck -M "Using existing CN: $CN"
+        $PSBoundParameters.Add("CN", $CN)
     } else {
         Write-ToLogFile -E -C CertificatePreCheck -M "No SAN entries received, could not retrieve CN from certificate `"$ExistingCertificateName`"."
         Write-Error "Could not retrieve CN from certificate `"$ExistingCertificateName`""
@@ -1421,13 +1537,12 @@ if ($GetValuesFromExistingCertificate -And (-not ($CleanADC)) -and (-not ($Remov
     if (-Not [String]::IsNullOrEmpty($($CurrentCertificateValues.SAN))) {
         $SAN = $CurrentCertificateValues.SAN
         Write-Host -ForeGroundColor White -NoNewline " -Existing SAN(s).......: "
-        Write-Host -ForeGroundColor Blue "$($SAN -Join "`r`n                     ")"
+        Write-Host -ForeGroundColor Cyan "$($SAN -Join "`r`n                     ")"
         Write-ToLogFile -I -C CertificatePreCheck -M "Using existing SAN(s): $($SAN | ConvertTo-Json -Compress)"
+        $PSBoundParameters.Add("SAN", $SAN)
     } else {
         Write-ToLogFile -D -C CertificatePreCheck -M "No SAN entries received."
     }
-} else {
-    Write-ToLogFile -D -C CertificatePreCheck -M "Retrieving values from an existing certificate was not requested."
 }
 
 #endregion CertificatePreCheck
@@ -1457,62 +1572,67 @@ if ($RemoveTestCertificates -or $CleanADC) {
     Write-ToLogFile -I -C DNSPreCheck -M "continuing with the `"$ValidationMethod`" validation method!"
 }
 
-$DNSObjects = @()
-$ResponderPrio = 10
-$DNSObjects += [PSCustomObject]@{
-    DNSName       = $CN
-    IPAddress     = $null
-    Status        = $null
-    Match         = $null
-    SAN           = $false
-    Challenge     = $null
-    ResponderPrio = $ResponderPrio
-    Done          = $false
-}
-if (-not ([String]::IsNullOrWhiteSpace($SAN))) {
-    [string[]]$SAN = @($SAN.Split(","))
-    Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
-    $SANCount = $SAN.Count
-    $SAN = $SAN | Select-Object -Unique
-    if (-Not ($SANCount -eq $SAN.Count)) {
-        Write-Warning "There were $($SANCount - $SAN.Count) double SAN values, only continuing with unique ones."
-        Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SAN.Count) double SAN values, only continuing with unique ones."
-    } else {
-        Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
+if ($ValidationMethod -in "http", "dns") {
+    $DNSObjects = @()
+    $ResponderPrio = 10
+    $DNSObjects += [PSCustomObject]@{
+        DNSName       = $CN
+        IPAddress     = $null
+        Status        = $null
+        Match         = $null
+        SAN           = $false
+        Challenge     = $null
+        ResponderPrio = $ResponderPrio
+        Done          = $false
     }
-    Foreach ($Entry in $SAN) {
-        $ResponderPrio += 10
-        if (-Not ($Entry -eq $CN)) {
-            $DNSObjects += [PSCustomObject]@{
-                DNSName       = $Entry
-                IPAddress     = $null
-                Status        = $null
-                Match         = $null
-                SAN           = $true
-                Challenge     = $null
-                ResponderPrio = $ResponderPrio
-                Done          = $false
-            }
+    if (-not ([String]::IsNullOrWhiteSpace($SAN))) {
+        [string[]]$SAN = @($SAN.Split(","))
+        Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
+        $SANCount = $SAN.Count
+        $SAN = $SAN | Select-Object -Unique
+        if (-Not ($SANCount -eq $SAN.Count)) {
+            Write-Warning "There were $($SANCount - $SAN.Count) double SAN values, only continuing with unique ones."
+            Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SAN.Count) double SAN values, only continuing with unique ones."
         } else {
-            Write-Warning "Double record found, SAN value `"$Entry`" is the same as CN value `"$CN`". Removed double SAN entry."
-            Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$Entry`" is the same as CN value `"$CN`". Removed double SAN entry."
+            Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
+        }
+        Foreach ($Entry in $SAN) {
+            $ResponderPrio += 10
+            if (-Not ($Entry -eq $CN)) {
+                $DNSObjects += [PSCustomObject]@{
+                    DNSName       = $Entry
+                    IPAddress     = $null
+                    Status        = $null
+                    Match         = $null
+                    SAN           = $true
+                    Challenge     = $null
+                    ResponderPrio = $ResponderPrio
+                    Done          = $false
+                }
+            } else {
+                Write-Warning "Double record found, SAN value `"$Entry`" is the same as CN value `"$CN`". Removed double SAN entry."
+                Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$Entry`" is the same as CN value `"$CN`". Removed double SAN entry."
+            }
         }
     }
-}
-Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
-$DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
-    Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
+    Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
+    $DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
+        Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
+    }
 }
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+#endregion DNSPreCheck
+
+#endregion ADC-CS-Validation
+
+if ($ValidationMethod -in "http", "dns") {
     if ($ValidationMethod -eq "http") {
         try {
-            Write-ToLogFile -I -C DNSPreCheck -M "Verifying Content Switch."
+            Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $NSCsVipName
-            Write-ToLogFile -D -C DNSPreCheck -M "Response: $($response | ConvertTo-Json -Compress)"
         } catch {
             $ExceptMessage = $_.Exception.Message
-            Write-ToLogFile -E -C DNSPreCheck -M "Error Verifying Content Switch. Details: $ExceptMessage"
+            Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
         } finally {
             if (($response.errorcode -eq "0") -and `
                 ($response.csvserver.type -eq "CONTENT") -and `
@@ -1520,11 +1640,11 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 ($response.csvserver.servicetype -eq "HTTP") -and `
                 ($response.csvserver.port -eq "80") ) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                Write-Host -ForeGroundColor Blue -NoNewLine "$NSCsVipName"
+                Write-Host -ForeGroundColor Cyan -NoNewLine "$NSCsVipName"
                 Write-Host -ForeGroundColor Green " (found)"
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Green "OK`r`n"
-                Write-ToLogFile -I -C DNSPreCheck -M "Content Switch OK"
+                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
             } elseif ($ExceptMessage -like "*(404) Not Found*") {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$NSCsVipName`" does NOT exist!"
@@ -1533,7 +1653,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                Write-ToLogFile -E -C DNSPreCheck -M "The Content Switch `"$NSCsVipName`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$NSCsVipName`" does NOT exist! Please make sure a HTTP Content Switch is available."
                 TerminateScript 1 "The Content Switch `"$NSCsVipName`" does NOT exist! Please make sure a HTTP Content Switch is available."
             } elseif ($ExceptMessage -like "*The remote server returned an error*") {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
@@ -1542,7 +1662,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                Write-ToLogFile -E -C DNSPreCheck -M "Unknown error found while checking the Content Switch"
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
                 TerminateScript 1 "Unknown error found while checking the Content Switch"
             } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
@@ -1554,27 +1674,27 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor Yellow "`r`n  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                Write-ToLogFile -E -C DNSPreCheck -M "Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
                 TerminateScript 1 "Content Switch `"$NSCsVipName`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
             } else {
                 Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
                 Write-Host -ForeGroundColor Green "Found"
-                Write-ToLogFile -I -C DNSPreCheck -M "Content Switch Found"
+                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
                 Write-Host -ForeGroundColor White -NoNewLine "  -State................: "
                 if ($response.csvserver.curstate -eq "UP") {
                     Write-Host -ForeGroundColor Green "UP"
-                    Write-ToLogFile -I -C DNSPreCheck -M "Content Switch is UP"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
-                    Write-ToLogFile -I -C DNSPreCheck -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
                 }
                 Write-Host -ForeGroundColor White -NoNewLine "  -Type.................: "
                 if ($response.csvserver.type -eq "CONTENT") {
                     Write-Host -ForeGroundColor Green "CONTENT"
-                    Write-ToLogFile -I -C DNSPreCheck -M "Content Switch type OK, Type: $($response.csvserver.type)"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
                 } else {
                     Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
-                    Write-ToLogFile -I -C DNSPreCheck -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
                 }
                 if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
                     Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
@@ -1584,7 +1704,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
                 Write-Host -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
                 Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
                 Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                Write-ToLogFile -E -C DNSPreCheck -M "Content Switch verification failed."
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
                 TerminateScript 1 "Content Switch verification failed."
             }
         }
@@ -1592,26 +1712,28 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
         if (-Not [String]::IsNullOrEmpty($ADCSession.Version)) {
             Write-Host -ForeGroundColor Green "OK"
-            Write-ToLogFile -I -C DNSPreCheck -M "Connection OK."
+            Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
         } else {
             Write-Warning "Could not verify the Citrix ADC Connection!"
             Write-Warning "Script will continue but uploading of certificates will probably Fail"
-            Write-ToLogFile -W -C DNSPreCheck -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
+            Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
         }
     }
 }
 
-#endregion DNSPreCheck
+#endregion ADC-CS-Validation
 
 #region Services
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
+if ($ValidationMethod -in "http", "dns") {
     Write-Host -NoNewLine -ForeGroundColor Yellow "`r`nIMPORTANT: By running this script you agree with the terms specified by Let's Encrypt.`r`n"
     Write-ToLogFile -I -C Services -M "By running this script you agree with the terms specified by Let's Encrypt."
     if ($Production) {
         $BaseService = "LE_PROD"
+        $LEText = "Production Certificates"
         Write-ToLogFile -I -C Services -M "Using the production service for supported certificates."
     } else {
         $BaseService = "LE_STAGE"
+        $LEText = "Test Certificates (Staging)"
         Write-ToLogFile -I -C Services -M "Using the staging service for test certificates."
         $MailData += "IMPORTANT: This is a test certificate!"
     }
@@ -1621,13 +1743,15 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
     Write-ToLogFile -I -C Services -M "Website: $($PAServer.meta.website)"
     Write-ToLogFile -D -C Services -M "All account data is being saved to `"$ACMEStorage`"."
     ""
+    Write-Host -ForeGroundColor White "`r`nLet's Encrypt Preparation"
+    Write-Host -ForeGroundColor White -NoNewLine " -LE Certificate........: "
+    Write-Host -ForeGroundColor Cyan $LEText
 }
 #endregion Services
 
 #region Registration
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
-    Write-Host -ForeGroundColor White "`r`nLet's Encrypt Preparation"
+if ($ValidationMethod -in "http", "dns") {
     Write-Host -ForeGroundColor White -NoNewLine " -Registration..........: "
     try {
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
@@ -1686,20 +1810,20 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Write-ToLogFile -I -C Registration -M "Setting Account as default for new order."
         Posh-ACME\Set-PAAccount -ID $PARegistration.id -Force
     }
-    Write-Host -ForeGroundColor Green " Ready"
+    Write-Host -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
 }
 
 #endregion Registration
 
 #region Order
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
-    Write-Host -ForeGroundColor White -NoNewLine " -Order.................: "
+if (($ValidationMethod -in "http", "dns")) {
+    Write-Host -ForeGroundColor White -NoNewLine " -order.................: "
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
         Write-ToLogFile -I -C Order -M "Trying to create a new order."
         $domains = $DNSObjects | Select-Object DNSName -ExpandProperty DNSName
-        $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $KeyLength -Force -FriendlyName $FriendlyName -PfxPass $PfxPassword
+        $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $KeyLength -Force -FriendlyName $FriendlyName -PfxPass $(Get-PlainText -SecureString $PfxPassword)
         Start-Sleep -Seconds 1
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
         Write-ToLogFile -D -C Order -M "Order data:"
@@ -1727,7 +1851,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates)) {
 
 #region DNS-Validation
 
-if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $RemoveTestCertificates)) {
+if (($ValidationMethod -in "http", "dns")) {
     Write-Host -ForeGroundColor White "`r`nDNS - Validate Records"
     Write-Host -ForeGroundColor White -NoNewLine " -Checking records......: "
     Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
@@ -1817,7 +1941,7 @@ if (($ValidationMethod -in "http", "dns") -and (-not $CleanADC) -and (-not $Remo
     Write-Host -ForeGroundColor Green " Ready"
 }
 
-if ((-not $CleanADC) -and (-not ($RemoveTestCertificates)) -and ($ValidationMethod -eq "http")) {
+if ($ValidationMethod -eq "http") {
     Write-Host -ForeGroundColor White -NoNewLine " -Checking for errors...: "
     Write-ToLogFile -I -C DNS-Validation -M "Checking for invalid DNS Records."
     $InvalidDNS = $DNSObjects | Where-Object { $_.Status -eq $false }
@@ -1866,7 +1990,7 @@ if ((-not $CleanADC) -and (-not ($RemoveTestCertificates)) -and ($ValidationMeth
 
 #region CheckOrderValidation
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
+if ($ValidationMethod -eq "http") {
     Write-ToLogFile -I -C CheckOrderValidation -M "Checking if validation is required."
     $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     $ValidationRequired = $PAOrderItems | Where-Object { $_.status -ne "valid" }
@@ -1890,12 +2014,11 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
 
 #region ConfigureADC
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequired -and ($ValidationMethod -eq "http")) {
+if ($ADCActionsRequired -and ($ValidationMethod -eq "http")) {
     try {
         Write-ToLogFile -I -C ConfigureADC -M "Trying to login into the Citrix ADC."
         Write-Host -ForeGroundColor White "`r`nADC - Configure Prerequisites"
         $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-        Write-ToLogFile -I -C ConfigureADC -M "Connected to Citrix ADC $ManagementURL, as user $($ADCSession.Username)"
         Write-ToLogFile -I -C ConfigureADC -M "Enabling required ADC Features: Load Balancer, Responder, Content Switch and SSL."
         Write-Host -ForeGroundColor White -NoNewLine " -Prerequisites.........: "
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
@@ -1956,6 +2079,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
             Write-Host -ForeGroundColor Yellow -NoNewLine "*"
             Write-ToLogFile -I -C ConfigureADC -M "Checking if LB Service `"$NSSvcName`" is bound to Load Balance VIP `"$NSLbName`"."
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver_service_binding -Resource $NSLbName
+
             if ($response.lbvserver_service_binding.servicename -eq $NSSvcName) {
                 Write-ToLogFile -I -C ConfigureADC -M "LB Service binding is OK"
             } else {
@@ -1967,13 +2091,13 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
         }
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
         try {
-            Write-ToLogFile -D -C ConfigureADC -M "Checking if Responder Policies exists starting with `"$NSRspName`""
+            Write-ToLogFile -I -C ConfigureADC -M "Checking if Responder Policies exists starting with `"$NSRspName`""
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$NSRspName/" }
         } catch {
             Write-ToLogFile -E -C ConfigureADC -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
         }
         if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
-            Write-ToLogFile -D -C ConfigureADC -M "Responder Policies found:"
+            Write-ToLogFile -I -C ConfigureADC -M "Responder Policies found"
             $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
                 Write-ToLogFile -D -C ConfigureADC -M "$($_ | ConvertTo-Json -Compress)"
             }
@@ -1984,10 +2108,15 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
                     ForEach ($ResponderBinding in $response.responderpolicy_binding) {
                         try {
-                            $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
-                            Write-ToLogFile -I -C ConfigureADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
-                            Write-ToLogFile -I -C ConfigureADC -M "Responder Policy unbound successfully."
+                            if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
+                                Write-ToLogFile -I -C ConfigureADC -M "Responder Policy not bound."
+                            } else {
+                                Write-ToLogFile -D -C ConfigureADC -M "ResponderBinding: $($ResponderBinding | ConvertTo-Json -Compress)"
+                                $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                                Write-ToLogFile -I -C ConfigureADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
+                                Write-ToLogFile -I -C ConfigureADC -M "Responder Policy unbound successfully."
+                            }
                         } catch {
                             Write-ToLogFile -E -C ConfigureADC -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
                         }
@@ -2077,7 +2206,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and $ADCActionsRequire
 
 #region CheckDNS
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequired) -and ($ValidationMethod -eq "http")) {
+if (($ADCActionsRequired) -and ($ValidationMethod -eq "http")) {
     ""
     Write-Host -ForeGroundColor White "Executing some tests, can take a couple of seconds/minutes..."
     Write-Host -ForeGroundColor Yellow "`r`nNOTE: Should a DNS test fail, the script will try to continue!"
@@ -2085,7 +2214,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
     Write-ToLogFile -I -C CheckDNS -M "DNS Validation & Verifying ADC config."
     ForEach ($DNSObject in $DNSObjects ) {
         Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-        Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
+        Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
         $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
         Write-ToLogFile -I -C CheckDNS -M "Testing if the Citrix ADC (Content Switch) is configured successfully by accessing URL: `"$TestURL`" (via internal DNS)."
         try {
@@ -2129,11 +2258,11 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
         [ref]$ValidIP = [IPAddress]::None
         if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($DisableIPCheck))) {
             if ($result.RawContent -eq "HTTP/1.0 200 OK`r`n`r`nXXXX") {
-                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS)..: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS).......: "
                 Write-Host -ForeGroundColor Green "OK"
                 Write-ToLogFile -I -C CheckDNS -M "Test (Ext. DNS): OK"
             } else {
-                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS)..: "
+                Write-Host -ForeGroundColor White -NoNewLine " -Test (Ext. DNS).......: "
                 Write-Host -ForeGroundColor Yellow "Not successful, maybe not resolvable externally?"
                 Write-ToLogFile -W -C CheckDNS -M "Test (Ext. DNS): Not successful, maybe not resolvable externally?"
                 Write-ToLogFile -D -C CheckDNS -M "Output: $($result | Select-Object StatusCode,StatusDescription,RawContent | ConvertTo-Json -Compress)"
@@ -2147,7 +2276,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ADCActionsRequir
 
 #region OrderValidation
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "http")) {
+if ($ValidationMethod -eq "http") {
     Write-ToLogFile -I -C OrderValidation -M "Configuring the ADC Responder Policies/Actions required for the validation."
     Write-ToLogFile -D -C OrderValidation -M "PAOrderItems:"
     $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
@@ -2158,7 +2287,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
         $ADCKeyAuthorization = $null
         $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
         Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-        Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+        Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName)"
         Write-Host -ForeGroundColor White -NoNewLine " -Ready for Validation..: "
         if ($PAOrderItem.status -eq "valid") {
             Write-Host -ForeGroundColor Green "=> N/A, Still valid"
@@ -2176,26 +2305,22 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
                 $payload = @{"name" = "$RsaName"; "type" = "respondwith"; "target" = "`"$ADCKeyAuthorization`""; }
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
                 Write-ToLogFile -I -C OrderValidation -M "Responder Action added successfully."
-                Write-ToLogFile -D -C OrderValidation -M "Output: $($response | ConvertTo-Json -Compress)"
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 try {
                     Write-ToLogFile -I -C OrderValidation -M "Add Responder Policy `"$RspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
                     $payload = @{"name" = "$RspName"; "action" = "$RsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
                     Write-ToLogFile -I -C OrderValidation -M "Responder Policy added successfully."
-                    Write-ToLogFile -D -C OrderValidation -M "Output: $($response | ConvertTo-Json -Compress)"
                     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                     try {
                         Write-ToLogFile -I -C OrderValidation -M "Trying to bind the Responder Policy `"$RspName`" to LoadBalance VIP: `"$NSLbName`""
                         $payload = @{"name" = "$NSLbName"; "policyname" = "$RspName"; "priority" = "$($DNSObject.ResponderPrio)"; }
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $NSLbName
                         Write-ToLogFile -I -C OrderValidation -M "Responder Policy successfully bound to Load Balance VIP."
-                        Write-ToLogFile -D -C OrderValidation -M "Output: $($response | ConvertTo-Json -Compress)"
                         try {
                             Write-ToLogFile -I -C OrderValidation -M "Sending acknowledgment to Let's Encrypt."
                             Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
                             Write-ToLogFile -I -C OrderValidation -M "Successfully send."
-                            Write-ToLogFile -D -C OrderValidation -M "Output: $($response | ConvertTo-Json -Compress)"
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
                             Write-Error "Error while submitting the Challenge."
@@ -2228,19 +2353,28 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
-    Write-ToLogFile -D -C OrderValidation -M "PAOrderItems:"
+    Write-ToLogFile -D -C OrderValidation -M "Listing PAOrderItems"
     $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
         Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
     }
     $WaitLoop = 10
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-    while (($WaitLoop -gt 0) -and (($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)) {
-        Write-ToLogFile -I -C OrderValidation -M "Still $(($PAOrderItems | Where-Object {$_.status -eq "pending"}).Count) `"pending`" items left. Waiting an extra couple of seconds."
-        Start-Sleep -Seconds 6
+    Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
+    while ($true) {
+        Start-Sleep -Seconds 5
         $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+        Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
+        if ($WaitLoop -eq 0) {
+            Write-ToLogFile -D -C OrderValidation -M "Loop ended, max reties reached!"
+            break
+        } elseif ($((($PAOrderItems | Where-Object { $_.status -eq "pending" }) | Measure-Object).Count) -eq 0) {
+            Write-ToLogFile -D -C OrderValidation -M "Loop ended no pending items left."
+            break
+        }
         $WaitLoop--
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     }
+    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
         Write-Host -ForeGroundColor Red "Failed"
         Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items."
@@ -2248,7 +2382,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
         Write-Host -ForeGroundColor White "`r`nInvalid items:"
         ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
             Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-            Write-Host -ForeGroundColor Blue "$($Item.fqdn)"
+            Write-Host -ForeGroundColor Cyan "$($Item.fqdn)"
             Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
             Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
         }
@@ -2264,17 +2398,18 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
 
 #region CleanupADC
 
-if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in "http", "dns"))) {
+if ($CleanADC -or ($ValidationMethod -in "http", "dns")) {
     Write-ToLogFile -I -C CleanupADC -M "Cleaning the Citrix ADC Configuration."
     Write-Host -ForeGroundColor White "`r`nADC - Cleanup"
     Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     Write-ToLogFile -I -C CleanupADC -M "Trying to login into the Citrix ADC."
     $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-    Write-ToLogFile -I -C CleanupADC -M "Connected to Citrix ADC $ManagementURL, as user $($ADCSession.Username)"
     try {
         Write-ToLogFile -I -C CleanupADC -M "Checking if a binding exists for `"$NSCspName`"."
-        $Filters = @{"policyname" = "$NSCspName" }
-        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$NSCsVipName" -Filters $Filters
+        try {
+            $Filters = @{"policyname" = "$NSCspName" }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$NSCsVipName" -Filters $Filters -ErrorAction SilentlyContinue
+        } catch { }
         if ($response.csvserver_cspolicy_binding.policyname -eq $NSCspName) {
             Write-ToLogFile -I -C CleanupADC -M "Binding exists, removing Content Switch LoadBalance Binding."
             $Arguments = @{"name" = "$NSCsVipName"; "policyname" = "$NSCspName"; "priority" = "$NSCsVipBinding"; }
@@ -2283,8 +2418,9 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
             Write-ToLogFile -I -C CleanupADC -M "No binding found."
         }
     } catch {
-        Write-ToLogFile -E -C CleanupADC -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Content Switch LoadBalance Binding"
+        Write-ToLogFile -W -C CleanupADC -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
+        Write-Host -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch LoadBalance Binding"
+        Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     }
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
@@ -2301,7 +2437,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         }
     } catch {
         Write-ToLogFile -E -C CleanupADC -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Content Switch Policy"
+        Write-Host -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
+        Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     }
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
@@ -2317,7 +2454,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         }
     } catch {
         Write-ToLogFile -E -C CleanupADC -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Load Balance VIP"
+        Write-Host -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
+        Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     }
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
@@ -2333,7 +2471,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         }
     } catch {
         Write-ToLogFile -E -C CleanupADC -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Service"
+        Write-Host -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
+        Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     }
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
     try {
@@ -2349,7 +2488,8 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         }
     } catch {
         Write-ToLogFile -E -C CleanupADC -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
-        Write-Warning "Not able to remove the Server"
+        Write-Host -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
+        Write-Host -ForeGroundColor White -NoNewLine " -Cleanup...............: "
     }
     Write-ToLogFile -I -C CleanupADC -M "Checking if there are Responder Policies starting with the name `"$NSRspName`"."
     Write-Host -ForeGroundColor Yellow -NoNewLine "*"
@@ -2365,15 +2505,20 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
         }
         ForEach ($ResponderPolicy in $response.responderpolicy) {
             try {
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-ToLogFile -I -C CleanupADC -M "Checking if policy `"$($ResponderPolicy.name)`" is bound to Load Balance VIP."
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
                 ForEach ($ResponderBinding in $response.responderpolicy_binding) {
                     try {
-                        $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
-                        Write-ToLogFile -I -C CleanupADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
-
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
-                        Write-ToLogFile -I -C CleanupADC -M "Responder Policy unbound successfully."
+                        if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
+                            Write-ToLogFile -I -C CleanupADC -M "Responder Policy not bound."
+                        } else {
+                            Write-ToLogFile -D -C CleanupADC -M "ResponderBinding: $($ResponderBinding | ConvertTo-Json -Compress)"
+                            $args = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                            Write-ToLogFile -I -C CleanupADC -M "Trying to unbind with the following arguments: $($args | ConvertTo-Json -Compress)"
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $args -Resource $NSLbName
+                            Write-ToLogFile -I -C CleanupADC -M "Responder Policy unbound successfully."
+                        }
                     } catch {
                         Write-ToLogFile -E -C CleanupADC -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
                     }
@@ -2424,20 +2569,20 @@ if ((-not $RemoveTestCertificates) -and (($CleanADC) -or ($ValidationMethod -in 
 
 #region DNSChallenge
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -eq "dns")) {
+if ($ValidationMethod -eq "dns") {
     $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
     $TXTRecords = $PAOrderItems | Select-Object fqdn, `
     @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
     @{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
-    Write-Host -ForegroundColor White "`r`n********************************************************************"
-    Write-Host -ForegroundColor White "* Make sure the following TXT records are configured at your DNS   *"
-    Write-Host -ForegroundColor White "* provider before continuing! If not, DNS validation will fail!    *"
-    Write-Host -ForegroundColor White "********************************************************************"
+    Write-Host -ForeGroundColor Magenta "`r`n********************************************************************"
+    Write-Host -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
+    Write-Host -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+    Write-Host -ForeGroundColor Magenta "********************************************************************"
     Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
     foreach ($Record in $TXTRecords) {
         ""
         Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-        Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
+        Write-Host -ForeGroundColor Cyan "$($Record.fqdn)"
         Write-Host -ForeGroundColor White -NoNewLine " -TXT Record Name.......: "
         Write-Host -ForeGroundColor Yellow "$($Record.TXTName)"
         Write-Host -ForeGroundColor White -NoNewLine " -TXT Record Value......: "
@@ -2445,7 +2590,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
         Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
     }
     ""
-    Write-Host -ForegroundColor White "********************************************************************"
+    Write-Host -ForeGroundColor Magenta "********************************************************************"
     $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
     Write-Host -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
     $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
@@ -2462,10 +2607,10 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     Write-ToLogFile -I -C DNSChallenge -M "Start verifying the TXT records."
     $issues = $false
     try {
-        Write-Host -ForegroundColor White "`r`nPre-Checking the TXT records"
+        Write-Host -ForeGroundColor White "`r`nPre-Checking the TXT records"
         Foreach ($Record in $TXTRecords) {
             Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-            Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
+            Write-Host -ForeGroundColor Cyan "$($Record.fqdn)"
             Write-Host -ForeGroundColor White -NoNewLine " -TXT Record check......: "
             Write-ToLogFile -I -C DNSChallenge -M "Trying to retrieve the TXT record for `"$($Record.fqdn)`"."
             $result = $null
@@ -2503,12 +2648,12 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
 
 #region FinalizingOrder
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "dns")) {
+if ($ValidationMethod -in "dns") {
     Write-ToLogFile -I -C FinalizingOrder -M "Check if DNS Records need to be validated."
     Write-Host -ForeGroundColor White "`r`nSending Acknowledgment"
     Foreach ($DNSObject in $DNSObjects) {
         Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-        Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+        Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName)"
         Write-ToLogFile -I -C FinalizingOrder -M "Validating item: `"$($DNSObject.DNSName)`"."
         Write-Host -ForeGroundColor White -NoNewLine " -Send Ack..............: "
         $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $CN | Posh-ACME\Get-PAAuthorizations | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
@@ -2549,7 +2694,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
         Foreach ($DNSObject in $DNSObjects) {
             if ($DNSObject.Done -eq $false) {
                 Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-                Write-Host -ForeGroundColor Blue "$($DNSObject.DNSName)"
+                Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName)"
                 try {
                     $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
                     Write-ToLogFile -D -C FinalizingOrder -M "OrderItem:"
@@ -2603,7 +2748,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     }
 }
 
-if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod -in "http", "dns")) {
+if ($ValidationMethod -in "http", "dns") {
     Write-ToLogFile -I -C FinalizingOrder -M "Checking if order is ready."
     $Order = $PAOrder | Posh-ACME\Get-PAOrder -Refresh
     Write-ToLogFile -D -C FinalizingOrder -M "Order state: $($Order.status)"
@@ -2614,7 +2759,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
     }
     Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
     try {
-        $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $PfxPassword -CertKeyLength $KeyLength -FriendlyName $FriendlyName -ErrorAction Stop
+        $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(Get-PlainText -SecureString $PfxPassword) -CertKeyLength $KeyLength -FriendlyName $FriendlyName -ErrorAction Stop
         Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
         Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
     } catch {
@@ -2628,7 +2773,7 @@ if ((-not $CleanADC) -and (-not $RemoveTestCertificates) -and ($ValidationMethod
 
 #region CertFinalization
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+if ($ValidationMethod -in "http", "dns") {
     $CertificateAlias = "CRT-SAN-$SessionDateTime-$($CN.Replace('*.',''))"
     $CertificateDirectory = Join-Path -Path $CertDir -ChildPath $CertificateAlias
     Write-ToLogFile -I -C CertFinalization -M "Create directory `"$CertificateDirectory`" for storing the new certificates."
@@ -2700,8 +2845,8 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         Copy-Item $PACertificate.CertFile -Destination $CertificateFullPath -Force
         Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
         Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
-        $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force)
-        $NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $(ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force) -ChainOption EndEntityCertOnly -Force
+        $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
+        $NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
         Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
     } else {
         Write-ToLogFile -E -C CertFinalization -M "Could not test Certificate directory."
@@ -2712,7 +2857,7 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
 
 #region ADC-CertUpload
 
-if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
+if ($ValidationMethod -in "http", "dns") {
     try {
         Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the certificate to the Citrix ADC."
         Write-ToLogFile -D -C ADC-CertUpload -M "Retrieving existing CA Intermediate Certificate."
@@ -2751,6 +2896,10 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was not configured."
             $ExistingCertificateDetails = $Null
         } else {
+            if ((-Not [String]::IsNullOrEmpty($ImportSettings)) -and (-Not $Production)) {
+                $NSCertNameToUpdate = "T-{0}" -f $NSCertNameToUpdate
+                Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was changed, new name `"$NSCertNameToUpdate`"."
+            }
             Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was configured, trying to retrieve data."
             $Filters = @{"certkey" = "$NSCertNameToUpdate" }
             $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $NSCertNameToUpdate -ErrorAction SilentlyContinue } catch { $null }
@@ -2788,10 +2937,10 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         $payload = @{"filename" = "$CertificatePfxFileName"; "filecontent" = "$CertificatePfxBase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
         Write-ToLogFile -D -C ADC-CertUpload -M "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
-        $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$PfxPassword"; "pempassphrase" = "$PfxPassword" }
+        $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(Get-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(Get-PlainText -SecureString $PfxPassword)" }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
         try {
-            $payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$PfxPassword" }
+            $payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$(Get-PlainText -SecureString $PfxPassword)" }
             if ($NSUpdating) {
                 Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
@@ -2828,29 +2977,30 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
             Write-ToLogFile -I -C ADC-CertUpload -M "ADC configuration NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
             $MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
         }
+        Write-Host -ForeGroundColor White "`r`nCertificates"
         if ($PfxPasswordGenerated) {
+            ""
             Write-Warning "No Password was specified, so a random password was generated!"
             Write-ToLogFile -W -C ADC-CertUpload -M "No Password was specified, so a random password was generated! (Password not saved in Log)"
-            Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
-            Write-Host -ForeGroundColor White -NoNewline "PFX Password............: "
-            Write-Host -ForeGroundColor Yellow $PfxPassword
-            Write-Host -ForeGroundColor Yellow "`r`n***********************************`r`n"
+            Write-Host -ForeGroundColor Magenta "`r`n********************************************************************"
+            Write-Host -ForeGroundColor White -NoNewline "`r`n -PFX Password..........: "
+            Write-Host -ForeGroundColor Yellow $(Get-PlainText -SecureString $PfxPassword)
+            Write-Host -ForeGroundColor Magenta "`r`n********************************************************************"
         }
-        Write-Host -ForegroundColor White "`r`nCertificates"
-        Write-Host -ForegroundColor White -NoNewline " -Certkey Name..........: " 
-        Write-Host -ForegroundColor Blue $CertificateCertKeyName
-        Write-Host -ForegroundColor White -NoNewline " -Cert Dir..............: " 
-        Write-Host -ForegroundColor Blue $CertificateDirectory
-        Write-Host -ForegroundColor White -NoNewline " -CRT Filename..........: "
-        Write-Host -ForegroundColor Blue $CertificateFileName
-        Write-Host -ForegroundColor White -NoNewline " -KEY Filename..........: "
-        Write-Host -ForegroundColor Blue $CertificateKeyFileName
-        Write-Host -ForegroundColor White -NoNewline " -PFX Filename..........: "
-        Write-Host -ForegroundColor Blue $CertificatePfxFileName
-        Write-Host -ForegroundColor White -NoNewline " -PFX (with Chain)......: "
-        Write-Host -ForegroundColor Blue $CertificatePfxWithChainFileName
+        Write-Host -ForeGroundColor White -NoNewline " -Certkey Name..........: " 
+        Write-Host -ForeGroundColor Cyan $CertificateCertKeyName
+        Write-Host -ForeGroundColor White -NoNewline " -Cert Dir..............: " 
+        Write-Host -ForeGroundColor Cyan $CertificateDirectory
+        Write-Host -ForeGroundColor White -NoNewline " -CRT Filename..........: "
+        Write-Host -ForeGroundColor Cyan $CertificateFileName
+        Write-Host -ForeGroundColor White -NoNewline " -KEY Filename..........: "
+        Write-Host -ForeGroundColor Cyan $CertificateKeyFileName
+        Write-Host -ForeGroundColor White -NoNewline " -PFX Filename..........: "
+        Write-Host -ForeGroundColor Cyan $CertificatePfxFileName
+        Write-Host -ForeGroundColor White -NoNewline " -PFX (with Chain)......: "
+        Write-Host -ForeGroundColor Cyan $CertificatePfxWithChainFileName
         ""
-        Write-Host -ForegroundColor White -NoNewline " -Certificate State.....: "
+        Write-Host -ForeGroundColor White -NoNewline " -Certificate State.....: "
         Write-Host -ForeGroundColor Green "Finished with the certificates!"
         ""
         Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
@@ -2873,20 +3023,20 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
         } catch { }
 
         if ($ValidationMethod -eq "dns") {
-            Write-Host -ForegroundColor Yellow "`r`n********************************************************************"
-            Write-Host -ForegroundColor Yellow "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
-            Write-Host -ForegroundColor Yellow "********************************************************************"
+            Write-Host -ForegroundColor Magenta "`r`n********************************************************************"
+            Write-Host -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
+            Write-Host -ForegroundColor Magenta "********************************************************************"
             Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
             foreach ($Record in $TXTRecords) {
                 ""
-                Write-Host -ForeGroundColor Yellow -NoNewLine " -DNS Hostname..........: "
-                Write-Host -ForeGroundColor Blue "$($Record.fqdn)"
-                Write-Host -ForeGroundColor Yellow -NoNewLine " -TXT Record Name.......: "
+                Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
+                Write-Host -ForeGroundColor Cyan "$($Record.fqdn)"
+                Write-Host -ForeGroundColor White -NoNewLine " -TXT Record Name.......: "
                 Write-Host -ForeGroundColor Yellow "$($Record.TXTName)"
                 Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
             }
             ""
-            Write-Host -ForegroundColor Yellow "********************************************************************"
+            Write-Host -ForegroundColor Magenta "********************************************************************"
         }
         if (-not $Production) {
             Write-Host -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
@@ -2904,12 +3054,11 @@ if ((-not ($CleanADC)) -and (-not ($RemoveTestCertificates))) {
 
 #region RemoveTestCerts
 
-if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
+if ($RemoveTestCertificates) {
     Write-Host -ForeGroundColor White "`r`nADC - (Test) Certificate Cleanup"
     Write-ToLogFile -I -C RemoveTestCerts -M "Start removing the test certificates."
     Write-ToLogFile -I -C RemoveTestCerts -M "Trying to login into the Citrix ADC."
     $ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-    Write-ToLogFile -I -C RemoveTestCerts -M "Connected to Citrix ADC $ManagementURL, as user $($ADCSession.Username)"
     $IntermediateCACertKeyName = "Fake LE Intermediate X1"
     $IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
     Write-ToLogFile -I -C RemoveTestCerts -M "Retrieving existing certificates."
@@ -2922,7 +3071,7 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
         Write-ToLogFile -D -C RemoveTestCerts -M "$($_ | ConvertTo-Json -Compress)"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Linked Certkeys found.: "
-    Write-Host -ForeGroundColor Blue "$(($LinkedCertificates | Measure-Object).Count)"
+    Write-Host -ForeGroundColor Cyan "$(($LinkedCertificates | Measure-Object).Count)"
     ForEach ($LinkedCertificate in $LinkedCertificates) {
         $payload = @{"certkey" = "$($LinkedCertificate.certkey)"; }
         try {
@@ -2941,7 +3090,7 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
         Write-ToLogFile -D -C RemoveTestCerts -M "$($_ | ConvertTo-Json -Compress)"
     }
     Write-Host -ForeGroundColor White -NoNewLine " -Certificates found....: "
-    Write-Host -ForeGroundColor Blue "$(($FakeCerts | Measure-Object).Count)"
+    Write-Host -ForeGroundColor Cyan "$(($FakeCerts | Measure-Object).Count)"
     ForEach ($FakeCert in $FakeCerts) {
         try {
             Write-ToLogFile -I -C RemoveTestCerts -M "Trying to delete `"$($FakeCert.certkey)`"."
@@ -2989,7 +3138,6 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $CertFileName -Arguments $Arguments
             Write-Host -ForeGroundColor Green "Deleted [$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)]"
             Write-ToLogFile -I -C RemoveTestCerts -M "File deleted."
-
         } catch {
             Write-Host -ForeGroundColor Yellow "WARNING, could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`""
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`". Exception Message: $($_.Exception.Message)"
@@ -3012,7 +3160,7 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
     $CertFiles = Invoke-ADCRestApi -Session $ADCSession -Method Get -Type systemfile -Arguments $Arguments
     $CertFilesToRemove = $CertFiles.systemfile | Where-Object { $_.filename -match "TST-" }
     Write-Host -ForeGroundColor White -NoNewLine " -Misc. Files Found.....: "
-    Write-Host -ForeGroundColor Blue "$(($CertFilesToRemove | Measure-Object).Count)"
+    Write-Host -ForeGroundColor Cyan "$(($CertFilesToRemove | Measure-Object).Count)"
     ForEach ($CertFileToRemove in $CertFilesToRemove) {
         Write-Host -ForeGroundColor White -NoNewLine " -File..................: "
         $Arguments = @{"filelocation" = "$($CertFileToRemove.filelocation)"; }
@@ -3031,6 +3179,33 @@ if ((-not ($CleanADC)) -and $RemoveTestCertificates) {
 #endregion RemoveTestCerts
 
 #region Final Actions
+
+if (-Not [String]::IsNullOrEmpty($ExportSettingsFile)) {
+    try {
+        if ($ValidationMethod -eq "dns") {
+            Write-Warning "`"-ExportSettingsFile`" parameter is only suported for non Wildcard Certificates or ValidationMethod `"http`". Nothing exported!"
+            Write-ToLogFile -W -C Final-Actions -M "`"-ExportSettingsFile`" parameter is only suported for non Wildcard Certificates or ValidationMethod `"http`". Nothing exported!"
+        } else {
+            Write-ToLogFile -I -C Final-Actions -M "Exporting all parameters to file `"$ExportSettingsFile`""
+            $ExportSettingsFile = ResolveFullPath $ExportSettingsFile
+            $PSBoundParameters.Remove("ExportSettingsFile") | Out-Null
+            $PSBoundParameters | Export-Clixml $ExportSettingsFile -Force
+            Write-ToLogFile -I -C Final-Actions -M "Export done"
+        }
+    } catch {
+        Write-ToLogFile -E -C Final-Actions -M "Export failed! Exception Message: $($_.Exception.Message)"
+        Write-Host -ForegroundColor Red "Could not write the Parameters to `"$ExportSettingsFile`"`r`nException Message: $($_.Exception.Message)"
+    }
+} elseif ($TestBeforeProduction -and (-Not $Production)) {
+    try {
+        Write-ToLogFile -I -C Final-Actions -M "Starting Script again for Production Certificates"
+        Write-Host -ForegroundColor Yellow "IMPORTANT Starting Script again for Production Certificates" 
+        Start-Process -FilePath powershell.exe -ArgumentList "-NoLogo -NonInteractive -File `"$PSCommandPath`" -ImportSettings `"$ImportSettings`" -Production" -ErrorAction Stop
+    } catch {
+        Write-Host -ForegroundColor RED "ERROR Could not start Script again for Production Certificates"
+        Write-ToLogFile -E -C Final-Actions -M "Could not start Script again for Production Certificates"
+    }
+}
 
 TerminateScript 0
 
