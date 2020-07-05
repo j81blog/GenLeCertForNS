@@ -126,12 +126,12 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.6
+    Version   : v2.7.7
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.12.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 3.15.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -367,8 +367,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.6"
-$PoshACMEVersion = "3.12.0"
+$ScriptVersion = "2.7.7"
+$PoshACMEVersion = "3.15.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -628,7 +628,7 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
             $DateString = $null
         }
         if (-Not [String]::IsNullOrEmpty($Component) -and (-Not $Block) -and (-Not $WriteHeader)) {
-            $Component = " {0}{1}{0}" -f $Delimiter, $Component.ToUpper()
+            $Component = " {0}[{1}]{0}" -f $Delimiter, $Component.ToUpper()
         } else {
             $Component = "{0}{0}" -f $Delimiter
         }
@@ -839,82 +839,6 @@ function Invoke-ADCRestApi {
             throw $_
         }
     }
-}
-
-function TerminateScript {
-    [cmdletbinding()]
-    param (
-        [Parameter(Mandatory = $true, Position = 0)]
-        [ValidateNotNullOrEmpty()]
-        [int]$ExitCode,
-
-        [Parameter(Position = 1)]
-        [String]$ExitMessage = $null
-    )
-    if (-Not [String]::IsNullOrEmpty($ExitMessage)) {
-        Write-ToLogFile -I -C Final -M "$ExitMessage"
-    }
-    if ($SendMail) {
-        Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
-        if (-Not ($ExitCode -eq 0)) {
-            $SMTPSubject = "GenLeCertForNS Finished with an Error - $CN"
-            $SMTPBody = @"
-GenLeCertForNS Finished with an Error!
-$ExitMessage
-
-Check log for errors and more details.
-"@
-        } else {
-            $SMTPSubject = "GenLeCertForNS Finished Successfully - $CN"
-            $SMTPBody = @"
-GenLeCertForNS Finished Successfully
-
-$($MailData | Out-String)
-"@
-        }
-        try {
-            Write-Host -ForeGroundColor White "`r`nEmail"
-            Write-Host -ForeGroundColor White -NoNewLine " -Sending Mail..........: "
-        
-            $message = New-Object System.Net.Mail.MailMessage
-            $message.From = $SMTPFrom
-            foreach ($to in $SMTPTo) {
-                $message.To.Add($to)
-            }
-            $message.Subject = $SMTPSubject
-            $message.IsBodyHTML = $false
-        
-            $message.Body = $SMTPBody
-            try {
-                $message.Attachments.Add($(New-Object System.Net.Mail.Attachment "$LogFile"))
-            } catch {
-                Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
-                Write-Host -ForeGroundColor Red -NoNewLine "Could not attach LogFile "
-            }
-            $smtp = New-Object Net.Mail.SmtpClient($SMTPServer)
-            if (-Not ($SMTPCredential -eq [PSCredential]::Empty)) {
-                $smtp.Credentials = $SMTPCredential
-            }
-            $smtp.Send($message)
-            Write-Host -ForeGroundColor Green "OK"
-        } catch {
-            Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
-            Write-Host -ForeGroundColor Red "ERROR, Could not send mail: $($_.Exception.Message)"
-        }
-        
-    } else {
-        Write-ToLogFile -I -C Final -M "Script Terminated, ExitCode: $ExitCode"
-        
-    }
-
-    if ($ExitCode -eq 0) {
-        ""
-        Write-Host -ForegroundColor Green "Finished! $ExitMessage"
-    } else {
-        ""
-        Write-Host -ForegroundColor Red "Finished with Errors! $ExitMessage"
-    }
-    exit $ExitCode
 }
 
 function Connect-ADC {
@@ -1148,6 +1072,82 @@ function Get-PlainText {
     } End { }
 }
 
+function TerminateScript {
+    [cmdletbinding()]
+    param (
+        [Parameter(Mandatory = $true, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [int]$ExitCode,
+
+        [Parameter(Position = 1)]
+        [String]$ExitMessage = $null
+    )
+    if (-Not [String]::IsNullOrEmpty($ExitMessage)) {
+        Write-ToLogFile -I -C Final -M "$ExitMessage"
+    }
+    if ($SendMail) {
+        Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
+        if (-Not ($ExitCode -eq 0)) {
+            $SMTPSubject = "GenLeCertForNS Finished with an Error - $CN"
+            $SMTPBody = @"
+GenLeCertForNS Finished with an Error!
+$ExitMessage
+
+Check log for errors and more details.
+"@
+        } else {
+            $SMTPSubject = "GenLeCertForNS Finished Successfully - $CN"
+            $SMTPBody = @"
+GenLeCertForNS Finished Successfully
+
+$($MailData | Out-String)
+"@
+        }
+        try {
+            Write-Host -ForeGroundColor White "`r`nEmail"
+            Write-Host -ForeGroundColor White -NoNewLine " -Sending Mail..........: "
+        
+            $message = New-Object System.Net.Mail.MailMessage
+            $message.From = $SMTPFrom
+            foreach ($to in $SMTPTo) {
+                $message.To.Add($to)
+            }
+            $message.Subject = $SMTPSubject
+            $message.IsBodyHTML = $false
+        
+            $message.Body = $SMTPBody
+            try {
+                $message.Attachments.Add($(New-Object System.Net.Mail.Attachment "$LogFile"))
+            } catch {
+                Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
+                Write-Host -ForeGroundColor Red -NoNewLine "Could not attach LogFile "
+            }
+            $smtp = New-Object Net.Mail.SmtpClient($SMTPServer)
+            if (-Not ($SMTPCredential -eq [PSCredential]::Empty)) {
+                $smtp.Credentials = $SMTPCredential
+            }
+            $smtp.Send($message)
+            Write-Host -ForeGroundColor Green "OK"
+        } catch {
+            Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
+            Write-Host -ForeGroundColor Red "ERROR, Could not send mail: $($_.Exception.Message)"
+        }
+        
+    } else {
+        Write-ToLogFile -I -C Final -M "Script Terminated, ExitCode: $ExitCode"
+        
+    }
+
+    if ($ExitCode -eq 0) {
+        ""
+        Write-Host -ForegroundColor Green "Finished! $ExitMessage"
+    } else {
+        ""
+        Write-Host -ForegroundColor Red "Finished with Errors! $ExitMessage"
+    }
+    exit $ExitCode
+}
+
 #endregion Functions
 
 #region ScriptBasics
@@ -1165,11 +1165,13 @@ try {
         $Production = $ProdValue
         $PSBoundParameters.Add("Production", $ProdValue)
     }
+    
     if (($Password -is [String]) -and ($Password.Length -gt 0)) {
         [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
         $PSBoundParameters.Remove("Password") | Out-Null
         $PSBoundParameters.Add('Password', $Password)
     }
+
     if ((($Password.Length -gt 0) -and ($Username.Length -gt 0))) {
         $Credential = New-Object System.Management.Automation.PSCredential -ArgumentList $Username, $Password
         $PSBoundParameters.Add('Credential', $Credential)
@@ -1178,11 +1180,13 @@ try {
         $PSBoundParameters.Remove("Password") | Out-Null
         Remove-Variable -Name Password
     }
+
     if (([PSCredential]::Empty -eq $Credential) -or ($null -eq $Credential)) {
         $Credential = Get-Credential -Message "Citrix ADC Credentials"
         $PSBoundParameters.Remove("Credential") | Out-Null
         $PSBoundParameters.Add('Credential', $Credential)
     }
+
     if (([PSCredential]::Empty -eq $Credential) -or ($null -eq $Credential)) {
         throw "No valid credential found, -Username & -Password or -Credential not specified!"
     }
@@ -1623,7 +1627,7 @@ if ($ValidationMethod -in "http", "dns") {
 
 #endregion DNSPreCheck
 
-#endregion ADC-CS-Validation
+#region ADC-CS-Validation
 
 if ($ValidationMethod -in "http", "dns") {
     if ($ValidationMethod -eq "http") {
