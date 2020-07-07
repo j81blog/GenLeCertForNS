@@ -126,7 +126,7 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.7
+    Version   : v2.7.8
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -367,7 +367,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.7"
+$ScriptVersion = "2.7.8"
 $PoshACMEVersion = "3.15.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -882,6 +882,10 @@ function Connect-ADC {
         $TAAssembly = $TAResults.CompiledAssembly
         $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
         [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
+        [System.Net.ServicePointManager]::SecurityProtocol = 
+            [System.Net.SecurityProtocolType]::Tls13 -bor `
+            [System.Net.SecurityProtocolType]::Tls12 -bor `
+            [System.Net.SecurityProtocolType]::Tls11
     }
     Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..."
     try {
