@@ -3104,51 +3104,61 @@ if ($ValidationMethod -in "http", "dns") {
         #region IISActions
 
         if ($UpdateIIS) {
+            Write-Host -ForeGroundColor White "`r`nIIS"
             try {
-                Write-Host -ForeGroundColor White "`r`nIIS"
-                Write-Host -ForeGroundColor White -NoNewline " -IIS Site..............: " 
-                Write-Host -ForeGroundColor Cyan $IISSiteToUpdate
-                $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
-                Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
-                Write-Host -ForeGroundColor White -NoNewline " -Binding...............: " 
-                $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
-                if ($CurrentWebBinding) {
-                    Write-ToLogFile -I -C IISActions -M "Current binding exists."
-                    Write-Host -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
-                    $CurrentCertificateBinding = Get-Item IIS:\SslBindings\0.0.0.0!443 -ErrorAction SilentlyContinue
-                    Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
-                    Write-Host -ForeGroundColor White -NoNewline " -Unbinding Current Cert: " 
-                    Write-ToLogFile -I -C IISActions -M "Unbinding Current Certificate, $($CurrentCertificateBinding.Thumbprint)"
-                    $CurrentCertificateBinding | Remove-Item -ErrorAction SilentlyContinue
-                    Write-Host -ForeGroundColor Yellow "Removed [$($CurrentCertificateBinding.Thumbprint)]"
-                } else {
-                    Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
-                    try {
-                        New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
-                        $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
-                        Write-Host -ForeGroundColor Green "Created [$($CurrentWebBinding.bindingInformation)]"
-                        Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
-                    } catch {
-                        Write-Host -ForeGroundColor Red "Failed"
-                        Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
-                    }
-                }
-                try {
-                    Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
-                    Write-Host -ForeGroundColor White -NoNewline " -Binding New Cert......: " 
-                    New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
-                    Write-Host -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
-                } catch {
-                    Write-Host -ForeGroundColor Red "Could not bind"
-                    Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
-                }
-
+                Import-Module WebAdministration -ErrorAction Stop
+                $WebAdministrationModule = $true
             } catch {
-                Write-Host -ForeGroundColor Red "Caught an error while updating"
-                Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
+                $WebAdministrationModule = $false
+            }
+            if ($WebAdministrationModule) {
+                try {
+                    Write-Host -ForeGroundColor White -NoNewline " -IIS Site..............: " 
+                    Write-Host -ForeGroundColor Cyan $IISSiteToUpdate
+                    $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
+                    Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
+                    Write-Host -ForeGroundColor White -NoNewline " -Binding...............: " 
+                    $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                    if ($CurrentWebBinding) {
+                        Write-ToLogFile -I -C IISActions -M "Current binding exists."
+                        Write-Host -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
+                        $CurrentCertificateBinding = Get-Item IIS:\SslBindings\0.0.0.0!443 -ErrorAction SilentlyContinue
+                        Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                        Write-Host -ForeGroundColor White -NoNewline " -Unbinding Current Cert: " 
+                        Write-ToLogFile -I -C IISActions -M "Unbinding Current Certificate, $($CurrentCertificateBinding.Thumbprint)"
+                        $CurrentCertificateBinding | Remove-Item -ErrorAction SilentlyContinue
+                        Write-Host -ForeGroundColor Yellow "Removed [$($CurrentCertificateBinding.Thumbprint)]"
+                    } else {
+                        Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
+                        try {
+                            New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
+                            $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                            Write-Host -ForeGroundColor Green "New, created [$($CurrentWebBinding.bindingInformation)]"
+                            Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                        } catch {
+                            Write-Host -ForeGroundColor Red "Failed"
+                            Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
+                        }
+                    }
+                    try {
+                        Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
+                        Write-Host -ForeGroundColor White -NoNewline " -Binding New Cert......: " 
+                        New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
+                        Write-Host -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
+                        $MailData += "IIS Binding updated for site `"$IISSiteToUpdate`": $($ImportedCertificate.Thumbprint)"
+                    } catch {
+                        Write-Host -ForeGroundColor Red "Could not bind"
+                        Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
+                    }
+                } catch {
+                    Write-Host -ForeGroundColor Red "Caught an error while updating"
+                    Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
+                }
+            } else {
+                Write-Host -ForeGroundColor White -NoNewline " -Module................: " 
+                Write-Host -ForeGroundColor Red "WebAdministration Module could not be found, please install feature!"
             }
         }
-
 
         #endregion IISActions
 
