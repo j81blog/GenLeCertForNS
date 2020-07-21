@@ -83,6 +83,10 @@
 .PARAMETER TestBeforeProduction
     Run the script to generate a test certificate first if successful the script will run with the same parameters but with the "-Production" parameter.    
     Can be used together with the "-ImportSettings" parameter.
+.PARAMETER UpdateIIS
+    ...
+.PARAMETER IISSiteToUpdate
+    ...
 .PARAMETER SendMail
     Specify this parameter if you want to send a mail at the end, don't forget to specify SMTPTo, SMTPFrom, SMTPServer and if required SMTPCredential
 .PARAMETER SMTPTo
@@ -126,7 +130,7 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.8
+    Version   : v2.7.10
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -313,6 +317,14 @@ param(
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Switch]$UpdateIIS,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [String]$IISSiteToUpdate = "Default Web Site",
+    
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSCsVipName,
 
@@ -367,7 +379,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.8"
+$ScriptVersion = "2.7.10"
 $PoshACMEVersion = "3.15.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -707,6 +719,36 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
 }
 
 function Invoke-ADCRestApi {
+    <#
+    .SYNOPSIS
+        Invoke NetScaler NITRO REST API
+    .DESCRIPTION
+        Invoke NetScaler NITRO REST API
+    .PARAMETER Session
+        An existing custom NetScaler Web Request Session object returned by Connect-NetScaler
+    .PARAMETER Method
+        Specifies the method used for the web request
+    .PARAMETER Type
+        Type of the NS appliance resource
+    .PARAMETER Resource
+        Name of the NS appliance resource, optional
+    .PARAMETER Action
+        Name of the action to perform on the NS appliance resource
+    .PARAMETER Arguments
+        One or more arguments for the web request, in hashtable format
+    .PARAMETER Query
+        Specifies a query that can be send  in the web request
+    .PARAMETER Filters
+        Specifies a filter that can be send to the remote server, in hashtable format
+    .PARAMETER Payload
+        Payload  of the web request, in hashtable format
+    .PARAMETER GetWarning
+        Switch parameter, when turned on, warning message will be sent in 'message' field and 'WARNING' value is set in severity field of the response in case there is a warning.
+        Turned off by default
+    .PARAMETER OnErrorAction
+        Use this parameter to set the onerror status for nitro request. Applicable only for bulk requests.
+        Acceptable values: "EXIT", "CONTINUE", "ROLLBACK", default to "EXIT"
+    #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
@@ -725,6 +767,9 @@ function Invoke-ADCRestApi {
 
         [hashtable]$Arguments = @{ },
 
+        [ValidateCount(1, 1)]
+        [hashtable]$Query = @{ },
+
         [Switch]$Stat = $false,
 
         [ValidateScript( { $Method -eq 'GET' })]
@@ -736,9 +781,11 @@ function Invoke-ADCRestApi {
         [Switch]$GetWarning = $false,
 
         [ValidateSet('EXIT', 'CONTINUE', 'ROLLBACK')]
-        [String]$OnErrorAction = 'EXIT'
+        [String]$OnErrorAction = 'EXIT',
+        
+        [Switch]$Clean
     )
-    # https://github.com/devblackops/NetScaler
+    # Based on https://github.com/devblackops/NetScaler
     if ([String]::IsNullOrEmpty($($Session.ManagementURL))) {
         Write-ToLogFile -E -C Invoke-ADCRestApi -M "Probably not logged into the Citrix ADC!"
         throw "ERROR. Probably not logged into the ADC"
@@ -788,6 +835,9 @@ function Invoke-ADCRestApi {
             }
             $uri += $filterList -join ','
         }
+        if ($Query.Count -gt 0) {
+            $uri += $Query.GetEnumerator() | Foreach-Object { "?$($_.Name)=$([System.Uri]::EscapeDataString($_.Value))" }
+        }
     }
     Write-ToLogFile -D -C Invoke-ADCRestApi -M "URI: $uri"
 
@@ -827,7 +877,11 @@ function Invoke-ADCRestApi {
             } else {
                 Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)"
                 if ($Method -eq "GET") { 
-                    return $response 
+                    if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
+                        return $response | Select -ExpandProperty $Type -ErrorAction SilentlyContinue
+                    } else {
+                        return $response 
+                    }
                 }
             }
         }
@@ -842,6 +896,20 @@ function Invoke-ADCRestApi {
 }
 
 function Connect-ADC {
+    <#
+    .SYNOPSIS
+        Establish a session with Citrix NetScaler.
+    .DESCRIPTION
+        Establish a session with Citrix NetScaler.
+    .PARAMETER ManagementURL
+        The URI/URL to connect to, E.g. "https://citrixadc.domain.local".
+    .PARAMETER Credential
+        The credential to authenticate to the NetScaler with.
+    .PARAMETER Timeout
+        Timeout in seconds for session object.
+    .PARAMETER PassThru
+        Return the NetScaler session object.
+    #>
     [cmdletbinding()]
     param(
         [parameter(Mandatory)]
@@ -854,11 +922,10 @@ function Connect-ADC {
 
         [Switch]$PassThru
     )
-    # https://github.com/devblackops/NetScaler
-
-
+    # Based on https://github.com/devblackops/NetScaler
+    Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..."
     if ($ManagementURL -like "https://*") {
-        Write-ToLogFile -D -C Connect-ADC -M "SSL Connection, Trusting all certificates."
+        Write-ToLogFile -D -C Connect-ADC -M "Connection is SSL, Trusting all certificates."
         $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
         $Provider.CreateCompiler() | Out-Null
         $Params = New-Object System.CodeDom.Compiler.CompilerParameters
@@ -883,11 +950,10 @@ function Connect-ADC {
         $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
         [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
         [System.Net.ServicePointManager]::SecurityProtocol = 
-            [System.Net.SecurityProtocolType]::Tls13 -bor `
+        [System.Net.SecurityProtocolType]::Tls13 -bor `
             [System.Net.SecurityProtocolType]::Tls12 -bor `
             [System.Net.SecurityProtocolType]::Tls11
     }
-    Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..."
     try {
         $login = @{
             login = @{
@@ -1061,12 +1127,12 @@ function ResolveFullPath {
 
 function Get-PlainText {
     [CmdletBinding()]
-    param	(
+    param    (
         [parameter(Mandatory = $true)]
         [System.Security.SecureString]$SecureString
     )
     Begin { 
-    } Process	{
+    } Process {
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString);
         try {
             return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr);
@@ -2995,6 +3061,12 @@ if ($ValidationMethod -in "http", "dns") {
             Write-Host -ForeGroundColor Yellow $(Get-PlainText -SecureString $PfxPassword)
             Write-Host -ForeGroundColor Magenta "`r`n********************************************************************"
         }
+        Write-Host -ForeGroundColor White -NoNewline " -Certificate Usage.....: " 
+        if ($Production) {
+            Write-Host -ForeGroundColor Cyan "Production"
+        } else {
+            Write-Host -ForeGroundColor Yellow "Test"
+        }
         Write-Host -ForeGroundColor White -NoNewline " -Certkey Name..........: " 
         Write-Host -ForeGroundColor Cyan $CertificateCertKeyName
         Write-Host -ForeGroundColor White -NoNewline " -Cert Dir..............: " 
@@ -3010,7 +3082,6 @@ if ($ValidationMethod -in "http", "dns") {
         ""
         Write-Host -ForeGroundColor White -NoNewline " -Certificate State.....: "
         Write-Host -ForeGroundColor Green "Finished with the certificates!"
-        ""
         Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
         Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
         Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
@@ -3030,6 +3101,58 @@ if ($ValidationMethod -in "http", "dns") {
             $MailData += "Public Key Size: $($MailCertificate.PublicKey.key.KeySize)"
         } catch { }
 
+        #region IISActions
+
+        if ($UpdateIIS) {
+            try {
+                Write-Host -ForeGroundColor White "`r`nIIS"
+                Write-Host -ForeGroundColor White -NoNewline " -IIS Site..............: " 
+                Write-Host -ForeGroundColor Cyan $IISSiteToUpdate
+                $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
+                Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
+                Write-Host -ForeGroundColor White -NoNewline " -Binding...............: " 
+                $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                if ($CurrentWebBinding) {
+                    Write-ToLogFile -I -C IISActions -M "Current binding exists."
+                    Write-Host -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
+                    $CurrentCertificateBinding = Get-Item IIS:\SslBindings\0.0.0.0!443 -ErrorAction SilentlyContinue
+                    Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                    Write-Host -ForeGroundColor White -NoNewline " -Unbinding Current Cert: " 
+                    Write-ToLogFile -I -C IISActions -M "Unbinding Current Certificate, $($CurrentCertificateBinding.Thumbprint)"
+                    $CurrentCertificateBinding | Remove-Item -ErrorAction SilentlyContinue
+                    Write-Host -ForeGroundColor Yellow "Removed [$($CurrentCertificateBinding.Thumbprint)]"
+                } else {
+                    Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
+                    try {
+                        New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
+                        $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                        Write-Host -ForeGroundColor Green "Created [$($CurrentWebBinding.bindingInformation)]"
+                        Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                    } catch {
+                        Write-Host -ForeGroundColor Red "Failed"
+                        Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
+                    }
+                }
+                try {
+                    Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
+                    Write-Host -ForeGroundColor White -NoNewline " -Binding New Cert......: " 
+                    New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
+                    Write-Host -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
+                } catch {
+                    Write-Host -ForeGroundColor Red "Could not bind"
+                    Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
+                }
+
+            } catch {
+                Write-Host -ForeGroundColor Red "Caught an error while updating"
+                Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
+            }
+        }
+
+
+        #endregion IISActions
+
+        ""
         if ($ValidationMethod -eq "dns") {
             Write-Host -ForegroundColor Magenta "`r`n********************************************************************"
             Write-Host -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
@@ -3059,6 +3182,7 @@ if ($ValidationMethod -in "http", "dns") {
 }
 
 #endregion ADC-CertUpload
+
 
 #region RemoveTestCerts
 
