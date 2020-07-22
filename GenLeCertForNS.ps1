@@ -138,7 +138,7 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.14
+    Version   : v2.7.15
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -305,6 +305,8 @@ param(
     [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
     [String]$LogLevel = "Info",
    
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -444,7 +446,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.14"
+$ScriptVersion = "2.7.15"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1219,17 +1221,17 @@ function Register-FatalError {
 
         [Switch]$ExitNow
     )
-    if ($Script:ScriptFatalError.Error) {
-        $ExitMessage = $Script:ScriptFatalError.Message
-        $ExitCode = $Script:ScriptFatalError.ExitCode
+    if ($Global:ScriptFatalError.Error) {
+        $ExitMessage = $Global:ScriptFatalError.Message
+        $ExitCode = $Global:ScriptFatalError.ExitCode
     }
     Write-ToLogFile -E -C Register-FatalError -M "[$ExitCode] $ExitMessage"
     if (-Not $ExitNow) {
         Write-ToLogFile -E -C Register-FatalError -M "Registering error only, continuing to cleanup."
-        $Script:ScriptFatalError.Message = $ExitMessage
-        $Script:ScriptFatalError.ExitCode = $ExitCode
-        $Script:ScriptFatalError.Error = $true
-        $Script:CleanADC = $true
+        $Global:ScriptFatalError.Message = $ExitMessage
+        $Global:ScriptFatalError.ExitCode = $ExitCode
+        $Global:ScriptFatalError.Error = $true
+        $Global:CleanADC = $true
     } else {
         Write-Error $ExitMessage
         TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
@@ -1311,6 +1313,23 @@ $($MailData | Out-String)
     exit $ExitCode
 }
 
+function Save-NSConfig {
+    [cmdletbinding()]
+    param (
+        [Switch]$SaveNSConfig
+    )
+    Write-Host -ForeGroundColor White "`r`nADC Configuration"
+    Write-Host -ForeGroundColor White -NoNewLine " -Config Saved..........: "
+    if ($SaveNSConfig) {
+        Write-ToLogFile -I -C SaveNSConfig -M "Saving ADC configuration.  (`"-SaveNSConfig`" Parameter set)"
+        Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save
+        Write-Host -ForeGroundColor Green "Saved!"
+    } else {
+        Write-Host -ForeGroundColor Yellow "NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
+        Write-ToLogFile -I -C SaveNSConfig -M "ADC configuration NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
+        $MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
+    }
+}
 #endregion Functions
 
 #region ScriptBasics
@@ -1375,6 +1394,8 @@ try {
 
 #endregion ConvertToSecureValues
 
+#region Logging
+
 if ($EnableLogging) {
     Write-Warning "-EnableLogging is deprecated, Logging is enabled by default."
 }
@@ -1409,7 +1430,10 @@ $($PSBoundParameters | Out-String)
     } else {
         Write-Host -ForeGroundColor Cyan "$LogLevel"
     }
+    $Global:LogLevel = $LogLevel
 }
+
+#endregion Logging
 
 #region Help
 
@@ -1450,7 +1474,7 @@ try {
 
 #region ApiUserPermissions
 
-if ($CreateUserPermissions) {
+if ($CreateUserPermissions -or $CreateApiUser) {
     Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$NSCPName`""
     Write-Host -ForeGroundColor White "`r`nApi User Permissions"
     Write-Host -ForeGroundColor White -NoNewLine " -Command Policy........: "
@@ -1462,8 +1486,10 @@ if ($CreateUserPermissions) {
             Write-ToLogFile -I -C ApiUserPermissions -M "Existing found, updating Command Policy"
             Write-Host -NoNewLine -ForeGroundColor Cyan "Existing [$NSCPName] "
             $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
+            Write-ToLogFile -D -C ApiUserPermissions -M "Putting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemcmdpolicy -Payload $payload
             Write-Host -ForeGroundColor Green "Changed"
+            
         } elseif ($response.systemcmdpolicy.count -gt 1) {
             Write-Host -ForeGroundColor Red "ERROR: Multiple Command Policies found!"
             Write-ToLogFile -I -C ApiUserPermissions -M "Multiple Command Policies found."
@@ -1473,6 +1499,7 @@ if ($CreateUserPermissions) {
         } else {
             Write-ToLogFile -I -C ApiUserPermissions -M "None found, creating new Command Policy"
             $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
+            Write-ToLogFile -D -C ApiUserPermissions -M "Posting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemcmdpolicy -Payload $payload
             Write-Host -ForeGroundColor Green "Created [$NSCPName]"
         }
@@ -1492,6 +1519,7 @@ if ($CreateApiUser) {
     Write-Host -ForeGroundColor White -NoNewLine " -Api User..............: "
     if (($ApiPassword -is [String]) -and ($ApiPassword.Length -gt 0)) {
         [SecureString]$ApiPassword = ConvertTo-SecureString -String $ApiPassword -AsPlainText -Force
+        Write-ToLogFile -D -C ApiUser -M "Secure password created"
     }
     if ((($ApiPassword.Length -gt 0) -and ($ApiUsername.Length -gt 0))) {
         $ApiCredential = New-Object System.Management.Automation.PSCredential -ArgumentList $ApiUsername, $ApiPassword
@@ -1509,7 +1537,12 @@ if ($CreateApiUser) {
         if ($response.systemuser.count -eq 1) {
             Write-ToLogFile -I -C ApiUser -M "Existing found, updating User"
             Write-Host -NoNewLine -ForeGroundColor Cyan "Existing [$ApiUsername] "
-            $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            if ($NSVersion -gt 12) {
+                $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            } else {
+                $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); }
+            }
+            Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
             Write-Host -ForeGroundColor Green "Changed"
         } elseif ($response.systemuser.count -gt 1) {
@@ -1520,7 +1553,12 @@ if ($CreateApiUser) {
             }
         } else {
             Write-ToLogFile -I -C ApiUser -M "None found, creating new Users"
-            $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            if ($NSVersion -gt 12) {
+                $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            } else {
+                $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); }
+            }
+            Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemuser -Payload $payload
             Write-Host -ForeGroundColor Green "Created [$ApiUsername]"
         }
@@ -1537,6 +1575,7 @@ if ($CreateApiUser) {
                 Write-Host -ForeGroundColor Cyan -NoNewLine "[$Binding] "
                 try {
                     $Arguments = @{ policyname = $Binding }
+                    Write-ToLogFile -D -C ApiUser -M "Deleting: $($Arguments | ConvertTo-Json -Compress)"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername -Arguments $Arguments -ErrorAction Stop
                     Write-Host -ForeGroundColor Green "Removed"
                 } catch {
@@ -1553,6 +1592,7 @@ if ($CreateApiUser) {
         } else {
             Write-ToLogFile -I -C ApiUser -M "Creating a new binding"
             $payload = @{ username = $ApiUsername; policyname = $NSCPName; priority = 10}
+            Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
             Write-Host -NoNewline -ForeGroundColor Green "Bound [$NSCPName]"
         }
@@ -1563,6 +1603,7 @@ if ($CreateApiUser) {
 }
 
 if (($CreateUserPermissions) -or ($CreateApiUser)){
+    Save-NSConfig -SaveNSConfig:$SaveNSConfig
     TerminateScript 0
 }
 
@@ -1660,7 +1701,7 @@ if ($IPv6) {
 $PublicDnsServerv6 = "2606:4700:4700::1111"
 $PublicDnsServer = "1.1.1.1"
 
-$ScriptFatalError = [PSCustomObject]@{
+$Global:ScriptFatalError = [PSCustomObject]@{
     Error    = $false
     ExitCode = 0
     Message  = $Null
@@ -3308,17 +3349,7 @@ if ($ValidationMethod -in "http", "dns") {
             Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
             Write-ToLogFile -E -C ADC-CertUpload -M "Exception Message: $($_.Exception.Message)"
         }
-        Write-Host -ForeGroundColor White "`r`nADC Configuration"
-        Write-Host -ForeGroundColor White -NoNewLine " -Config Saved..........: "
-        if ($SaveNSConfig) {
-            Write-ToLogFile -I -C ADC-CertUpload -M "Saving ADC configuration.  (`"-SaveNSConfig`" Parameter set)"
-            Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save
-            Write-Host -ForeGroundColor Green "Saved!"
-        } else {
-            Write-Host -ForeGroundColor Yellow "NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
-            Write-ToLogFile -I -C ADC-CertUpload -M "ADC configuration NOT Saved! (`"-SaveNSConfig`" Parameter not defined)"
-            $MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
-        }
+        Save-NSConfig -SaveNSConfig:$SaveNSConfig
         Write-Host -ForeGroundColor White "`r`nCertificates"
         if ($PfxPasswordGenerated) {
             ""
