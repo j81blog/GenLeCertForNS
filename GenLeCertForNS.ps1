@@ -1469,6 +1469,8 @@ try {
             Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
         }
         $MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
+    } else {
+        Write-ToLogFile -I -C VersionInfo -M "No new Master version available"
     }
     if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion) {
         Write-Host -ForeGroundColor White -NoNewLine " -New Develop Note......: "
@@ -1486,6 +1488,8 @@ try {
             Write-Host -ForeGroundColor Yellow "$($AvailableVersions.devimportant)"
             Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.devimportant)"
         }
+    } else {
+        Write-ToLogFile -I -C VersionInfo -M "No new Development version available"
     }
 } catch {
     Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
@@ -1640,7 +1644,7 @@ if ($CreateApiUser) {
             Write-ToLogFile -I -C ApiUser -M "A binding is already present"
         } else {
             Write-ToLogFile -I -C ApiUser -M "Creating a new binding"
-            $payload = @{ username = $ApiUsername; policyname = $NSCPName; priority = 10}
+            $payload = @{ username = $ApiUsername; policyname = $NSCPName; priority = 10 }
             Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -Compress)"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
             Write-Host -NoNewline -ForeGroundColor Green "Bound [$NSCPName]"
@@ -1651,7 +1655,7 @@ if ($CreateApiUser) {
     }
 }
 
-if (($CreateUserPermissions) -or ($CreateApiUser)){
+if (($CreateUserPermissions) -or ($CreateApiUser)) {
     Save-NSConfig -SaveNSConfig:$SaveNSConfig
     TerminateScript 0
 }
