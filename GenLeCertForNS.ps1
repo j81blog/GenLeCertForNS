@@ -116,6 +116,11 @@
     You can also define a (Global) variable in your script $LogLevel, the function will use this level instead (if not specified with the command)
     Default value: Info
 .EXAMPLE
+    .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -NSCsVipName "CSVIPNAME" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -NSCPName "MinLePermissionGroup" -NSUsername nsroot -NSPassword "nsroot" -NSManagementURL https://citrixadc.domain.local
+    This command will create a Command Policy with the minimum set of permissions, you need to run this once to create (or when you want to change something).
+    Be sure to run the script next with the same parameters as specified when running this command, the same for -NSSvcName (Default "svc_letsencrypt_cert_dummy"), -NSLbName (Default: "lb_letsencrypt_cert"), -NSRspName (Default: "rsp_letsencrypt"), -NSRsaName (Default: "rsa_letsencrypt"), -NSCspName (Default: "csp_NSCertCsp")
+    Next time you want to generate certificates you can specify the new user  -NSUsername le-user -NSPassword "LEP@ssw0rd"
+.EXAMPLE
     .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -NSCsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -NSCertNameToUpdate "san_domain_com" -LogLevel Debug -Production
     Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
@@ -133,7 +138,7 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.10
+    Version   : v2.7.14
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -171,6 +176,8 @@ param(
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Switch]$CleanPoshACMEStorage,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $true)]
@@ -179,6 +186,8 @@ param(
     [alias("URL", "NSManagementURL")]
     [String]$ManagementURL,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -187,6 +196,8 @@ param(
     [alias("User", "NSUsername")]
     [String]$Username,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -203,6 +214,8 @@ param(
         })][alias("NSPassword")]
     [object]$Password,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -273,6 +286,8 @@ param(
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Switch]$DisableLogging,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -281,6 +296,8 @@ param(
     [alias("LogLocation")]
     [String]$LogFile = "<DEFAULT>",
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -331,11 +348,15 @@ param(
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [String]$IISSiteToUpdate = "Default Web Site",
     
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
-    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSCsVipName,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -346,6 +367,8 @@ param(
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSCsVipBinding = 11,
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
@@ -356,20 +379,54 @@ param(
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSSvcDestination = "1.2.3.4",
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSLbName = "lb_letsencrypt_cert",
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSRspName = "rsp_letsencrypt",
 
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [String]$NSRsaName = "rsa_letsencrypt",
+
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
+    [Switch]$CreateUserPermissions,
+
+    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
+    [String]$NSCPName = "script-GenLeCertForNS",
+
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
+    [Switch]$CreateApiUser,
+
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [String]$ApiUsername,
+
+    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [ValidateScript( {
+            if ($_ -is [SecureString]) {
+                return $true
+            } elseif ($_ -is [String]) {
+                return $true
+            } else {
+                throw "You passed an unexpected object type for the credential (-ApiPassword)"
+            }
+        })]
+    [object]$ApiPassword,
 
     [Parameter(ParameterSetName = "ImportSettings", Mandatory = $false)]
     [Switch]$TestBeforeProduction,
@@ -387,7 +444,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.13"
+$ScriptVersion = "2.7.14"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1354,6 +1411,163 @@ $($PSBoundParameters | Out-String)
     }
 }
 
+#region Help
+
+if ($Help -or ($PSBoundParameters.Count -eq 0)) {
+    Get-Help "$PSScriptRoot\GenLeCertForNS.ps1" -Detailed
+    $SendMail = $false
+    TerminateScript 0 "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
+}
+#endregion Help
+
+#region ADC-Check
+
+Write-ToLogFile -I -C ADC-Check -M "Trying to login into the Citrix ADC."
+Write-Host -ForeGroundColor White "`r`nADC Info"
+$ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
+Write-Host -ForeGroundColor White -NoNewLine " -URL...................: "
+Write-Host -ForeGroundColor Cyan "$ManagementURL"
+Write-Host -ForeGroundColor White -NoNewLine " -Username..............: "
+Write-Host -ForeGroundColor Cyan "$($ADCSession.Username)"
+Write-Host -ForeGroundColor White -NoNewLine " -Password..............: "
+Write-Host -ForeGroundColor Cyan "**********"
+Write-Host -ForeGroundColor White -NoNewLine " -Version...............: "
+Write-Host -ForeGroundColor Cyan "$($ADCSession.Version)"
+try {
+    $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
+    if ($NSVersion -lt 11) {
+        Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
+        Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
+        Write-ToLogFile -E -C ADC-Check -M "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
+        Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
+        TerminateScript 1 "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
+    }
+} catch {
+    Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
+}
+
+#endregion ADC-Check
+
+#region ApiUserPermissions
+
+if ($CreateUserPermissions) {
+    Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$NSCPName`""
+    Write-Host -ForeGroundColor White "`r`nApi User Permissions"
+    Write-Host -ForeGroundColor White -NoNewLine " -Command Policy........: "
+    $CmdSpec = "(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($NSCsVipName).*)|(^\S+\s+Service\s+$($NSSvcName).*)|(^\S+\s+lb\s+vserver\s+$($NSLbName).*)|(^\S+\s+responder\s+action\s+$($NSRsaName).*)|(^\S+\s+responder\s+policy\s+$($NSRspName).*)|(^\S+\s+cs\s+policy\s+$($NSCspName).*)"
+    try {
+        $Filters = @{ policyname = "$NSCPName" }
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
+        if ($response.systemcmdpolicy.count -eq 1) {
+            Write-ToLogFile -I -C ApiUserPermissions -M "Existing found, updating Command Policy"
+            Write-Host -NoNewLine -ForeGroundColor Cyan "Existing [$NSCPName] "
+            $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemcmdpolicy -Payload $payload
+            Write-Host -ForeGroundColor Green "Changed"
+        } elseif ($response.systemcmdpolicy.count -gt 1) {
+            Write-Host -ForeGroundColor Red "ERROR: Multiple Command Policies found!"
+            Write-ToLogFile -I -C ApiUserPermissions -M "Multiple Command Policies found."
+            $response.systemcmdpolicy | ForEach-Object {
+                Write-ToLogFile -D -C ApiUserPermissions -M "$($_ | ConvertTo-Json -Compress)"
+            }
+        } else {
+            Write-ToLogFile -I -C ApiUserPermissions -M "None found, creating new Command Policy"
+            $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemcmdpolicy -Payload $payload
+            Write-Host -ForeGroundColor Green "Created [$NSCPName]"
+        }
+    } catch {
+        Write-Host -ForeGroundColor Red "Error"
+        Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
+    }
+}
+
+#endregion ApiUserPermissions
+
+#region ApiUser
+
+if ($CreateApiUser) {
+    Write-ToLogFile -I -C ApiUser -M "CreateApiUser parameter specified, create or update user `"$ApiUsername`""
+    Write-Host -ForeGroundColor White "`r`nApi User"
+    Write-Host -ForeGroundColor White -NoNewLine " -Api User..............: "
+    if (($ApiPassword -is [String]) -and ($ApiPassword.Length -gt 0)) {
+        [SecureString]$ApiPassword = ConvertTo-SecureString -String $ApiPassword -AsPlainText -Force
+    }
+    if ((($ApiPassword.Length -gt 0) -and ($ApiUsername.Length -gt 0))) {
+        $ApiCredential = New-Object System.Management.Automation.PSCredential -ArgumentList $ApiUsername, $ApiPassword
+        Write-ToLogFile -D -C ApiUser -M "Credential created"
+    }
+    if (([PSCredential]::Empty -eq $ApiCredential) -or ($null -eq $ApiCredential)) {
+        Write-Host -ForeGroundColor Red "No valid credentials found!"
+        Write-ToLogFile -E -C ApiUser -M "No valid Api Credential found, -ApiUsername or -ApiPassword not specified!"
+        TerminateScript 1 "No valid Api Credential found, -ApiUsername or -ApiPassword not specified!"
+    }
+    Write-ToLogFile -D -C ApiUser -M "Basics ready, continuing"
+    try {
+        $Filters = @{ username = "$ApiUsername" }
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser -Filters $Filters
+        if ($response.systemuser.count -eq 1) {
+            Write-ToLogFile -I -C ApiUser -M "Existing found, updating User"
+            Write-Host -NoNewLine -ForeGroundColor Cyan "Existing [$ApiUsername] "
+            $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
+            Write-Host -ForeGroundColor Green "Changed"
+        } elseif ($response.systemuser.count -gt 1) {
+            Write-Host -ForeGroundColor Red "ERROR: Multiple users found!"
+            Write-ToLogFile -I -C ApiUser -M "Multiple Command Policies found."
+            $response.systemuser | ForEach-Object {
+                Write-ToLogFile -D -C ApiUser -M "$($_ | ConvertTo-Json -Compress)"
+            }
+        } else {
+            Write-ToLogFile -I -C ApiUser -M "None found, creating new Users"
+            $payload = @{ username = $ApiUsername; password = $($ApiCredential.GetNetworkCredential().password); externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemuser -Payload $payload
+            Write-Host -ForeGroundColor Green "Created [$ApiUsername]"
+        }
+        Write-ToLogFile -I -C ApiUser -M "Bind Command Policy"
+        Write-Host -ForeGroundColor White -NoNewLine " -User Policy Binding...: "
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
+        if ($response.systemuser_systemcmdpolicy_binding.policyname.Count -gt 1) {
+            Write-ToLogFile -I -C ApiUser -M "Multiple found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
+            Write-Host -ForeGroundColor Yellow "Multiple found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
+            $BindingsToRemove = $response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -ne $NSCPName }
+            foreach ($Binding in $BindingsToRemove) {
+                Write-ToLogFile -D -C ApiUser -M "Removing `"$Binding`""
+                Write-Host -ForeGroundColor White -NoNewLine " -Binding...............: "
+                Write-Host -ForeGroundColor Cyan -NoNewLine "[$Binding] "
+                try {
+                    $Arguments = @{ policyname = $Binding }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername -Arguments $Arguments -ErrorAction Stop
+                    Write-Host -ForeGroundColor Green "Removed"
+                } catch {
+                    Write-Host -ForeGroundColor Red "Error"
+                    Write-ToLogFile -D -C ApiUser -M "Error $($_.Exception.Message)"
+                }
+            }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
+            Write-Host -ForeGroundColor White -NoNewLine " -User Policy Binding...: "
+        }
+        if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $NSCPName }) {
+            Write-Host -ForeGroundColor Cyan "Present [$NSCPName]"
+            Write-ToLogFile -I -C ApiUser -M "A binding is already present"
+        } else {
+            Write-ToLogFile -I -C ApiUser -M "Creating a new binding"
+            $payload = @{ username = $ApiUsername; policyname = $NSCPName; priority = 10}
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
+            Write-Host -NoNewline -ForeGroundColor Green "Bound [$NSCPName]"
+        }
+    } catch {
+        Write-Host -ForeGroundColor Red "Error"
+        Write-ToLogFile -E -C ApiUser -M "Caught an error! Exception Message: $($_.Exception.Message)"
+    }
+}
+
+if (($CreateUserPermissions) -or ($CreateApiUser)){
+    TerminateScript 0
+}
+
+#endregion ApiUser
+
 if ($GetValuesFromExistingCertificate) {
     "`r`n"
     Write-Warning "The option -GetValuesFromExistingCertificate is still BETA!"
@@ -1411,15 +1625,6 @@ if ($SendMail) {
 }
 
 #endregion MailSetup
-
-#region Help
-
-if ($Help -or ($PSBoundParameters.Count -eq 0)) {
-    Get-Help "$PSScriptRoot\GenLeCertForNS.ps1" -Detailed
-    $SendMail = $false
-    TerminateScript 0 "Displaying the Detailed help info for: `"$PSScriptRoot\GenLeCertForNS.ps1`""
-}
-#endregion Help
 
 #region DOTNETCheck
 Write-ToLogFile -I -C DOTNETCheck -M "Checking if .NET Framework 4.7.1 or higher is installed."
@@ -1607,34 +1812,6 @@ if (($ValidationMethod -in "http", "dns") -or ($GetValuesFromExistingCertificate
 }
 
 #endregion LoadModule
-
-#region ADC-Check
-
-Write-ToLogFile -I -C ADC-Check -M "Trying to login into the Citrix ADC."
-Write-Host -ForeGroundColor White "`r`nADC Info"
-$ADCSession = Connect-ADC -ManagementURL $ManagementURL -Credential $Credential -PassThru
-Write-Host -ForeGroundColor White -NoNewLine " -URL...................: "
-Write-Host -ForeGroundColor Cyan "$ManagementURL"
-Write-Host -ForeGroundColor White -NoNewLine " -Username..............: "
-Write-Host -ForeGroundColor Cyan "$($ADCSession.Username)"
-Write-Host -ForeGroundColor White -NoNewLine " -Password..............: "
-Write-Host -ForeGroundColor Cyan "**********"
-Write-Host -ForeGroundColor White -NoNewLine " -Version...............: "
-Write-Host -ForeGroundColor Cyan "$($ADCSession.Version)"
-try {
-    $NSVersion = [double]$($ADCSession.version.split(" ")[1].Replace("NS", "").Replace(":", ""))
-    if ($NSVersion -lt 11) {
-        Write-Host -ForeGroundColor RED -NoNewLine "ERROR: "
-        Write-Host -ForeGroundColor White "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
-        Write-ToLogFile -E -C ADC-Check -M "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
-        Start-Process "https://github.com/j81blog/GenLeCertForNS/tree/master-v1-api"
-        TerminateScript 1 "Only ADC version 11 and up is supported, please use an older version (v1-api) of this script!"
-    }
-} catch {
-    Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
-}
-
-#endregion ADC-Check
 
 #region CertificatePreCheck
 if (($ValidationMethod -in "http", "dns") -or ($GetValuesFromExistingCertificate)) {
