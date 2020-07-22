@@ -1444,6 +1444,55 @@ if ($Help -or ($PSBoundParameters.Count -eq 0)) {
 }
 #endregion Help
 
+#region VersionInfo
+
+Write-Host -ForeGroundColor White "`r`nVersion Info"
+Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
+Write-Host -ForeGroundColor Cyan "v$ScriptVersion"
+Write-ToLogFile -I -C VersionInfo -M "Current script version: v$($ScriptVersion), checking if a new version is available."
+try {
+    $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
+    if ([version]$AvailableVersions.master -gt [version]$ScriptVersion) {
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production Note...: "
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masternote)"
+        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.masternote)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production Version: "
+        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.master)"
+        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.master)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Production URL....: "
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
+        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
+        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
+            ""
+            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
+            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
+            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
+        }
+        $MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
+    }
+    if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion) {
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Note......: "
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devnote)"
+        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.devnote)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Version...: "
+        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.dev)"
+        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.dev)"
+        Write-Host -ForeGroundColor White -NoNewLine " -New Develop URL.......: "
+        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devurl)"
+        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.devurl)"
+        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
+            ""
+            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
+            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.devimportant)"
+            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.devimportant)"
+        }
+    }
+} catch {
+    Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
+}
+Write-ToLogFile -I -C VersionInfo -M "Version check finished."
+#endregion VersionInfo
+
 #region ADC-Check
 
 Write-ToLogFile -I -C ADC-Check -M "Trying to login into the Citrix ADC."
@@ -1733,55 +1782,6 @@ if ($CleanPoshACMEStorage) {
 }
 
 #endregion CleanPoshACMEStorage
-
-#region VersionInfo
-
-Write-Host -ForeGroundColor White "`r`nVersion Info"
-Write-Host -ForeGroundColor White -NoNewLine " -Script Version........: "
-Write-Host -ForeGroundColor Cyan "v$ScriptVersion"
-Write-ToLogFile -I -C VersionInfo -M "Current script version: v$($ScriptVersion), checking if a new version is available."
-try {
-    $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
-    if ([version]$AvailableVersions.master -gt [version]$ScriptVersion) {
-        Write-Host -ForeGroundColor White -NoNewLine " -New Production Note...: "
-        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masternote)"
-        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.masternote)"
-        Write-Host -ForeGroundColor White -NoNewLine " -New Production Version: "
-        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.master)"
-        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.master)"
-        Write-Host -ForeGroundColor White -NoNewLine " -New Production URL....: "
-        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
-        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
-        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
-            ""
-            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
-            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
-            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
-        }
-        $MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
-    }
-    if ([version]$AvailableVersions.dev -gt [version]$ScriptVersion) {
-        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Note......: "
-        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devnote)"
-        Write-ToLogFile -I -C VersionInfo -M "Note: $($AvailableVersions.devnote)"
-        Write-Host -ForeGroundColor White -NoNewLine " -New Develop Version...: "
-        Write-Host -ForeGroundColor Cyan "v$($AvailableVersions.dev)"
-        Write-ToLogFile -I -C VersionInfo -M "Version: v$($AvailableVersions.dev)"
-        Write-Host -ForeGroundColor White -NoNewLine " -New Develop URL.......: "
-        Write-Host -ForeGroundColor Cyan "$($AvailableVersions.devurl)"
-        Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.devurl)"
-        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
-            ""
-            Write-Host -ForeGroundColor White -NoNewLine " -IMPORTANT Note........: "
-            Write-Host -ForeGroundColor Yellow "$($AvailableVersions.devimportant)"
-            Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.devimportant)"
-        }
-    }
-} catch {
-    Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
-}
-Write-ToLogFile -I -C VersionInfo -M "Version check finished."
-#endregion VersionInfo
 
 #region LoadModule
 
