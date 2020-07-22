@@ -84,9 +84,10 @@
     Run the script to generate a test certificate first if successful the script will run with the same parameters but with the "-Production" parameter.    
     Can be used together with the "-ImportSettings" parameter.
 .PARAMETER UpdateIIS
-    ...
+    If specified, the script will try to add the generated certificate to the personal computer store and bind it to the site
 .PARAMETER IISSiteToUpdate
-    ...
+    Select a IIS Site you want to add the certificate to.
+    Default value when not specifying this parameter is "Default Web Site".
 .PARAMETER SendMail
     Specify this parameter if you want to send a mail at the end, don't forget to specify SMTPTo, SMTPFrom, SMTPServer and if required SMTPCredential
 .PARAMETER SMTPTo
@@ -379,8 +380,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.10"
-$PoshACMEVersion = "3.15.0"
+$ScriptVersion = "2.7.11"
+$PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -878,7 +879,7 @@ function Invoke-ADCRestApi {
                 Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)"
                 if ($Method -eq "GET") { 
                     if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
-                        return $response | Select -ExpandProperty $Type -ErrorAction SilentlyContinue
+                        return $response | Select-Object -ExpandProperty $Type -ErrorAction SilentlyContinue
                     } else {
                         return $response 
                     }
@@ -1142,6 +1143,33 @@ function Get-PlainText {
     } End { }
 }
 
+function Register-FatalError {
+    [cmdletbinding()]
+    param (
+        [Parameter(Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [int]$ExitCode,
+
+        [Parameter(Position = 1)]
+        [String]$ExitMessage = $null,
+
+        [Switch]$ExitNow
+    )
+    if ($Script:ScriptFatalError.Error) {
+        $ExitMessage = $Script:ScriptFatalError.Message
+        $ExitCode = $Script:ScriptFatalError.ExitCode
+    }
+    Write-ToLogFile -E -C Register-FatalError -M "[$ExitCode] $ExitMessage"
+    if (-Not $ExitNow) {
+        Write-ToLogFile -E -C Register-FatalError -M "Registering only, continuing to cleanup."
+        $Script:ScriptFatalError.Message = $ExitMessage
+        $Script:ScriptFatalError.ExitCode = $ExitCode
+        $Script:ScriptFatalError.Error = $true
+        $Script:CleanADC = $true
+    } else {
+        TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
+    }
+}
 function TerminateScript {
     [cmdletbinding()]
     param (
@@ -1405,10 +1433,18 @@ if ($NetRelease -lt 461308) {
 if (((-Not [String]::IsNullOrEmpty($CN)) -or ($GetValuesFromExistingCertificate)) -and (-Not ($ValidationMethod -eq "dns"))) {
     $ValidationMethod = "http"
 }
+
 if ($ValidationMethod -in "http", "dns") {
     Write-ToLogFile -I -C ScriptVariables -M "ValidationMethod is set to: `"$ValidationMethod`"."
 }
+
 $PublicDnsServer = "1.1.1.1"
+
+$ScriptFatalError = [PSCustomObject]@{
+    Error    = $false
+    ExitCode = 0
+    Message  = $Null
+}
 
 Write-ToLogFile -D -C ScriptVariables -M "Setting session DATE/TIME variable."
 [DateTime]$ScriptDateTime = Get-Date
@@ -2397,74 +2433,80 @@ if ($ValidationMethod -eq "http") {
                             Write-ToLogFile -I -C OrderValidation -M "Successfully send."
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
-                            Write-Error "Error while submitting the Challenge."
-                            TerminateScript 1 "Error while submitting the Challenge."
+                            Write-Host -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
+                            Register-FatalError 1 "Error while submitting the Challenge."
+                            Break
                         }
                         Write-Host -ForeGroundColor Green " Ready"
                     } catch {
                         Write-ToLogFile -E -C OrderValidation -M "Failed to bind Responder Policy to Load Balance VIP. Exception Message: $($_.Exception.Message)"
                         Write-Host -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
                         $ValidationMethod = $null
-                        Write-Error  $($_.Exception.Message)
-                        TerminateScript 1 "Failed to bind Responder Policy to Load Balance VIP"
+                        Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                        Register-FatalError 1 "Failed to bind Responder Policy to Load Balance VIP"
+                        Break
                     }
                 } catch {
                     Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
                     Write-Host -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
-                    Write-Error  $($_.Exception.Message)
-                    TerminateScript 1 "Failed to add Responder Policy"
+                    Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                    Register-FatalError 1 "Failed to add Responder Policy"
+                    Break
                 }
             } catch {
                 Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
                 Write-Host -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
-                Write-Error  $($_.Exception.Message)
-                TerminateScript 1 "Failed to add Responder Action"
+                Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                Register-FatalError 1 "Failed to add Responder Action"
+                Break
             }
         }
     }
-    Write-Host -ForeGroundColor White "`r`nWaiting for Order completion"
-    Write-Host -ForeGroundColor White -NoNewLine " -Completion............: "
-    Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
-    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
-    Write-ToLogFile -D -C OrderValidation -M "Listing PAOrderItems"
-    $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
-        Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
-    }
-    $WaitLoop = 10
-    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-    Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
-    while ($true) {
-        Start-Sleep -Seconds 5
-        $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
-        Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
-        if ($WaitLoop -eq 0) {
-            Write-ToLogFile -D -C OrderValidation -M "Loop ended, max reties reached!"
-            break
-        } elseif ($((($PAOrderItems | Where-Object { $_.status -eq "pending" }) | Measure-Object).Count) -eq 0) {
-            Write-ToLogFile -D -C OrderValidation -M "Loop ended no pending items left."
-            break
-        }
-        $WaitLoop--
+    if (-Not $ScriptFatalError.Error) {
+        Write-Host -ForeGroundColor White "`r`nWaiting for Order completion"
+        Write-Host -ForeGroundColor White -NoNewLine " -Completion............: "
+        Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-    }
-    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
-    if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
-        Write-Host -ForeGroundColor Red "Failed"
-        Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items."
-        Write-ToLogFile -E -C OrderValidation -M "Failed Records: $($PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn,status,Expires,HTTP01Status,DNS01Status | Format-Table | Out-String)"
-        Write-Host -ForeGroundColor White "`r`nInvalid items:"
-        ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
-            Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
-            Write-Host -ForeGroundColor Cyan "$($Item.fqdn)"
-            Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
-            Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
+        $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+        Write-ToLogFile -D -C OrderValidation -M "Listing PAOrderItems"
+        $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
+            Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
         }
-        Write-Error "There are some items invalid"
-        TerminateScript 1 "There are some items invalid"
-    } else {
-        Write-Host -ForeGroundColor Green " Completed"
-        Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
+        $WaitLoop = 10
+        Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+        Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
+        while ($true) {
+            Start-Sleep -Seconds 5
+            $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+            Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
+            if ($WaitLoop -eq 0) {
+                Write-ToLogFile -D -C OrderValidation -M "Loop ended, max reties reached!"
+                break
+            } elseif ($((($PAOrderItems | Where-Object { $_.status -eq "pending" }) | Measure-Object).Count) -eq 0) {
+                Write-ToLogFile -D -C OrderValidation -M "Loop ended no pending items left."
+                break
+            }
+            $WaitLoop--
+            Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+        }
+        $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
+        if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
+            Write-Host -ForeGroundColor Red "Failed"
+            Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items."
+            Write-ToLogFile -E -C OrderValidation -M "Failed Records: $($PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn,status,Expires,HTTP01Status,DNS01Status | Format-Table | Out-String)"
+            Write-Host -ForeGroundColor White "`r`nInvalid items:"
+            ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
+                Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
+                Write-Host -ForeGroundColor Cyan "$($Item.fqdn)"
+                Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
+                Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
+            }
+            Write-Host -ForegroundColor Red "`r`nERROR: There are some invalid items"
+            Register-FatalError 1 "There are some invalid items"
+        } else {
+            Write-Host -ForeGroundColor Green " Completed"
+            Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
+        }
     }
 }
 
@@ -2638,6 +2680,14 @@ if ($CleanADC -or ($ValidationMethod -in "http", "dns")) {
     Write-Host -ForeGroundColor Green " Completed"
     Write-ToLogFile -I -C CleanupADC -M "Finished cleaning up."
 }
+
+#region ExitIfErrors
+
+if ($ScriptFatalError.Error) {
+    Register-FatalError -ExitNow
+}
+
+#endregion ExitIfErrors
 
 #endregion CleanupADC
 
@@ -2965,18 +3015,18 @@ if ($ValidationMethod -in "http", "dns") {
             $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
             Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" for later use."
         }
-        Write-ToLogFile -D -C ADC-CertUpload -M "NSCertNameToUpdate: `"$NSCertNameToUpdate`""
         if ([String]::IsNullOrEmpty($NSCertNameToUpdate)) {
             Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was not configured."
             $ExistingCertificateDetails = $Null
         } else {
+            Write-ToLogFile -D -C ADC-CertUpload -M "NSCertNameToUpdate: `"$NSCertNameToUpdate`""
             if ((-Not [String]::IsNullOrEmpty($ImportSettings)) -and (-Not $Production)) {
                 $NSCertNameToUpdate = "T-{0}" -f $NSCertNameToUpdate
                 Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was changed, new name `"$NSCertNameToUpdate`"."
             }
             Write-ToLogFile -I -C ADC-CertUpload -M "NSCertNameToUpdate variable was configured, trying to retrieve data."
             $Filters = @{"certkey" = "$NSCertNameToUpdate" }
-            $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $NSCertNameToUpdate -ErrorAction SilentlyContinue } catch { $null }
+            $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $NSCertNameToUpdate -Filters $Filters -ErrorAction SilentlyContinue } catch { $null }
         }
         if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
             $CertificateCertKeyName = $($ExistingCertificateDetails.sslcertkey.certkey)
@@ -2991,14 +3041,14 @@ if ($ValidationMethod -in "http", "dns") {
             }
             $NSUpdating = $true
         } else {
-            Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$NSCertNameToUpdate`" NOT found on the ADC."
+            Write-ToLogFile -I -C ADC-CertUpload -M "No existing certificate found on the ADC that needs to be updated."
             if (-Not [String]::IsNullOrEmpty($NSCertNameToUpdate)) {
                 $CertificateCertKeyName = $NSCertNameToUpdate
                 Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$NSCertNameToUpdate`""
             } else {
                 $CertificateCertKeyName = $CertificateName
                 $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
-                if (-Not [String]::IsNullOrEmpty($ExistingCertificateDetails)) {
+                if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
                     Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
                     Write-ToLogFile -W -C ADC-CertUpload -M "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
                     TerminateScript 1 "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-NSCertNameToUpdate`" Parameter."
