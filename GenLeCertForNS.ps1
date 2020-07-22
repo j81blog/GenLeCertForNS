@@ -83,6 +83,8 @@
 .PARAMETER TestBeforeProduction
     Run the script to generate a test certificate first if successful the script will run with the same parameters but with the "-Production" parameter.    
     Can be used together with the "-ImportSettings" parameter.
+.PARAMETER IPv6
+    If specified, the script will try run with IPv6 checks (EXPERIMENTAL)
 .PARAMETER UpdateIIS
     If specified, the script will try to add the generated certificate to the personal computer store and bind it to the site
 .PARAMETER IISSiteToUpdate
@@ -318,6 +320,11 @@ param(
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
+    [Parameter(ParameterSetName = "ImportSettings", Mandatory = $false)]
+    [Switch]$IPv6,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "GetExisting", Mandatory = $false)]
     [Switch]$UpdateIIS,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
@@ -380,7 +387,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.11"
+$ScriptVersion = "2.7.12"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1161,12 +1168,13 @@ function Register-FatalError {
     }
     Write-ToLogFile -E -C Register-FatalError -M "[$ExitCode] $ExitMessage"
     if (-Not $ExitNow) {
-        Write-ToLogFile -E -C Register-FatalError -M "Registering only, continuing to cleanup."
+        Write-ToLogFile -E -C Register-FatalError -M "Registering error only, continuing to cleanup."
         $Script:ScriptFatalError.Message = $ExitMessage
         $Script:ScriptFatalError.ExitCode = $ExitCode
         $Script:ScriptFatalError.Error = $true
         $Script:CleanADC = $true
     } else {
+        Write-Error $ExitMessage
         TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
     }
 }
@@ -1438,6 +1446,13 @@ if ($ValidationMethod -in "http", "dns") {
     Write-ToLogFile -I -C ScriptVariables -M "ValidationMethod is set to: `"$ValidationMethod`"."
 }
 
+if ($IPv6) {
+    Write-Host -ForegroundColor White "`r`nIPv6"
+    Write-Host -NoNewline -ForegroundColor White " -IPv6 checks...........: "
+    Write-Warning "IPv6 Checks are experimental"
+}
+
+$PublicDnsServerv6 = "2606:4700:4700::1111"
 $PublicDnsServer = "1.1.1.1"
 
 $ScriptFatalError = [PSCustomObject]@{
@@ -1967,7 +1982,11 @@ if (($ValidationMethod -in "http", "dns")) {
     Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
     Foreach ($DNSObject in $DNSObjects) {
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-        $DNSObject.IPAddress = "0.0.0.0"
+        if ($IPv6) {
+            $DNSObject.IPAddress = "::"
+        } else {
+            $DNSObject.IPAddress = "0.0.0.0"
+        }
         $DNSObject.Status = $false
         $DNSObject.Match = $false
         try {
@@ -1988,7 +2007,15 @@ if (($ValidationMethod -in "http", "dns")) {
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-ToLogFile -I -C DNS-Validation -M "Using public DNS server ($PublicDnsServer) to verify dns records."
                 Write-ToLogFile -D -C DNS-Validation -M "Trying to get IP Address."
-                $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
+                if ($IPv6) {
+                    try {
+                        $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction Stop).IPAddress
+                    } catch {
+                        $PublicIP = (Resolve-DnsName -Server $PublicDnsServerv6 -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction SilentlyContinue).IPAddress
+                    }
+                } else {
+                    $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
+                }
                 if ([String]::IsNullOrWhiteSpace($PublicIP)) {
                     Write-Host -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
                     Write-ToLogFile -E -C DNS-Validation -M "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`"."
