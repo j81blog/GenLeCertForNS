@@ -387,7 +387,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.12"
+$ScriptVersion = "2.7.13"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -2159,12 +2159,26 @@ if ($ADCActionsRequired -and ($ValidationMethod -eq "http")) {
         Write-ToLogFile -I -C ConfigureADC -M "Enabling required ADC Features: Load Balancer, Responder, Content Switch and SSL."
         Write-Host -ForeGroundColor White -NoNewLine " -Prerequisites.........: "
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-        $payload = @{"feature" = "LB RESPONDER CS SSL" }
-        try {
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsfeature -Payload $payload -Action enable
-            Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-        } catch {
-            Write-Host -ForeGroundColor Red " Error"
+        $FeaturesRequired = @("LB", "RESPONDER", "CS", "SSL")
+        $response = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type nsfeature -ErrorAction SilentlyContinue } catch { $null }
+        Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+        $FeaturesToBeEnabled = @()
+        foreach ($Feature in $FeaturesRequired) {
+            if ($Feature -in $response.nsfeature.feature) {
+                Write-ToLogFile -D -C ConfigureADC -M "Feature `"$Feature`" already enabled."
+            } else {
+                Write-ToLogFile -D -C ConfigureADC -M "Feature `"$Feature`" disabled, must be enabled."
+                $FeaturesToBeEnabled += $Feature
+            }
+        }
+        if ($FeaturesToBeEnabled.Count -gt 0) {
+            $payload = @{"feature" = $FeaturesToBeEnabled }
+            try {
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsfeature -Payload $payload -Action enable
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+            } catch {
+                Write-Host -ForeGroundColor Red " Error"
+            }
         }
         try {
             Write-ToLogFile -I -C ConfigureADC -M "Features enabled, verifying Content Switch."
