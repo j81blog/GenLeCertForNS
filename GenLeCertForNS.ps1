@@ -138,7 +138,7 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.15
+    Version   : v2.7.16
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -446,7 +446,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.15"
+$ScriptVersion = "2.7.16"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1231,7 +1231,7 @@ function Register-FatalError {
         $Global:ScriptFatalError.Message = $ExitMessage
         $Global:ScriptFatalError.ExitCode = $ExitCode
         $Global:ScriptFatalError.Error = $true
-        $Global:CleanADC = $true
+        $Script:CleanADC = $true
     } else {
         Write-Error $ExitMessage
         TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
@@ -1531,7 +1531,7 @@ if ($CreateUserPermissions -or $CreateApiUser) {
     Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$NSCPName`""
     Write-Host -ForeGroundColor White "`r`nApi User Permissions"
     Write-Host -ForeGroundColor White -NoNewLine " -Command Policy........: "
-    $CmdSpec = "(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($NSCsVipName).*)|(^\S+\s+Service\s+$($NSSvcName).*)|(^\S+\s+lb\s+vserver\s+$($NSLbName).*)|(^\S+\s+responder\s+action\s+$($NSRsaName).*)|(^\S+\s+responder\s+policy\s+$($NSRspName).*)|(^\S+\s+cs\s+policy\s+$($NSCspName).*)"
+    $CmdSpec = "(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($NSCsVipName).*)|(^\S+\s+Service\s+$($NSSvcName).*)|(^\S+\s+lb\s+vserver\s+$($NSLbName).*)|(^\S+\s+responder\s+action\s+$($NSRsaName).*)|(^\S+\s+responder\s+policy\s+$($NSRspName).*)|(^\S+\s+cs\s+policy\s+$($NSCspName).*)"
     try {
         $Filters = @{ policyname = "$NSCPName" }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
@@ -2755,8 +2755,10 @@ if ($ValidationMethod -eq "http") {
         $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $CN | Posh-ACME\Get-PAAuthorizations
         if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
             Write-Host -ForeGroundColor Red "Failed"
-            Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items."
-            Write-ToLogFile -E -C OrderValidation -M "Failed Records: $($PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn,status,Expires,HTTP01Status,DNS01Status | Format-Table | Out-String)"
+            Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items. Failed Records:"
+            $PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn,status,Expires,HTTP01Status,DNS01Status | ForEach-Object {
+                Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
+            }
             Write-Host -ForeGroundColor White "`r`nInvalid items:"
             ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
                 Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
@@ -3323,11 +3325,14 @@ if ($ValidationMethod -in "http", "dns") {
         Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the Pfx certificate."
         $payload = @{"filename" = "$CertificatePfxFileName"; "filecontent" = "$CertificatePfxBase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
-        Write-ToLogFile -D -C ADC-CertUpload -M "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
-        $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(Get-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(Get-PlainText -SecureString $PfxPassword)" }
-        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
+
+        #Write-ToLogFile -D -C ADC-CertUpload -M "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
+        #$payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(Get-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(Get-PlainText -SecureString $PfxPassword)" }
+        #$response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
+
         try {
-            $payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$(Get-PlainText -SecureString $PfxPassword)" }
+            #$payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$(Get-PlainText -SecureString $PfxPassword)" }
+            $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePemFileName; password = "true"; inform = "PFX"; passplain = "$(Get-PlainText -SecureString $PfxPassword)" }
             if ($NSUpdating) {
                 Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
