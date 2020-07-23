@@ -138,12 +138,12 @@
     Running the script with previously saved parameters. First a test certificate will be generated, if successful a Production certificate will be generated.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.7.16
+    Version   : v2.7.17
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.15.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 3.15.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -446,7 +446,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.7.16"
+$ScriptVersion = "2.7.17"
 $PoshACMEVersion = "3.15.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -854,7 +854,7 @@ function Invoke-ADCRestApi {
     )
     # Based on https://github.com/devblackops/NetScaler
     if ([String]::IsNullOrEmpty($($Session.ManagementURL))) {
-        Write-ToLogFile -E -C Invoke-ADCRestApi -M "Probably not logged into the Citrix ADC!"
+        try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Probably not logged into the Citrix ADC!" } catch { }
         throw "ERROR. Probably not logged into the ADC"
     }
     if ($Stat) {
@@ -906,7 +906,7 @@ function Invoke-ADCRestApi {
             $uri += $Query.GetEnumerator() | Foreach-Object { "?$($_.Name)=$([System.Uri]::EscapeDataString($_.Value))" }
         }
     }
-    Write-ToLogFile -D -C Invoke-ADCRestApi -M "URI: $uri"
+    try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "URI: $uri" } catch { }
 
     $jsonPayload = $null
     if ($Method -ne 'GET') {
@@ -915,7 +915,7 @@ function Invoke-ADCRestApi {
         $hashtablePayload.'params' = @{'warning' = $warning; 'onerror' = $OnErrorAction; <#"action"=$Action#> }
         $hashtablePayload.$Type = $Payload
         $jsonPayload = ConvertTo-Json -InputObject $hashtablePayload -Depth 100 -Compress
-        Write-ToLogFile -D -C Invoke-ADCRestApi -M "JSON Payload: $($jsonPayload | ConvertTo-Json -Compress)"
+        try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "JSON Payload: $($jsonPayload | ConvertTo-Json -Compress)" } catch { }
     }
 
     $response = $null
@@ -939,10 +939,10 @@ function Invoke-ADCRestApi {
 
         if ($response) {
             if ($response.severity -eq 'ERROR') {
-                Write-ToLogFile -E -C Invoke-ADCRestApi -M "Got an ERROR response: $($response| ConvertTo-Json -Compress)"
+                try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Got an ERROR response: $($response| ConvertTo-Json -Compress)" } catch { }
                 throw "Error. See log"
             } else {
-                Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)"
+                try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
                 if ($Method -eq "GET") { 
                     if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
                         return $response | Select-Object -ExpandProperty $Type -ErrorAction SilentlyContinue
@@ -954,9 +954,9 @@ function Invoke-ADCRestApi {
         }
     } catch [Exception] {
         if ($Type -eq 'reboot' -and $restError[0].Message -eq 'The underlying connection was closed: The connection was closed unexpectedly.') {
-            Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot."
+            try { Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot." } catch { }
         } else {
-            Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)"
+            try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { }
             throw $_
         }
     }
@@ -990,9 +990,9 @@ function Connect-ADC {
         [Switch]$PassThru
     )
     # Based on https://github.com/devblackops/NetScaler
-    Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..."
+    try { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." } catch { }
     if ($ManagementURL -like "https://*") {
-        Write-ToLogFile -D -C Connect-ADC -M "Connection is SSL, Trusting all certificates."
+        try { Write-ToLogFile -D -C Connect-ADC -M "Connection is SSL, Trusting all certificates." } catch { }
         $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
         $Provider.CreateCompiler() | Out-Null
         $Params = New-Object System.CodeDom.Compiler.CompilerParameters
@@ -1043,11 +1043,11 @@ function Connect-ADC {
         $response = Invoke-RestMethod @params
 
         if ($response.severity -eq 'ERROR') {
-            Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)"
+            try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { }
             Write-Error "Error. See log"
             TerminateScript 1 "Error. See log"
         } else {
-            Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)"
+            try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { }
         }
     } catch [Exception] {
         throw $_
@@ -1059,7 +1059,7 @@ function Connect-ADC {
         Version       = "UNKNOWN";
     }
     try {
-        Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version"
+        try { Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version" } catch { }
         $params = @{
             Uri           = "$ManagementURL/nitro/v1/config/nsversion"
             Method        = 'GET'
@@ -1069,16 +1069,16 @@ function Connect-ADC {
             Verbose       = $false
         }
         $response = Invoke-RestMethod @params
-        Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)"
+        try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
         $version = $response.nsversion.version.Split(",")[0]
         if (-not ([String]::IsNullOrWhiteSpace($version))) {
             $session.version = $version
         }
-        Write-ToLogFile -I -C Connect-ADC -M "Connected"
-        Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)"
+        try { Write-ToLogFile -I -C Connect-ADC -M "Connected" } catch { }
+        try { Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)" } catch { }
     } catch {
-        Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)"
+        try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { }
+        try { Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
     }
     if ($PassThru) {
         return $session
@@ -1531,7 +1531,7 @@ if ($CreateUserPermissions -or $CreateApiUser) {
     Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$NSCPName`""
     Write-Host -ForeGroundColor White "`r`nApi User Permissions"
     Write-Host -ForeGroundColor White -NoNewLine " -Command Policy........: "
-    $CmdSpec = "(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($NSCsVipName).*)|(^\S+\s+Service\s+$($NSSvcName).*)|(^\S+\s+lb\s+vserver\s+$($NSLbName).*)|(^\S+\s+responder\s+action\s+$($NSRsaName).*)|(^\S+\s+responder\s+policy\s+$($NSRspName).*)|(^\S+\s+cs\s+policy\s+$($NSCspName).*)"
+    $CmdSpec = "(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($NSCsVipName).*)|(^\S+\s+Service\s+$($NSSvcName).*)|(^\S+\s+lb\s+vserver\s+$($NSLbName).*)|(^\S+\s+responder\s+action\s+$($NSRsaName).*)|(^\S+\s+responder\s+policy\s+$($NSRspName).*)|(^\S+\s+cs\s+policy\s+$($NSCspName).*)"
     try {
         $Filters = @{ policyname = "$NSCPName" }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
@@ -2756,7 +2756,7 @@ if ($ValidationMethod -eq "http") {
         if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
             Write-Host -ForeGroundColor Red "Failed"
             Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items. Failed Records:"
-            $PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn,status,Expires,HTTP01Status,DNS01Status | ForEach-Object {
+            $PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
                 Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
             }
             Write-Host -ForeGroundColor White "`r`nInvalid items:"
@@ -3326,13 +3326,15 @@ if ($ValidationMethod -in "http", "dns") {
         $payload = @{"filename" = "$CertificatePfxFileName"; "filecontent" = "$CertificatePfxBase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
 
-        #Write-ToLogFile -D -C ADC-CertUpload -M "Converting the Pfx certificate to a pem file ($CertificatePemFileName)"
-        #$payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(Get-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(Get-PlainText -SecureString $PfxPassword)" }
-        #$response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
-
-        try {
-            #$payload = @{"certkey" = "$CertificateCertKeyName"; "cert" = "$($CertificatePemFileName)"; "key" = "$($CertificatePemFileName)"; "password" = "true"; "inform" = "PEM"; "passplain" = "$(Get-PlainText -SecureString $PfxPassword)" }
+        if ($NSVersion -lt 12) {
+            Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is lower than 12, converting the Pfx certificate to a pem file ($CertificatePemFileName)"
+            $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(Get-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(Get-PlainText -SecureString $PfxPassword)" }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
+            $payload = @{certkey = "$CertificateCertKeyName"; cert = "$($CertificatePemFileName)"; key = $CertificatePemFileName; password = true; inform = PEM; passplain = "$(Get-PlainText -SecureString $PfxPassword)" }
+        } else {
             $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePemFileName; password = "true"; inform = "PFX"; passplain = "$(Get-PlainText -SecureString $PfxPassword)" }
+        }
+        try {
             if ($NSUpdating) {
                 Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
