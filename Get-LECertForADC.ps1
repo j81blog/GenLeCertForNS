@@ -19,9 +19,7 @@
     Use a PSCredential object instead of a Username or password. Use "Get-Credential" to generate a credential object
     C:\PS> $Credential = Get-Credential
 .PARAMETER CsVipName
-    Name of the HTTP ADC Content Switch used for the domain validation.
-    Specify only one when requesting a certificate
-    Specify all possible VIPs when creating a Command Policy (User group, -NSCPName), so they all can be used by the members
+    Name of the HTTP ADC Content Switch used for the domain validation
 .PARAMETER CsVipBinding
     ADC Content Switch binding used for the validation
     Default: 11
@@ -70,19 +68,6 @@
     Example (Set your own name) : "Custom Name"
 .PARAMETER Production
     Use the production Let's encrypt server, without this parameter the staging (test) server will be used
-.PARAMETER CreateUserPermissions
-    When this parameter is configured, a User Group (Command Policy) will be created with a limited set of permissions required to run this script.
-    Also specify all VIP, LB svc names if you want other than default values.
-    Mandatory parameter is the CsVipName.
-.PARAMETER NSCPName
-    You can change the name of the Command Policy that will be created when you configure the -CreateUserPermissions parameter
-    Default: `"script-GenLeCertForNS`"
-.PARAMETER CreateApiUser
-    When this parameter is configured, a (System) User will be created. This will me a member of the Command policy configured with -NSCPName
-.PARAMETER ApiUsername
-    The Username for the (System) User
-.PARAMETER ApiPassword
-    The Password for the (System) User
 .PARAMETER DisableIPCheck
     If you want to skip the IP Address verification, specify this parameter
 .PARAMETER CleanPoshACMEStorage
@@ -114,7 +99,7 @@
 .PARAMETER DisableLogging
     Turn off logging to logfile. Default ON
 .PARAMETER LogLocation
-    Specify the log file name, default ".\GenLeCertForNS.txt"
+    Specify the log file name, default "<Current Script Dir>\GenLeCertForNS_log.txt"
 .PARAMETER LogLevel
     The Log level you want to have specified.
     With LogLevel: Error; Only Error (E) data will be written or shown.
@@ -143,14 +128,7 @@
     Removing ALL the test certificates from your ADC.
 .EXAMPLE
     .\GenLeCertForNS.ps1 -ConfigFile ".\GenLe-Config.json"
-    Running the script with previously saved parameters. To create a test certificate
-.EXAMPLE
-    .\GenLeCertForNS.ps1 -ConfigFile ".\GenLe-Config.json" -Production
-    Running the script with previously saved parameters. To create a Production (trusted) certificate
-.EXAMPLE
-    .\GenLeCertForNS.ps1 -CreateUserPermissions -NSCPName script-GenLeCertForNS -CreateApiUser -ApiUsername GenLEUser -ApiPassword P@ssw0rd! -ManagementURL https://citrixadc.domain.local -Username nsroot -Password nsr00t! -CsVipName cs_domain2.com_http,cs_domain2.com_http,cs_domain3.com_http
-    Create a Group (Command Policy) with limited user permissions required to run the script and a user that will be member of that group.
-    With all VIPs that can be used by the script.
+    Running the script with previously saved parameters.
 .NOTES
     File Name : GenLeCertForNS.ps1
     Version   : v2.8.0
@@ -342,7 +320,7 @@ param(
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
     [alias("NSCsVipName")]
-    [String[]]$CsVipName,
+    [String]$CsVipName,
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
@@ -673,7 +651,7 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
                     $LogHeader += "`r`n"
                     $LogHeader += $ExtraHeaderInfo.TrimEnd("`r`n")
                 }
-                $LogHeader += "`r`n`r`n**********************`r`n`r`n"
+                $LogHeader += "`r`n**********************`r`n`r`n"
 
             } else {
                 $LogHeader = $null
@@ -1160,6 +1138,7 @@ function Get-ADCCurrentCertKeyInfo {
     }
 }
 
+
 function Invoke-CheckScriptVersions {
     [CmdletBinding()]
     param (
@@ -1218,33 +1197,34 @@ function ConvertTo-PlainText {
     }
 }
 
-function Invoke-RegisterError {
+function Register-FatalError {
     [cmdletbinding()]
     param (
         [Parameter(Position = 0)]
         [ValidateNotNullOrEmpty()]
-        [int]$ExitCode = 0,
+        [int]$ExitCode,
 
         [Parameter(Position = 1)]
-        [String]$ErrorMessage = $null,
+        [String]$ExitMessage = $null,
 
         [Switch]$ExitNow
     )
-    Write-ToLogFile -E -C Invoke-RegisterError -M "[$ExitCode] $ExitMessage"
+    if (Script:ScriptFatalError.Error) {
+        $ExitMessage = $Script:ScriptFatalError.Message
+        $ExitCode = $Script:ScriptFatalError.ExitCode
+    }
+    Write-ToLogFile -E -C Register-FatalError -M "[$ExitCode] $ExitMessage"
     if (-Not $ExitNow) {
-        Write-ToLogFile -E -C Invoke-RegisterError -M "Registering error only, continuing to cleanup."
-        $Script:SessionRequestObject.ErrorOccurred++
-        $Script:SessionRequestObject.ExitCode = $ExitCode
-        if (-Not [String]::IsNullOrEmpty($ErrorMessage)) {
-            $Script:SessionRequestObject.Messages += $ErrorMessage
-        }
+        Write-ToLogFile -E -C Register-FatalError -M "Registering error only, continuing to cleanup."
+        $Script:ScriptFatalError.Message = $ExitMessage
+        $Script:ScriptFatalError.ExitCode = $ExitCode
+        $Script:ScriptFatalError.Error = $true
         $Script:CleanADC = $true
     } else {
         Write-Error $ExitMessage
         TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
     }
 }
-
 function TerminateScript {
     [cmdletbinding()]
     param (
@@ -1365,11 +1345,11 @@ function Invoke-ADCCleanup {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
             try {
                 $Filters = @{"policyname" = "$($Parameters.settings.CspName)" }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($CertRequest.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($Parameters.settings.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
             } catch { }
             if ($response.csvserver_cspolicy_binding.policyname -eq $($Parameters.settings.CspName)) {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch LoadBalance Binding."
-                $Arguments = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; }
+                $Arguments = @{"name" = "$($Parameters.settings.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; }
                 $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
             } else {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
@@ -1562,22 +1542,22 @@ function Invoke-AddInitialADCConfig {
             try {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($Parameters.settings.CsVipName)
             } catch {
                 $ExceptMessage = $_.Exception.Message
                 Write-Host -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available? Exception Message: $ExceptMessage"
-                Write-Error "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
-                TerminateScript 1 "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
+                Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$($Parameters.settings.CsVipName)`" not available? Exception Message: $ExceptMessage"
+                Write-Error "Could not find/read out the content switch `"$($Parameters.settings.CsVipName)`" not available?"
+                TerminateScript 1 "Could not find/read out the content switch `"$($Parameters.settings.CsVipName)`" not available?"
                 if ($ExceptMessage -like "*(404) Not Found*") {
-                    Write-Host -ForeGroundColor Red "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                    TerminateScript 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
+                    Write-Host -ForeGroundColor Red "The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist!"
+                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist!"
+                    TerminateScript 1 "The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist!"
                 } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                    Write-Host -ForeGroundColor Red "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`"."
+                    Write-Host -ForeGroundColor Red "Unknown error found while checking the Content Switch: `"$($Parameters.settings.CsVipName)`"."
                     Write-Host -ForeGroundColor Red "Error message: `"$ExceptMessage`""
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`". Exception Message: $ExceptMessage"
-                    TerminateScript 1 "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`". Exception Message: $ExceptMessage"
+                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Unknown error found while checking the Content Switch: `"$($Parameters.settings.CsVipName)`". Exception Message: $ExceptMessage"
+                    TerminateScript 1 "Unknown error found while checking the Content Switch: `"$($Parameters.settings.CsVipName)`". Exception Message: $ExceptMessage"
                 } elseif (-Not [String]::IsNullOrEmpty($ExceptMessage)) {
                     Write-Host -ForeGroundColor Red "Unknown Error, `"$ExceptMessage`""
                     Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Caught an unknown error. Exception Message: $ExceptMessage"
@@ -1719,8 +1699,8 @@ function Invoke-AddInitialADCConfig {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type cspolicy -Payload $payload -Action add
             }
             Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($CertRequest.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
-            $payload = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
+            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($Parameters.settings.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
+            $payload = @{"name" = "$($Parameters.settings.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Binding created successfully! Finished configuring the ADC"
         } catch {
@@ -1745,7 +1725,7 @@ function Invoke-CheckDNS {
         Write-Host -ForeGroundColor Yellow "Should a DNS test fail, the script will try to continue!"
         Write-Host -ForeGroundColor White "`r`nDNS Validation & Verifying ADC config"
         Write-ToLogFile -I -C Invoke-CheckDNS -M "DNS Validation & Verifying ADC config."
-        ForEach ($DNSObject in $SessionRequestObject.DNSObjects ) {
+        ForEach ($DNSObject in $DNSObjects ) {
             Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
             Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
             $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
@@ -1931,7 +1911,11 @@ if ($IPv6 -and $CertificateActions) {
 
 $PublicDnsServer = "1.1.1.1"
 
-$SessionRequestObjects = @()
+$ScriptFatalError = [PSCustomObject]@{
+    Error    = $false
+    ExitCode = 0
+    Message  = $Null
+}
 
 if (-Not [String]::IsNullOrEmpty($SAN)) {
     if ($SAN -is [Array]) {
@@ -2009,9 +1993,9 @@ try {
             $ConfigFile = Join-Path -Path $ScriptRoot -ChildPath $(Split-Path -Path $ConfigFile -Leaf -ErrorAction SilentlyContinue ) -ErrorAction SilentlyContinue
         }
         Write-Host -ForeGroundColor White -NoNewLine " -Config File...........: "
-        Write-Host -ForeGroundColor Cyan -NoNewLine "$ConfigFile"
+        Write-Host -ForeGroundColor Cyan "$ConfigFile"
         if (Test-Path -Path $ConfigFile) {
-            Write-Host -ForeGroundColor Green " (found)"
+            Write-Host -ForeGroundColor Green "Found"
             try {
                 if ($AutoRun) {
                     Write-Host -ForeGroundColor White -NoNewLine " -Reading Config File...: "
@@ -2036,7 +2020,6 @@ try {
             }
             Write-Host -ForeGroundColor Green " Done"
         } else {
-            ""
             Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
             Write-Host -ForeGroundColor Cyan "Not Found, creating new ConfigFile"
             if ($AutoRun) {
@@ -2074,10 +2057,6 @@ if ($AutoRun) {
         $ADCCredentialUsername = $Parameters.settings.ADCCredentialUsername
         $ADCCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword)
         $Credential = New-Object -TypeName PSCredential -ArgumentList $ADCCredentialUsername, $ADCCredentialPassword
-        if (-Not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
-            Invoke-AddUpdateParameter -Object $Parameters.settings -Name ADCCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $ADCCredentialPassword)
-            $SaveConfig = $true
-        }
     } catch {
         Throw "Could not read ADC credentials"
     }
@@ -2085,10 +2064,6 @@ if ($AutoRun) {
         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
         $PfxPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.PfxPassword)
         $PfxPasswordGenerated = $false
-        if (-Not $Parameters.settings.PfxPassword.IsEncrypted) {
-            Invoke-AddUpdateParameter -Object $Parameters.settings -Name PfxPassword -Value $(ConvertTo-EncryptedPassword -Object $PfxPassword)
-            $SaveConfig = $true
-        }
     } catch {
         Write-Warning "Could not read PfxPassword from ConfigFile. A new Password will be generated."
         $PfxPassword = $GeneratedPassword
@@ -2099,11 +2074,6 @@ if ($AutoRun) {
         $SMTPCredentialUsername = $Parameters.settings.SMTPCredentialUsername
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
         $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
-        if (-Not $Parameters.settings.SMTPCredentialPassword.IsEncrypted) {
-            Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $SMTPCredentialPassword)
-            $SaveConfig = $true
-        }
-
     } catch {
         $SMTPCredential = [PSCredential]::Empty
     }
@@ -2128,6 +2098,7 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcName -Value $SvcName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcDestination -Value $SvcDestination
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LbName -Value $LbName
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsVipName -Value $CsVipName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RspName -Value $RspName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RsaName -Value $RsaName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CspName -Value $CspName
@@ -2138,7 +2109,6 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value $CsVipName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
@@ -2155,7 +2125,7 @@ if ($Parameters.settings.DisableLogging) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LogLevel -Value $Global:LogLevel
 } else {
     if ($Parameters.settings.LogFile -like "*<DEFAULT>*") {
-        $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $($MyInvocation.MyCommand -Replace '.ps1', '.txt' )
+        $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $($MyInvocation.MyCommand -Replace '.ps1','.txt' )
     }
     Write-Verbose "Log $($Parameters.settings.LogFile)"
     if (((Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue) -eq ".") -or ([String]::IsNullOrEmpty($(Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue)))) {
@@ -2186,12 +2156,12 @@ $($PSBoundParameters | Out-String)
     }
 }
 
-if ($CertificateActions) {
-    if ($PfxPasswordGenerated) {
-        Write-ToLogFile -I -C ScriptVariables -M "No PfxPassword was specified therefore a new one was generated."
-    } else {
-        Write-ToLogFile -I -C ScriptVariables -M "PfxPassword was specified via parameter."
-    }
+if ($CertificateActions){
+if ($PfxPasswordGenerated) {
+    Write-ToLogFile -I -C ScriptVariables -M "No PfxPassword was specified therefore a new one was generated."
+} else {
+    Write-ToLogFile -I -C ScriptVariables -M "PfxPassword was specified via parameter."
+}
 }
 #endregion Logging
 
@@ -2389,10 +2359,106 @@ try {
     Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
 }
 
-if ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -eq 0)) ) {
+if ($CreateUserPermissions -and [String]::IsNullOrEmpty($($Parameters.settings.CsVipName))) {
     Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
     Write-Host -ForeGroundColor Red "NOT Found! This is required for Command Policy creation!"
     TerminateScript 1 "No Content Switch VIP name defined, this is required for Command Policy creation!"
+}
+
+if ($AutoRun -Or -Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL))) {
+    if (-Not [String]::IsNullOrEmpty($($Parameters.settings.CsVipName))) {
+        try {
+            Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($Parameters.settings.CsVipName)
+        } catch {
+            $ExceptMessage = $_.Exception.Message
+            Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
+        } finally {
+            if (($response.errorcode -eq "0") -and `
+                ($response.csvserver.type -eq "CONTENT") -and `
+                ($response.csvserver.curstate -eq "UP") -and `
+                ($response.csvserver.servicetype -eq "HTTP") -and `
+                ($response.csvserver.port -eq "80") ) {
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Cyan -NoNewLine "$($Parameters.settings.CsVipName)"
+                Write-Host -ForeGroundColor Green " (found)"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+                Write-Host -ForeGroundColor Green "OK"
+                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
+            } elseif ($ExceptMessage -like "*(404) Not Found*") {
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist!"
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
+                Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
+                Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
+                Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                TerminateScript 1 "The Content Switch `"$($Parameters.settings.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
+            } elseif ($ExceptMessage -like "*The remote server returned an error*") {
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
+                Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
+                Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
+                TerminateScript 1 "Unknown error found while checking the Content Switch"
+            } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Red "ERROR: Content Switch `"$($Parameters.settings.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP"
+                if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
+                }
+                Write-Host -ForeGroundColor Yellow "`r`n  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($Parameters.settings.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                TerminateScript 1 "Content Switch `"$($Parameters.settings.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+            } else {
+                Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
+                Write-Host -ForeGroundColor Green "Found"
+                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
+                Write-Host -ForeGroundColor White -NoNewLine "  -State................: "
+                if ($response.csvserver.curstate -eq "UP") {
+                    Write-Host -ForeGroundColor Green "UP"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
+                } else {
+                    Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
+                }
+                Write-Host -ForeGroundColor White -NoNewLine "  -Type.................: "
+                if ($response.csvserver.type -eq "CONTENT") {
+                    Write-Host -ForeGroundColor Green "CONTENT"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
+                } else {
+                    Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
+                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
+                }
+                if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                    Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
+                    Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
+                }
+                Write-Host -ForeGroundColor White -NoNewLine " -Data..................: "
+                Write-Host -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
+                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+                Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
+                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
+                TerminateScript 1 "Content Switch verification failed."
+            }
+        }
+    } else {
+        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
+        if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
+            Write-Host -ForeGroundColor Green "OK"
+            Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
+        } else {
+            Write-Warning "Could not verify the Citrix ADC Connection!"
+            Write-Warning "Script will continue but uploading of certificates will probably Fail"
+            Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
+        }
+    }
 }
 
 #endregion ADC-Check
@@ -2401,13 +2467,6 @@ if ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($Cs
 
 if ($CreateUserPermissions -Or $CreateApiUser) {
     ""
-    if ($CsVipName -like "*,*") {
-        $CsVipName = $CsVipName.Split(",")
-    }
-    $CSVipString = ""
-    ForEach ($VipName in $CsVipName) {
-        $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)"
-    }
     Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
     Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
     Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$NSCPName`"!"
@@ -2417,7 +2476,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-Host -ForeGroundColor White -NoNewLine " -Command Policy Name...: "
     Write-Host -ForeGroundColor Cyan "$NSCPName "
     Write-Host -ForeGroundColor White -NoNewLine " -CS VIP Name...........: "
-    Write-Host -ForeGroundColor Cyan $($CsVipName -Join ", ")
+    Write-Host -ForeGroundColor Cyan $($Parameters.settings.CsVipName)
     Write-Host -ForeGroundColor White -NoNewLine " -LB VIP Name...........: "
     Write-Host -ForeGroundColor Cyan $($Parameters.settings.LbName)
     Write-Host -ForeGroundColor White -NoNewLine " -Service Name..........: "
@@ -2430,7 +2489,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-Host -ForeGroundColor Cyan $($Parameters.settings.CspName)
     Write-Host -ForeGroundColor White -NoNewLine " -Action................: "
 
-    $CmdSpec = "(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
+    $CmdSpec = "(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^save\s+ns\s+config)|(^save\s+ns\s+config\s+.*)|(^show\s+ns\s+version)|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($Parameters.settings.CsVipName).*)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
     try {
         $Filters = @{ policyname = "$NSCPName" }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
@@ -2523,22 +2582,22 @@ if ($CreateApiUser) {
                 Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -Compress)"
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemuser -Payload $payload
                 try {
-                    Write-ToLogFile -D -C ApiUser -M "Trying to set the preferred (API) method"
-                    Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-                    $payload = @{ username = $ApiUsername; externalauth = "Disabled"; allowedmanagementinterface = @("API") }
-                    Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -Compress)"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
+                Write-ToLogFile -D -C ApiUser -M "Trying to set the preferred (API) method"
+                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+                $payload = @{ username = $ApiUsername; externalauth = "Disabled"; allowedmanagementinterface = @("API") }
+                Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -Compress)"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
                 } catch {
                     Write-ToLogFile -D -C ApiUser -M "Could not set API Command Line Interface only (Feature not supported on this version), $($_.Exception.Message)"
                     Write-Host -ForeGroundColor Yellow -NoNewLine " API Interface setting not possible."
                 }
 
-                Write-ToLogFile -I -C ApiUser -M "API User created successfully."
-                Write-Host -ForeGroundColor Green " Created"
-            } catch {
-                Write-Host -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C ApiUser -M "Caught an error while creating user. $($_Exception.Message)"
-            }
+            Write-ToLogFile -I -C ApiUser -M "API User created successfully."
+            Write-Host -ForeGroundColor Green " Created"
+        } catch {
+            Write-Host -ForeGroundColor Red " Error"
+            Write-ToLogFile -E -C ApiUser -M "Caught an error while creating user. $($_Exception.Message)"
+        }
 
         }
         Write-ToLogFile -I -C ApiUser -M "Bind Command Policy"
@@ -2673,135 +2732,25 @@ if ($CertificateActions) {
     #endregion Services
 
     if ($Parameters.certrequests.Count -gt 1) {
+        Write-Host -ForeGroundColor White "`r`n"
         Write-Host -ForeGroundColor White -NoNewline " -Nr Cert. Requests.....: "
         Write-Host -ForeGroundColor Cyan "$($Parameters.certrequests.Count)"
     }
     
     $Round = 0
-    $TotalRounds = $Parameters.certrequests.Count
-    Write-ToLogFile -I -C CertLoop -M "$TotalRounds required for all requests."
     ForEach ($CertRequest in $Parameters.certrequests) {
         $Round++
-        Write-ToLogFile -I -C "CertLoop-$($Round.ToString('00'))" -M "**************************************** $($Round.ToString('00')) ****************************************"
-        Write-ToLogFile -I -C CertLoop -M "Round: $Round / $TotalRounds"
+        Write-ToLogFile -I -C "CertRequest-$($Round.ToString('00'))" -M "**************************************** $($Round.ToString('00')) ****************************************"
+        Write-ToLogFile -I -C DNSPreCheck -M "Round: $Round / $($Parameters.certrequests.Count)"
         if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
         }
-        Write-ToLogFile -D -C CertReqVariables -M "Setting session DATE/TIME variable."
+    
+        Write-ToLogFile -D -C ScriptVariables -M "Setting session DATE/TIME variable."
         [DateTime]$ScriptDateTime = Get-Date
         [String]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
-        $SessionID = "$($SessionDateTime)_$($CertRequest.CN.Replace('.','_').ToLower())"
-        Write-ToLogFile -D -C CertReqVariables -M "Session DATE/TIME variable value: `"$SessionDateTime`"."
-        Write-ToLogFile -D -C CertReqVariables -M "Session ID value: `"$SessionID`"."
-        
-        $SessionRequestObjects += [PSCustomObject]@{
-            SessionID     = $SessionID
-            DateTime      = $ScriptDateTime
-            CN            = $CertRequest.CN
-            DNSObjects    = @()
-            ExitCode      = 0
-            ErrorOccurred = 0
-            Messages      = @()
-        }
-        $SessionRequestObject = $SessionRequestObjects | Where-Object { $_.SessionID -eq $SessionID }
-
-        if ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
-            Write-Host -ForeGroundColor White "`r`nCitrix ADC Content Switch"
-            if (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
-                try {
-                    Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
-                } catch {
-                    $ExceptMessage = $_.Exception.Message
-                    Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
-                } finally {
-                    if (($response.errorcode -eq "0") -and `
-                        ($response.csvserver.type -eq "CONTENT") -and `
-                        ($response.csvserver.curstate -eq "UP") -and `
-                        ($response.csvserver.servicetype -eq "HTTP") -and `
-                        ($response.csvserver.port -eq "80") ) {
-                        Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                        Write-Host -ForeGroundColor Cyan -NoNewLine "$($CertRequest.CsVipName)"
-                        Write-Host -ForeGroundColor Green " (found)"
-                        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                        Write-Host -ForeGroundColor Green "OK"
-                        Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
-                    } elseif ($ExceptMessage -like "*(404) Not Found*") {
-                        Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                        Write-Host -ForeGroundColor Red "ERROR: The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                        Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
-                        Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
-                        Write-Host -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available`r`n"
-                        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                        Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                        TerminateScript 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                    } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                        Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                        Write-Host -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
-                        Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
-                        Write-Host -ForeGroundColor Red "`"$ExceptMessage`"`r`n"
-                        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                        Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
-                        TerminateScript 1 "Unknown error found while checking the Content Switch"
-                    } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-                        Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                        Write-Host -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP"
-                        if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
-                            Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
-                            Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
-                        }
-                        Write-Host -ForeGroundColor Yellow "`r`n  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation.`r`n"
-                        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                        Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                        TerminateScript 1 "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                    } else {
-                        Write-Host -ForeGroundColor White -NoNewLine " -Content Switch........: "
-                        Write-Host -ForeGroundColor Green "Found"
-                        Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
-                        Write-Host -ForeGroundColor White -NoNewLine "  -State................: "
-                        if ($response.csvserver.curstate -eq "UP") {
-                            Write-Host -ForeGroundColor Green "UP"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
-                        } else {
-                            Write-Host -ForeGroundColor RED "$($response.csvserver.curstate)"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
-                        }
-                        Write-Host -ForeGroundColor White -NoNewLine "  -Type.................: "
-                        if ($response.csvserver.type -eq "CONTENT") {
-                            Write-Host -ForeGroundColor Green "CONTENT"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
-                        } else {
-                            Write-Host -ForeGroundColor RED "$($response.csvserver.type)"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
-                        }
-                        if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
-                            Write-Host -ForeGroundColor White -NoNewLine "  -Error message........: "
-                            Write-Host -ForeGroundColor Red "`"$ExceptMessage`""
-                        }
-                        Write-Host -ForeGroundColor White -NoNewLine " -Data..................: "
-                        Write-Host -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
-                        Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                        Write-Host -ForeGroundColor Red "FAILED! Exiting now`r`n"
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
-                        TerminateScript 1 "Content Switch verification failed."
-                    }
-                }
-            } else {
-                Write-Host -ForeGroundColor White -NoNewLine " -Connection............: "
-                if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
-                    Write-Host -ForeGroundColor Green "OK"
-                    Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
-                } else {
-                    Write-Warning "Could not verify the Citrix ADC Connection!"
-                    Write-Warning "Script will continue but uploading of certificates will probably Fail"
-                    Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
-                }
-            }
-        }
-
+        Write-ToLogFile -D -C ScriptVariables -M "Session DATE/TIME variable value: `"$SessionDateTime`"."
+  
         ##TODO per cert PfxPassword maybe
         
         #region DNSPreCheck
@@ -2821,7 +2770,7 @@ if ($CertificateActions) {
             Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
         } else {
             $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-            if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
+            if (([String]::IsNullOrWhiteSpace($($Parameters.settings.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
                 Write-Host -ForeGroundColor Red "`r`nERROR: The `"-CsVipName`" cannot be empty!`r`n"
                 Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
                 TerminateScript 1 "The `"-CsVipName`" cannot be empty!"
@@ -2838,20 +2787,16 @@ if ($CertificateActions) {
             }
             Write-Host -ForeGroundColor White -NoNewline " -SAN(s)................: "
             $CheckedSANs = @()
-            if (-Not [String]::IsNullOrEmpty($($CertRequest.SANs))) {
-                ForEach ($record in $CertRequest.SANs.Split(",")) {
-                    Write-Host -ForeGroundColor Yellow -NoNewline "$record"
-                    if ($record -match $fqdnExpression) {
-                        Write-Host -ForeGroundColor Green -NoNewline " $([Char]8730), "
-                        Write-ToLogFile -I -C DNSPreCheck -M "SAN Entry: $record is a valid record"
-                        $CheckedSANs += $record
-                    } else {
-                        Write-Host -ForeGroundColor Red -NoNewline " NOT a valid fqdn!"
-                        Write-Host -ForeGroundColor Yellow -NoNewline " SKIPPED, "
-                    }
+            ForEach ($record in $CertRequest.SANs.Split(",")) {
+                Write-Host -ForeGroundColor Yellow -NoNewline "$record"
+                if ($record -match $fqdnExpression) {
+                    Write-Host -ForeGroundColor Green -NoNewline " $([Char]8730), "
+                    Write-ToLogFile -I -C DNSPreCheck -M "SAN Entry: $record is a valid record"
+                    $CheckedSANs += $record
+                } else {
+                    Write-Host -ForeGroundColor Red -NoNewline " NOT a valid fqdn!"
+                    Write-Host -ForeGroundColor Yellow -NoNewline " SKIPPED, "
                 }
-            } else {
-                Write-Host -ForeGroundColor Green -NoNewline "none"
             }
             ""
             $CertRequest.SANs = $CheckedSANs -Join ","
@@ -2865,55 +2810,56 @@ if ($CertificateActions) {
             Write-Host -ForeGroundColor RED "A wildcard was found while also using the -AutoRun parameter. Only HTTP validation (no Wildcard) is allowed!"
             Break
         }
-        
-        $ResponderPrio = 10
-        $SessionRequestObject.DNSObjects += [PSCustomObject]@{
-            DNSName       = [String]$($CertRequest.CN)
-            IPAddress     = $null
-            Status        = $null
-            Match         = $null
-            SAN           = $false
-            Challenge     = $null
-            ResponderPrio = $ResponderPrio
-            Done          = $false
-        }
-        if (-not ([String]::IsNullOrEmpty($($CertRequest.SANs)))) {
-            Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
-            $SANRecords = $CertRequest.SANs.Split(",").Split(" ")
-            $SANCount = $SANRecords.Count
-            $SANRecords = $SANRecords | Select-Object -Unique
-            $CertRequest.SANs = $SANRecords -Join ","
-
-            if (-Not ($SANCount -eq $SANRecords.Count)) {
-                Write-Host -ForeGroundColor White -NoNewline " -Double Records........: "
-                Write-Host -ForeGroundColor Yellow "WARNING: There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
-                Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
-            } else {
-                Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
+        if ($CertRequest.ValidationMethod -in "http", "dns") {
+            $DNSObjects = @()
+            $ResponderPrio = 10
+            $DNSObjects += [PSCustomObject]@{
+                DNSName       = [String]$($CertRequest.CN)
+                IPAddress     = $null
+                Status        = $null
+                Match         = $null
+                SAN           = $false
+                Challenge     = $null
+                ResponderPrio = $ResponderPrio
+                Done          = $false
             }
-            Foreach ($SANEntry in $SANRecords) {
-                $ResponderPrio += 10
-                if (-Not ($SANEntry -eq $($CertRequest.CN))) {
-                    $SessionRequestObject.DNSObjects += [PSCustomObject]@{
-                        DNSName       = [String]$SANEntry
-                        IPAddress     = $null
-                        Status        = $null
-                        Match         = $null
-                        SAN           = $true
-                        Challenge     = $null
-                        ResponderPrio = [int]$ResponderPrio
-                        Done          = $false
-                    }
+            if (-not ([String]::IsNullOrEmpty($($CertRequest.SANs)))) {
+                Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
+                $SANRecords = $CertRequest.SANs.Split(",").Split(" ")
+                $SANCount = $SANRecords.Count
+                $SANRecords = $SANRecords | Select-Object -Unique
+                $CertRequest.SANs = $SANRecords -Join ","
+
+                if (-Not ($SANCount -eq $SANRecords.Count)) {
+                    Write-Host -ForeGroundColor White -NoNewline " -Double Records........: "
+                    Write-Host -ForeGroundColor Yellow "WARNING: There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
+                    Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
                 } else {
-                    ""
-                    Write-Warning "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
-                    Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
+                    Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
+                }
+                Foreach ($SANEntry in $SANRecords) {
+                    $ResponderPrio += 10
+                    if (-Not ($SANEntry -eq $($CertRequest.CN))) {
+                        $DNSObjects += [PSCustomObject]@{
+                            DNSName       = [String]$SANEntry
+                            IPAddress     = $null
+                            Status        = $null
+                            Match         = $null
+                            SAN           = $true
+                            Challenge     = $null
+                            ResponderPrio = [int]$ResponderPrio
+                            Done          = $false
+                        }
+                    } else {
+                        Write-Warning "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
+                        Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
+                    }
                 }
             }
-        }
-        Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
-        $SessionRequestObject.DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
-            Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
+            Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
+            $DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
+                Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
+            }
         }
     
         #endregion DNSPreCheck
@@ -2987,7 +2933,7 @@ if ($CertificateActions) {
     
         #region Order
     
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if (($CertRequest.ValidationMethod -in "http", "dns")) {
             if ([String]::IsNullOrEmpty($($CertRequest.FriendlyName))) {
                 $CertRequest.FriendlyName = $CertRequest.CN
             }
@@ -2996,7 +2942,7 @@ if ($CertificateActions) {
             Write-Host -ForeGroundColor Yellow -NoNewLine "*"
             try {
                 Write-ToLogFile -I -C Order -M "Trying to create a new order."
-                $domains = $SessionRequestObject.DNSObjects | Select-Object DNSName -ExpandProperty DNSName
+                $domains = $DNSObjects | Select-Object DNSName -ExpandProperty DNSName
                 $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $CertRequest.KeyLength -Force -FriendlyName $CertRequest.FriendlyName -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword)
                 Start-Sleep -Seconds 1
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
@@ -3025,11 +2971,11 @@ if ($CertificateActions) {
     
         #region DNS-Validation
     
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if (($CertRequest.ValidationMethod -in "http", "dns")) {
             Write-Host -ForeGroundColor White "`r`nDNS - Validate Records"
             Write-Host -ForeGroundColor White -NoNewLine " -Checking records......: "
             Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
-            Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+            Foreach ($DNSObject in $DNSObjects) {
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 if ($IPv6) {
                     $DNSObject.IPAddress = "::"
@@ -3103,7 +3049,7 @@ if ($CertificateActions) {
                 }
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 if ($DNSObject.SAN) {
-                    $CNObject = $SessionRequestObject.DNSObjects | Where-Object { $_.SAN -eq $false }
+                    $CNObject = $DNSObjects | Where-Object { $_.SAN -eq $false }
                     Write-ToLogFile -I -C DNS-Validation -M "All IP Addresses must match, checking..."
                     if ($DNSObject.IPAddress -match $CNObject.IPAddress) {
                         Write-ToLogFile -I -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" matches to `"$($CNObject.IPAddress)/($($CNObject.DNSName))`"."
@@ -3120,23 +3066,23 @@ if ($CertificateActions) {
                 }
             }
             Write-ToLogFile -D -C DNS-Validation -M "SAN Objects:"
-            $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress, Status, Match | ForEach-Object {
+            $DNSObjects | Select-Object DNSName, IPAddress, Status, Match | ForEach-Object {
                 Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
             }
             Write-Host -ForeGroundColor Green " Ready"
         }
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -eq "http") {
             Write-Host -ForeGroundColor White -NoNewLine " -Checking for errors...: "
             Write-ToLogFile -I -C DNS-Validation -M "Checking for invalid DNS Records."
-            $InvalidDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.Status -eq $false }
-            $SkippedDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.IPAddress -eq "Skipped" }
+            $InvalidDNS = $DNSObjects | Where-Object { $_.Status -eq $false }
+            $SkippedDNS = $DNSObjects | Where-Object { $_.IPAddress -eq "Skipped" }
             if ($InvalidDNS) {
                 Write-Host -ForeGroundColor Red " Error"
                 Write-ToLogFile -E -C DNS-Validation -M "Invalid DNS object(s):"
                 $InvalidDNS | Select-Object DNSName, Status | ForEach-Object {
                     Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
                 }
-                $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress -First 1 | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
+                $DNSObjects | Select-Object DNSName, IPAddress -First 1 | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
                 $InvalidDNS | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Red "$_" }
                 Write-Error -Message "Invalid (not registered?) DNS Record(s) found!"
                 TerminateScript 1 "Invalid (not registered?) DNS Record(s) found!"
@@ -3151,17 +3097,17 @@ if ($CertificateActions) {
                 }
             }
             Write-ToLogFile -I -C DNS-Validation -M "Checking non-matching DNS Records"
-            $DNSNoMatch = $SessionRequestObject.DNSObjects | Where-Object { $_.Match -eq $false }
+            $DNSNoMatch = $DNSObjects | Where-Object { $_.Match -eq $false }
             if ($DNSNoMatch -and (-not $($Parameters.settings.DisableIPCheck))) {
                 Write-Host -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C DNS-Validation -M "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))"
+                Write-ToLogFile -E -C DNS-Validation -M "Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))"
                 $DNSNoMatch | Select-Object DNSName, Match | ForEach-Object {
                     Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
                 }
-                $SessionRequestObject.DNSObjects[0] | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
+                $DNSObjects[0] | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Green "$_" }
                 $DNSNoMatch | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-Host -ForeGroundColor Red "$_" }
-                Write-Error "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
-                TerminateScript 1 "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
+                Write-Error "Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))."
+                TerminateScript 1 "Non-matching records found, must match to `"$($DNSObjects[0].DNSName)`" ($($DNSObjects[0].IPAddress))."
             } elseif ($($Parameters.settings.DisableIPCheck)) {
                 Write-ToLogFile -I -C DNS-Validation -M "IP Addresses checking was skipped."
             } else {
@@ -3174,7 +3120,7 @@ if ($CertificateActions) {
     
         #region CheckOrderValidation
     
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -eq "http") {
             Write-ToLogFile -I -C CheckOrderValidation -M "Checking if validation is required."
             $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
             $ValidationRequired = $PAOrderItems | Where-Object { $_.status -ne "valid" }
@@ -3198,28 +3144,28 @@ if ($CertificateActions) {
     
         #region ConfigureADC
     
-        if (($ADCActionsRequired -and ($CertRequest.ValidationMethod -eq "http")) -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($ADCActionsRequired -and ($CertRequest.ValidationMethod -eq "http")) {
             Invoke-AddInitialADCConfig
         }
         #endregion ConfigureADC
     
         #region CheckDNS
-        if (($ADCActionsRequired) -and ($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+    
+        if (($ADCActionsRequired) -and ($CertRequest.ValidationMethod -eq "http")) {
             Invoke-CheckDNS
         }
         #endregion CheckDNS
     
         #region OrderValidation
-
-
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+    
+        if ($CertRequest.ValidationMethod -eq "http") {
             Write-ToLogFile -I -C OrderValidation -M "Configuring the ADC Responder Policies/Actions required for the validation."
             Write-ToLogFile -D -C OrderValidation -M "PAOrderItems:"
             $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
                 Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
             }
             Write-Host -ForeGroundColor White "`r`nADC - Order Validation"
-            foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+            foreach ($DNSObject in $DNSObjects) {
                 $ADCKeyAuthorization = $null
                 $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
                 Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
@@ -3260,7 +3206,7 @@ if ($CertificateActions) {
                                 } catch {
                                     Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
                                     Write-Host -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
-                                    Invoke-RegisterError 1 "Error while submitting the Challenge."
+                                    Register-FatalError 1 "Error while submitting the Challenge."
                                     Break
                                 }
                                 Write-Host -ForeGroundColor Green " Ready"
@@ -3270,27 +3216,27 @@ if ($CertificateActions) {
                                 ##TODO Find out why this object is made null here
                                 #$ValidationMethod = $null
                                 Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                                Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
+                                Register-FatalError 1 "Failed to bind Responder Policy to Load Balance VIP"
                                 Break
                             }
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
                             Write-Host -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
                             Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                            Invoke-RegisterError 1 "Failed to add Responder Policy"
+                            Register-FatalError 1 "Failed to add Responder Policy"
                             Break
                         }
                     } catch {
                         Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
                         Write-Host -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
                         Write-Host -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                        Invoke-RegisterError 1 "Failed to add Responder Action"
+                        Register-FatalError 1 "Failed to add Responder Action"
                         Break
                     }
                 }
             }
-
-            if ($SessionRequestObject.ExitCode -eq 0) {
+    
+            if (-Not $ScriptFatalError.Error) {
                 Write-Host -ForeGroundColor White "`r`nWaiting for Order completion"
                 Write-Host -ForeGroundColor White -NoNewLine " -Completion............: "
                 Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
@@ -3332,14 +3278,11 @@ if ($CertificateActions) {
                         Write-Host -ForeGroundColor Red " ERROR [$($Item.status)]"
                     }
                     Write-Host -ForegroundColor Red "`r`nERROR: There are some invalid items"
-                    Invoke-RegisterError 1 "There are some invalid items"
+                    Register-FatalError 1 "There are some invalid items"
                 } else {
                     Write-Host -ForeGroundColor Green " Completed"
                     Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
                 }
-            } else {
-                Write-ToLogFile -D -C OrderValidation -M "Skipped Order Completion, Exit Code: $($SessionRequestObject.ExitCode)"
-                $CertRequestResult | ConvertTo-Json
             }
             #endregion OrderValidation
 
@@ -3352,14 +3295,9 @@ if ($CertificateActions) {
             #endregion CleanupADC
 
             #region ExitIfErrors
-            ##ToDo Cleanup
-            if ($Script:CertReq.ErrorOccurred -gt 0) {
-                if ($AutoRun) {
-                    Invoke-RegisterError 2 "To many errors found, ending the request early!"
-                    Break
-                } else {
-                    Invoke-RegisterError -ExitNow
-                }
+    
+            if ($ScriptFatalError.Error) {
+                Register-FatalError -ExitNow
             }
     
             #endregion ExitIfErrors
@@ -3367,7 +3305,7 @@ if ($CertificateActions) {
     
         #region DNSChallenge
     
-        if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -eq "dns") {
             $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
             $TXTRecords = $PAOrderItems | Select-Object fqdn, `
             @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
@@ -3446,10 +3384,10 @@ if ($CertificateActions) {
     
         #region FinalizingOrder
     
-        if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -in "dns") {
             Write-ToLogFile -I -C FinalizingOrder -M "Check if DNS Records need to be validated."
             Write-Host -ForeGroundColor White "`r`nSending Acknowledgment"
-            Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+            Foreach ($DNSObject in $DNSObjects) {
                 Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
                 Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName)"
                 Write-ToLogFile -I -C FinalizingOrder -M "Validating item: `"$($DNSObject.DNSName)`"."
@@ -3489,7 +3427,7 @@ if ($CertificateActions) {
                 Write-Host -ForeGroundColor White " -Attempt...............: $i"
                 Write-ToLogFile -I -C FinalizingOrder -M "Validation attempt: $i"
                 $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                Foreach ($DNSObject in $DNSObjects) {
                     if ($DNSObject.Done -eq $false) {
                         Write-Host -ForeGroundColor White -NoNewLine " -DNS Hostname..........: "
                         Write-Host -ForeGroundColor Cyan "$($DNSObject.DNSName)"
@@ -3525,7 +3463,7 @@ if ($CertificateActions) {
                         $PAOrderItem = $null
                     }
                 }
-                if (-NOT ($SessionRequestObject.DNSObjects | Where-Object { $_.Done -eq $false })) {
+                if (-NOT ($DNSObjects | Where-Object { $_.Done -eq $false })) {
                     Write-ToLogFile -I -C FinalizingOrder -M "All items validated."
                     if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "invalid" }) {
                         Write-Host -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
@@ -3546,7 +3484,7 @@ if ($CertificateActions) {
             }
         }
     
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -in "http", "dns") {
             Write-Host -ForeGroundColor White "`r`nCertificates"
             Write-Host -ForeGroundColor White -NoNewLine " -Status................: "
             Write-ToLogFile -I -C FinalizingOrder -M "Checking if order is ready."
@@ -3556,29 +3494,25 @@ if ($CertificateActions) {
             if ($Order.status -eq "ready") {
                 Write-ToLogFile -I -C FinalizingOrder -M "Order is ready."
             } else {
-                Invoke-RegisterError 1 "Order not ready! Order state: $($Order.status)"
-                Write-Host -ForeGroundColor Red " Error, order not ready! Order state: $($Order.status)"
-                Write-ToLogFile -E -C FinalizingOrder -M "Order is still not ready, validation failed?"
+                Write-ToLogFile -I -C FinalizingOrder -M "Order is still not ready, validation failed?" -Verbose
             }
-            if ($SessionRequestObject.ExitCode -eq 0) {
-                Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
-                try {
-                    $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction Stop
-                    Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
-                    Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
-                } catch {
-                    Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
-                }
-                Write-Host -ForeGroundColor Yellow -NoNewLine "*"
-                Start-Sleep -Seconds 1
+            Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
+            try {
+                $NewCertificates = New-PACertificate -Domain $($DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction Stop
+                Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
+                Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
+            } catch {
+                Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
             }
+            Write-Host -ForeGroundColor Yellow -NoNewLine "*"
+            Start-Sleep -Seconds 1
         }
     
         #endregion FinalizingOrder
     
         #region CertFinalization
     
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -in "http", "dns") {
             Write-Host -ForeGroundColor Yellow -NoNewLine "*"
             $CertificateAlias = "CRT-SAN-$SessionDateTime-$($CertRequest.CN.Replace('*.',''))"
             $CertificateDirectory = Join-Path -Path $($CertRequest.CertDir) -ChildPath "$CertificateAlias"
@@ -3663,7 +3597,7 @@ if ($CertificateActions) {
     
         #region ADC-CertUpload
     
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+        if ($CertRequest.ValidationMethod -in "http", "dns") {
             try {
                 Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                 Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the certificate to the Citrix ADC."
@@ -3725,7 +3659,7 @@ if ($CertificateActions) {
                     $ADCCertKeyUpdating = $true
                 } else {
                     Write-ToLogFile -I -C ADC-CertUpload -M "No existing certificate found on the ADC that needs to be updated."
-                    $CertRequest.RemovePrevious = $false
+                    $RemovePrevious = $false
                     if (-Not [String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
                         $CertificateCertKeyName = $($CertRequest.CertKeyNameToUpdate)
                         Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$($CertRequest.CertKeyNameToUpdate)`""
@@ -3752,18 +3686,17 @@ if ($CertificateActions) {
                     Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is lower than 12, converting the Pfx certificate to a pem file ($CertificatePemFileName)"
                     $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(ConvertTo-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
-                    $payload = @{certkey = "$CertificateCertKeyName"; cert = "$CertificatePemFileName"; key = $CertificatePemFileName; password = "true"; inform = "PEM"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
+                    $payload = @{certkey = "$CertificateCertKeyName"; cert = "$($CertificatePemFileName)"; key = $CertificatePemFileName; password = true; inform = PEM; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
                 } else {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is higher than 12, using Pfx certificates"
-                    $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePfxFileName; password = "true"; inform = "PFX"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
+                    $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePemFileName; password = "true"; inform = "PFX"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
                 }
                 try {
-                    if ($ADCCertKeyUpdating) {
+                    if ($ADCCertKeyUpdating -And $RemovePrevious) {
                         Write-Host -ForeGroundColor Yellow -NoNewLine "*"
                         Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
                         Write-ToLogFile -I -C ADC-CertUpload -M "Updated successfully."
-                        if ($CertRequest.RemovePrevious) {
+                        if ($RemovePrevious) {
                             try {
                                 Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was specified, retrieving files."
                                 $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.cert)"; filelocation = "/nsconfig/ssl/" }
@@ -3791,8 +3724,6 @@ if ($CertificateActions) {
                             } catch {
                                 Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
                             }
-                        } else {
-                            Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was NOT specified, not removing previous files."
                         }
                     } else {
                         Write-ToLogFile -I -C ADC-CertUpload -M "Add the certificate and key to the ADC config."
@@ -3846,16 +3777,17 @@ if ($CertificateActions) {
                 Write-Host -ForeGroundColor Cyan $CertificatePfxFileName
                 Write-Host -ForeGroundColor White -NoNewline " -PFX (with Chain)......: "
                 Write-Host -ForeGroundColor Cyan $CertificatePfxWithChainFileName
+                ""
                 Write-Host -ForeGroundColor White -NoNewline " -Certificate State.....: "
-                Write-Host -ForeGroundColor Green "Finished with the certificate for CN: $($CertRequest.CN)!"
+                Write-Host -ForeGroundColor Green "Finished with the certificates!"
                 Write-ToLogFile -I -C ADC-CertUpload -M "Keysize: $($CertRequest.KeyLength)"
                 Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
                 Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
                 Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
                 Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
                 Write-ToLogFile -I -C ADC-CertUpload -M "PFX (with Chain): $CertificatePfxWithChainFileName"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificate for CN: $($CertRequest.CN)!"
-
+                Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificates!"
+    
                 $MailData += "Certificates stored in: $CertificateDirectory"
                 try {
                     $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
@@ -3932,6 +3864,7 @@ if ($CertificateActions) {
     
                 #endregion IISActions
     
+                ""
                 if ($CertRequest.ValidationMethod -eq "dns") {
                     Write-Host -ForegroundColor Magenta "`r`n********************************************************************"
                     Write-Host -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
@@ -3958,16 +3891,11 @@ if ($CertificateActions) {
                 Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                 TerminateScript 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
             }
-            if ($SessionRequestObject.ErrorOccurred -gt 0 ) {
-                ""
-                Write-Warning "There were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!"
-                $MailData += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
-            }
-
         }
     
         #endregion ADC-CertUpload
     } #END Loop
+    
 }
 
 #region CleanupADC
@@ -4116,21 +4044,10 @@ if ($SaveConfig -and (-Not [String]::IsNullOrEmpty($ConfigFile))) {
         Write-ToLogFile -E -C Final-Actions -M "Saving failed! Exception Message: $($_.Exception.Message)"
         Write-Host -ForegroundColor Red "Could not write the Parameters to `"$ConfigFile`"`r`nException Message: $($_.Exception.Message)"
     }
-} elseif ($SaveConfig -and ([String]::IsNullOrEmpty($ConfigFile))) {
+} elseif ($SaveConfig-and ([String]::IsNullOrEmpty($ConfigFile))) {
     Write-ToLogFile -D -C Final-Actions -M "There were unsaved changes, but no ConfigFile was defined."
 } else {
     Write-ToLogFile -D -C Final-Actions -M "No ConfigFile was defined, nothing will be saved."
-}
-
-$RequestsWithErrors = $SessionRequestObjects | Where-Object { $_.ErrorOccurred -gt 0 }
-if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
-    $ExitCode = 0
-    ForEach ($FailedItem in $RequestsWithErrors) {
-        Write-Error "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
-        Write-ToLogFile -E -C Final-Actions -M "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
-        $ExitCode = $FailedItem.ExitCode
-    }
-    TerminateScript $ExitCode "There were one or more errors, please check the log or rerun with the `"-LogLevel Debug`" option!"
 }
 
 TerminateScript 0
