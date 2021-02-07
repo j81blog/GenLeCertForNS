@@ -158,7 +158,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.8.2
+    Version   : v2.8.3
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -434,7 +434,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.8.2"
+$ScriptVersion = "2.8.3"
 $PoshACMEVersion = "4.2.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -2232,7 +2232,7 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name EmailAddress -Value $EmailAddress
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name KeyLength -Value $KeyLength
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ValidationMethod -Value $null
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ValidationMethod -Value $ValidationMethod
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertExpires -Value $null
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RenewAfter -Value $null
     }
@@ -2906,6 +2906,16 @@ if ($CertificateActions) {
             $CertRequest.ValidationMethod = "dns"
             $Parameters.settings.DisableIPCheck = $true
             Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
+        } elseif ($CertRequest.ValidationMethod -eq "dns") {
+            $SaveConfig = $false
+            $Parameters.settings.DisableIPCheck = $true
+            Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
+            Write-DisplayText -Line "CN"
+            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.CN)"
+            Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN)"
+            Write-DisplayText -Line "SAN(s)"
+            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.SANs)"
+            Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
         } else {
             $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
             if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
@@ -3601,7 +3611,7 @@ if ($CertificateActions) {
                             switch ($PAOrderItem.DNS01Status.ToLower()) {
                                 "pending" {
                                     Write-DisplayText -ForeGroundColor Yellow "$($PAOrderItem.DNS01Status)"
-                                }
+                               }
                                 "invalid" {
                                     $DNSObject.Done = $true
                                     Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.DNS01Status)"
@@ -3638,7 +3648,7 @@ if ($CertificateActions) {
                     break
                 }
                 Write-ToLogFile -I -C FinalizingOrder -M "Waiting, round: $i"
-                Start-Sleep -Seconds 1
+                Start-Sleep -Seconds 15
                 $i++
                 Write-DisplayText -Blank
             }
