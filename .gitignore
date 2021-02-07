@@ -17,3 +17,6 @@
 
 # ignore Visual Studio Code settings
 .vscode
+
+#custom
+Get-LECertForADC.ps1

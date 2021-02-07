@@ -36,11 +36,18 @@ SET OPTIONS=%OPTIONS% -NSCsVipName "cs_domain.com_http"
 SET OPTIONS=%OPTIONS% -NSPassword "P@ssw0rd"
 SET OPTIONS=%OPTIONS% -NSUsername "nsroot"
 SET OPTIONS=%OPTIONS% -NSCertNameToUpdate "san_domain_com"
+SET OPTIONS=%OPTIONS% -LogLevel Debug
 rem SET OPTIONS=%OPTIONS% -Production
-SET OPTIONS=%OPTIONS% -Verbose
 
 NOTE: Use the "-Production" only if you're sure everything works, you can only use the Let's Encrypt production server 5 times per week.
 NOTE: Use the "-Verbose" parameter to get diagnostic output
+
+rem ===== Auto Run Example ====
+
+SET OPTIONS=%OPTIONS% -AutoRun
+SET OPTIONS=%OPTIONS% -ConfigFile "LetsEncryptCerificates.json"
+SET OPTIONS=%OPTIONS% -Production
+
 
 rem ===== End Help Example =====
 
@@ -56,7 +63,10 @@ SET OPTIONS=%OPTIONS% -NSCsVipName "cs_domain.com_http"
 SET OPTIONS=%OPTIONS% -NSPassword "P@ssw0rd"
 SET OPTIONS=%OPTIONS% -NSUsername "nsroot"
 SET OPTIONS=%OPTIONS% -NSCertNameToUpdate "san_domain_com"
+SET OPTIONS=%OPTIONS% -LogFile "le-certificates.txt"
+SET OPTIONS=%OPTIONS% -LogLevel Info
+rem SET OPTIONS=%OPTIONS%  -ConfigFile ".\GenLe-Config.json"
+rem SET OPTIONS=%OPTIONS% -DisableIPCheck
 rem SET OPTIONS=%OPTIONS% -Production
-SET OPTIONS=%OPTIONS% -Verbose
 
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File "%~dp0GenLeCertForNS.ps1" %OPTIONS%

@@ -145,23 +145,25 @@
     .\GenLeCertForNS.ps1 -RemoveTestCertificates -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot"
     Removing ALL the test certificates from your ADC.
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -ConfigFile ".\GenLe-Config.json"
-    Running the script with previously saved parameters. To create a test certificate
+    .\GenLeCertForNS.ps1 -AutoRun -ConfigFile ".\GenLe-Config.json"
+    Running the script with previously saved parameters. To create a test certificate.
+    NOTE: you can create the json file by specifying the -ConfigFile ".\GenLe-Config.json" parameter with your previous parameters
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -ConfigFile ".\GenLe-Config.json" -Production
+    .\GenLeCertForNS.ps1 -AutoRun -ConfigFile ".\GenLe-Config.json" -Production
     Running the script with previously saved parameters. To create a Production (trusted) certificate
+    NOTE: you can create the json file by specifying the -ConfigFile ".\GenLe-Config.json" parameter with your previous parameters
 .EXAMPLE
     .\GenLeCertForNS.ps1 -CreateUserPermissions -NSCPName script-GenLeCertForNS -CreateApiUser -ApiUsername GenLEUser -ApiPassword P@ssw0rd! -ManagementURL https://citrixadc.domain.local -Username nsroot -Password nsr00t! -CsVipName cs_domain2.com_http,cs_domain2.com_http,cs_domain3.com_http
     Create a Group (Command Policy) with limited user permissions required to run the script and a user that will be member of that group.
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.8.1
+    Version   : v2.8.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 3.15.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.2.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
@@ -432,8 +434,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.8.1"
-$PoshACMEVersion = "3.17.0"
+$ScriptVersion = "2.8.2"
+$PoshACMEVersion = "4.2.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -978,7 +980,7 @@ function Connect-ADC {
         [Switch]$PassThru
     )
     # Based on https://github.com/devblackops/NetScaler
-    try { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." } catch { }
+    try { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
     if ($ManagementURL -like "https://*") {
         if (-Not ("TrustAllCertsPolicy" -as [type])) {
             Add-Type -TypeDefinition @"
@@ -1021,11 +1023,11 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
         $response = Invoke-RestMethod @params
 
         if ($response.severity -eq 'ERROR') {
-            try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { }
+            try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
             Write-Error "Error. See log"
             TerminateScript 1 "Error. See log"
         } else {
-            try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { }
+            try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
         }
     } catch [Exception] {
         throw $_
@@ -1037,7 +1039,7 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
         Version       = "UNKNOWN";
     }
     try {
-        try { Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version" } catch { }
+        try { Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
         $params = @{
             Uri           = "$ManagementURL/nitro/v1/config/nsversion"
             Method        = 'GET'
@@ -1047,15 +1049,15 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
             Verbose       = $false
         }
         $response = Invoke-RestMethod @params
-        try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
+        try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
         $version = $response.nsversion.version.Split(",")[0]
         if (-not ([String]::IsNullOrWhiteSpace($version))) {
             $session.version = $version
         }
         try { Write-ToLogFile -I -C Connect-ADC -M "Connected" } catch { }
-        try { Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)" } catch { }
+        try { Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
     } catch {
-        try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { }
+        try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
         try { Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
     }
     if ($PassThru) {
@@ -1939,11 +1941,6 @@ function Write-DisplayText {
         [Parameter(ParameterSetName = "Message")]
         [System.ConsoleColor]$ForeGroundColor = "White",
         
-        [Parameter(ParameterSetName = "Title")]
-        [Parameter(ParameterSetName = "Line")]
-        [Parameter(ParameterSetName = "Message")]
-        [Switch]$Log,
-
         [Parameter(ParameterSetName = "Line")]
         [Parameter(ParameterSetName = "Message")]
         [Parameter(ParameterSetName = "Blank")]
@@ -1955,7 +1952,7 @@ function Write-DisplayText {
         [Parameter(ParameterSetName = "Message")]
         [Switch]$PostBlank
     )
-    if (-Not $NoConsoleOutput) {
+    if ($NoConsoleOutput -eq $false) {
         if ($PreBlank) {
             Write-Host ""
         }
@@ -1974,9 +1971,6 @@ function Write-DisplayText {
         if ($PostBlank) {
             Write-Host ""
         } 
-    }
-    if ($Log) {
-        try { Write-ToLogFile -I -C Write-DisplayText -M "$Message" } catch { }
     }
 }
 
@@ -2022,6 +2016,8 @@ if ($IPv6 -and $CertificateActions) {
 }
 
 $PublicDnsServer = "1.1.1.1"
+
+$ManagementURL = $ManagementURL.TrimEnd('/')
 
 $SessionRequestObjects = @()
 
@@ -2100,7 +2096,7 @@ try {
         if ([String]::IsNullOrEmpty($ConfigPath) -Or $ConfigPath -eq ".") {
             $ConfigFile = Join-Path -Path $ScriptRoot -ChildPath $(Split-Path -Path $ConfigFile -Leaf -ErrorAction SilentlyContinue ) -ErrorAction SilentlyContinue
         }
-        Write-DisplayText -Title "Config File" -Log
+        Write-DisplayText -Line "Config File"
         Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$ConfigFile"
         if (Test-Path -Path $ConfigFile) {
             Write-DisplayText -ForeGroundColor Green " (found)"
@@ -2237,6 +2233,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name EmailAddress -Value $EmailAddress
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name KeyLength -Value $KeyLength
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ValidationMethod -Value $null
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertExpires -Value $null
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RenewAfter -Value $null
     }
     $SaveConfig = $true
     Write-DisplayText -ForeGroundColor Green " Done"
@@ -2358,7 +2356,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -D -C LoadModule -M "Try loading module Posh-ACME."
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 Import-Module Posh-ACME -ErrorAction Stop
-                Write-DisplayText -ForeGroundColor Green -NoNewLine " OK"
+                Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
                 Write-DisplayText -ForeGroundColor Red " Failed"
                 Write-ToLogFile -E -C LoadModule -M "Error while loading and/or installing module. Exception Message: $($_.Exception.Message)"
@@ -2371,9 +2369,6 @@ if ($CertificateActions) {
                 Write-ToLogFile -W -C LoadModule -M "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management."
                 Write-ToLogFile -W -C LoadModule -M "Posh-ACME: https://www.powershellgallery.com/packages/Posh-ACME/$PoshACMEVersion"
                 TerminateScript 1 "PackageManagement is not available please install this first or manually install Posh-ACME."
-            } finally {
-                Write-DisplayText -Line "Posh-ACME Version"
-                Write-DisplayText -ForeGroundColor Cyan "v$PoshACMEVersion"
             }
         }
     } else {
@@ -2389,6 +2384,8 @@ if ($CertificateActions) {
             TerminateScript 1 "Importing module Posh-ACME failed"
         }
     }
+    Write-DisplayText -Line "Posh-ACME Version"
+    Write-DisplayText -ForeGroundColor Cyan "v$PoshACMEVersion"
     Write-ToLogFile -I -C LoadModule -M "Posh-ACME loaded successfully."
 }
 
@@ -3419,7 +3416,17 @@ if ($CertificateActions) {
                         Write-DisplayText -Line "DNS Hostname"
                         Write-DisplayText -ForeGroundColor Cyan "$($Item.fqdn)"
                         Write-DisplayText -Line "Status"
-                        Write-DisplayText -ForeGroundColor Red " ERROR [$($Item.status)]"
+                        Write-DisplayText -ForeGroundColor Red "ERROR [$($Item.status)]"
+                        Write-DisplayText -ForeGroundColor Red -Line "Error Status | Type"
+                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status) | $($Item.challenges.error.type)"
+                        Write-DisplayText -ForeGroundColor Red -Line "Details"
+                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.detail)"
+                        Write-DisplayText -ForeGroundColor Red -Line "Hostname | Port"
+                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.hostname) | $($Item.challenges.validationRecord.port)"
+                        Write-DisplayText -ForeGroundColor Red -Line "IPAddress Used | Resolved"
+                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.addressUsed) | $($Item.challenges.validationRecord.addressesResolved -join ', ')"
+                        Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.error | ConvertTo-Json -Compress)"
+                        Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.validationRecord | ConvertTo-Json -Compress)"
                     }
                     Write-DisplayText -ForegroundColor Red "`r`nERROR: There are some invalid items"
                     Invoke-RegisterError 1 "There are some invalid items"
@@ -3657,6 +3664,10 @@ if ($CertificateActions) {
                     $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction Stop
                     Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
                     Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
+                    $PAOrder = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN)
+                    $CertRequest.CertExpires = $PAOrder.CertExpires
+                    $CertRequest.RenewAfter = $PAOrder.RenewAfter
+                    Write-ToLogFile -D -C FinalizingOrder -M "CertExpires: $($CertRequest.CertExpires) | RenewAfter: $($CertRequest.RenewAfter)"
                 } catch {
                     Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
                 }
@@ -3928,6 +3939,10 @@ if ($CertificateActions) {
                 Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.KeyLength)"
                 Write-DisplayText -Line "Certkey Name" 
                 Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
+                Write-DisplayText -Line "Certificate expires" 
+                Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
+                Write-DisplayText -Line "Renew after" 
+                Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
                 Write-DisplayText -Line "Cert Dir" 
                 Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
                 Write-DisplayText -Line "CRT Filename"
@@ -4222,7 +4237,12 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
         Write-ToLogFile -E -C Final-Actions -M "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
         $ExitCode = $FailedItem.ExitCode
     }
-    TerminateScript $ExitCode "There were one or more errors, please check the log or rerun with the `"-LogLevel Debug`" option!"
+    if ($LogLevel -eq "Debug") {
+        TerminateScript $ExitCode "There were one or more errors, please check the debug log for more info!"
+    } else {
+        TerminateScript $ExitCode "There were one or more errors, please check the log or rerun with the `"-LogLevel Debug`" option!"
+    }
+    
 }
 
 TerminateScript 0
