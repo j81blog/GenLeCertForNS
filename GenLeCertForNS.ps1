@@ -91,6 +91,8 @@
     Use an existing or save all the "current" parameters to a json file of your choosing for later reuse of the same parameters.
 .PARAMETER AutoRun
     This parameter is used to make sure you are deliberately using the parameters from the config file and run the script automatically.
+.PARAMETER ForceCertRenew
+    Specify this parameter if you want to renew certificate even though it's still valid.
 .PARAMETER IPv6
     If specified, the script will try run with IPv6 checks (EXPERIMENTAL)
 .PARAMETER UpdateIIS
@@ -111,6 +113,8 @@
     Specify the SMTP Mail server fqdn or IP-address
 .PARAMETER SMTPCredential
     Specify the Mail server credentials, only if credentials are required to send mails
+.PARAMETER LogAsAttachment
+    If you specify this parameter, the log will be attached as attachment when sending the mail.
 .PARAMETER DisableLogging
     Turn off logging to logfile. Default ON
 .PARAMETER LogLocation
@@ -158,7 +162,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.8.3
+    Version   : v2.8.4
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -330,6 +334,9 @@ param(
     [String]$SMTPServer,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Switch]$LogAsAttachment,
+
+    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
     [Switch]$DisableIPCheck,
 
     [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
@@ -429,12 +436,17 @@ param(
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $true)]
     [Switch]$AutoRun = $false,
 
+    [Parameter(ParameterSetName = "LECertificates")]
+    [Parameter(ParameterSetName = "AutoRun")]
+    [Alias('Force')]
+    [Switch]$ForceCertRenew = $false,
+
     [Switch]$NoConsoleOutput
 )
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.8.3"
+$ScriptVersion = "2.8.4"
 $PoshACMEVersion = "4.2.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1227,18 +1239,19 @@ function Invoke-RegisterError {
 
         [Switch]$ExitNow
     )
-    Write-ToLogFile -E -C Invoke-RegisterError -M "[$ExitCode] $ExitMessage"
+    Write-ToLogFile -E -C Invoke-RegisterError -M "[$ExitCode] $ErrorMessage"
     if (-Not $ExitNow) {
         Write-ToLogFile -E -C Invoke-RegisterError -M "Registering error only, continuing to cleanup."
         $Script:SessionRequestObject.ErrorOccurred++
         $Script:SessionRequestObject.ExitCode = $ExitCode
         if (-Not [String]::IsNullOrEmpty($ErrorMessage)) {
             $Script:SessionRequestObject.Messages += $ErrorMessage
+            $Script:MailData += "ERROR: $ErrorMessage"
         }
         $Script:CleanADC = $true
     } else {
-        Write-Error $ExitMessage
-        TerminateScript -ExitCode $ExitCode -ExitMessage $ExitMessage
+        Write-Error $ErrorMessage
+        TerminateScript -ExitCode $ExitCode -ExitMessage $ErrorMessage
     }
 }
 
@@ -1257,20 +1270,24 @@ function TerminateScript {
     }
     if ($Script:Parameters.settings.SendMail) {
         Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
+        $Script:MailData += "******************************"
         if (-Not ($ExitCode -eq 0)) {
-            $SMTPSubject = "GenLeCertForNS Finished with an Error - $CN"
+            $SMTPSubject = "GenLeCertForNS Finished with one or more Error(s) $((Get-Date).ToString('yyyy-MM-dd HH:mm'))"
             $SMTPBody = @"
 GenLeCertForNS Finished with an Error!
 $ExitMessage
 
 Check log for errors and more details.
+Other info:
+
+$($Script:MailData | Out-String)
 "@
         } else {
-            $SMTPSubject = "GenLeCertForNS Finished Successfully - $CN"
+            $SMTPSubject = "GenLeCertForNS Results $((Get-Date).ToString('yyyy-MM-dd HH:mm'))"
             $SMTPBody = @"
-GenLeCertForNS Finished Successfully
+GenLeCertForNS Executed:
 
-$($MailData | Out-String)
+$($Script:MailData | Out-String)
 "@
         }
         try {
@@ -1287,13 +1304,15 @@ $($MailData | Out-String)
             $message.IsBodyHTML = $false
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $message.Body = $SMTPBody
-            try {
-                $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $Parameters.settings.LogFile))
-            } catch {
-                Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
-                Write-DisplayText -ForeGroundColor Red -NoNewLine " Could not attach LogFile "
+            if ($LogAsAttachment) {
+                try {
+                    $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $Parameters.settings.LogFile))
+                } catch {
+                    Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
+                    Write-DisplayText -ForeGroundColor Red -NoNewLine " Could not attach LogFile "
+                }
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $smtp = New-Object Net.Mail.SmtpClient($($Script:Parameters.settings.SMTPServer))
             if (-Not ($SMTPCredential -eq [PSCredential]::Empty)) {
                 $smtp.Credentials = $SMTPCredential
@@ -1337,7 +1356,7 @@ function Save-ADCConfig {
     } else {
         Write-DisplayText -ForeGroundColor Yellow "NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
         Write-ToLogFile -I -C SaveADCConfig -M "ADC configuration NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
-        $MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
+        $Script:MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
     }
 }
 
@@ -1735,7 +1754,6 @@ function Invoke-AddInitialADCConfig {
 function Invoke-CheckDNS {
     [CmdletBinding()]
     param (
-        
     )
     process {
         Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: Executing some tests, can take a couple of seconds/minutes..."
@@ -1770,7 +1788,7 @@ function Invoke-CheckDNS {
             try {
                 Write-ToLogFile -I -C Invoke-CheckDNS -M "Checking if Public IP is available for external DNS testing."
                 [ref]$ValidIP = [IPAddress]::None
-                if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($($Parameters.settings.DisableIPCheck)))) {
+                if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($($CertRequest.DisableIPCheck)))) {
                     Write-ToLogFile -I -C Invoke-CheckDNS -M "Testing if the Citrix ADC (Content Switch) is configured successfully by accessing URL: `"$TestURL`" (via external DNS)."
                     $TestURL = "http://$($DNSObject.IPAddress)/.well-known/acme-challenge/XXXX"
                     $Headers = @{"Host" = "$($DNSObject.DNSName)" }
@@ -1786,7 +1804,7 @@ function Invoke-CheckDNS {
                 Write-ToLogFile -E -C Invoke-CheckDNS -M "External check failed. Exception Message: $($_.Exception.Message)"
             }
             [ref]$ValidIP = [IPAddress]::None
-            if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($($Parameters.settings.DisableIPCheck)))) {
+            if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not ($($CertRequest.DisableIPCheck)))) {
                 if ($result.RawContent -eq "HTTP/1.0 200 OK`r`n`r`nXXXX") {
                     Write-DisplayText -Line "Test (Ext. DNS)"
                     Write-DisplayText -ForeGroundColor Green "OK"
@@ -1944,8 +1962,12 @@ function Write-DisplayText {
         [Parameter(ParameterSetName = "Line")]
         [Parameter(ParameterSetName = "Message")]
         [Parameter(ParameterSetName = "Blank")]
-        [Alias("Blank")]
         [Switch]$PreBlank,
+
+        [Parameter(ParameterSetName = "Line")]
+        [Parameter(ParameterSetName = "Message")]
+        [Parameter(ParameterSetName = "Blank")]
+        [Switch]$Blank,
 
         [Parameter(ParameterSetName = "Title")]
         [Parameter(ParameterSetName = "Line")]
@@ -1956,7 +1978,9 @@ function Write-DisplayText {
         if ($PreBlank) {
             Write-Host ""
         }
-        if ($Title) {
+        if ($Blank) {
+            Write-Host ""
+        } elseif ($Title) {
             Write-Host ""
             Write-Host -ForeGroundColor $ForeGroundColor "$Message"
         } elseif ($Line) {
@@ -1965,6 +1989,8 @@ function Write-DisplayText {
                 $Message = $Message.substring(0, $($Length - 5))
             }
             Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine " -$($Message.PadRight($($Length -4), ".")): "
+        } elseif ([String]::IsNullOrEmpty($Message)) {
+            Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine "<none>"
         } elseif (-Not [String]::IsNullOrEmpty($Message)) {
             Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine "$Message"
         }
@@ -2017,9 +2043,12 @@ if ($IPv6 -and $CertificateActions) {
 
 $PublicDnsServer = "1.1.1.1"
 
-$ManagementURL = $ManagementURL.TrimEnd('/')
+if (-Not [String]::IsNullOrEmpty($ManagementURL)) {
+    $ManagementURL = $ManagementURL.TrimEnd('/')
+}
 
 $SessionRequestObjects = @()
+$Script:MailData = @()
 
 if (-Not [String]::IsNullOrEmpty($SAN)) {
     if ($SAN -is [Array]) {
@@ -2212,7 +2241,6 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialUsername -Value $SMTPCredentialUsername
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $SMTPCredentialPassword)
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPServer -Value $SMTPServer
-    Invoke-AddUpdateParameter -Object $Parameters.settings -Name DisableIPCheck -Value $([bool]::Parse($DisableIPCheck))
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcName -Value $SvcName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcDestination -Value $SvcDestination
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LbName -Value $LbName
@@ -2235,6 +2263,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ValidationMethod -Value $ValidationMethod
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertExpires -Value $null
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RenewAfter -Value $null
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ForceCertRenew -Value $ForceCertRenew
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableIPCheck -Value $([bool]::Parse($DisableIPCheck))
     }
     $SaveConfig = $true
     Write-DisplayText -ForeGroundColor Green " Done"
@@ -2414,7 +2444,7 @@ try {
             Write-DisplayText -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
             Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
         }
-        $MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
+        $Script:MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
     } else {
         Write-ToLogFile -I -C VersionInfo -M "No new Master version available"
     }
@@ -2679,7 +2709,6 @@ if (($CreateUserPermissions) -Or ($CreateApiUser)) {
 
 #region EmailSetup
 
-$MailData = @()
 if ($Parameters.settings.SendMail) {
     $SMTPError = @()
     Write-DisplayText -Title "Email Details"
@@ -2736,7 +2765,7 @@ if ($CertificateActions) {
     } else {
         $BaseService = "LE_STAGE"
         $LEText = "Test Certificates (Staging)"
-        $MailData += "IMPORTANT: This is a test certificate!"
+        $Script:MailData += "IMPORTANT: This is a test certificate!"
     }
     Posh-ACME\Set-PAServer $BaseService 6>$null
     $PAServer = Posh-ACME\Get-PAServer -Refresh
@@ -2769,1321 +2798,1446 @@ if ($CertificateActions) {
     Write-ToLogFile -I -C CertLoop -M "$TotalRounds required for all requests."
     ForEach ($CertRequest in $Parameters.certrequests) {
         $Round++
-        Write-ToLogFile -I -C "CertLoop-$($Round.ToString('00'))" -M "**************************************** $($Round.ToString('00')) ****************************************"
-        Write-ToLogFile -I -C CertLoop -M "Round: $Round / $TotalRounds"
+        Write-ToLogFile -I -C "CertLoop-$($Round.ToString('000'))" -M "**************************************** $($Round.ToString('000'))  / $($TotalRounds.ToString('000')) ****************************************"
         if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
         }
-        Write-ToLogFile -D -C CertReqVariables -M "Setting session DATE/TIME variable."
-        [DateTime]$ScriptDateTime = Get-Date
-        [String]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
-        $SessionID = "$($SessionDateTime)_$($CertRequest.CN.Replace('.','_').ToLower())"
-        Write-ToLogFile -D -C CertReqVariables -M "Session DATE/TIME variable value: `"$SessionDateTime`"."
-        Write-ToLogFile -D -C CertReqVariables -M "Session ID value: `"$SessionID`"."
-        
-        $SessionRequestObjects += [PSCustomObject]@{
-            SessionID     = $SessionID
-            DateTime      = $ScriptDateTime
-            CN            = $CertRequest.CN
-            DNSObjects    = @()
-            ExitCode      = 0
-            ErrorOccurred = 0
-            Messages      = @()
-        }
-        $SessionRequestObject = $SessionRequestObjects | Where-Object { $_.SessionID -eq $SessionID }
-
-        if ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
-            Write-DisplayText -Title "Citrix ADC Content Switch"
-            if (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
-                try {
-                    Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
-                } catch {
-                    $ExceptMessage = $_.Exception.Message
-                    Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
-                } finally {
-                    if (($response.errorcode -eq "0") -and `
-                        ($response.csvserver.type -eq "CONTENT") -and `
-                        ($response.csvserver.curstate -eq "UP") -and `
-                        ($response.csvserver.servicetype -eq "HTTP") -and `
-                        ($response.csvserver.port -eq "80") ) {
-                        Write-DisplayText -Line "Content Switch"
-                        Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$($CertRequest.CsVipName)"
-                        Write-DisplayText -ForeGroundColor Green " (found)"
-                        Write-DisplayText -Line "Connection"
-                        Write-DisplayText -ForeGroundColor Green "OK"
-                        Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
-                    } elseif ($ExceptMessage -like "*(404) Not Found*") {
-                        Write-DisplayText -Line "Content Switch"
-                        Write-DisplayText -ForeGroundColor Red "ERROR: The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                        Write-DisplayText -Line "Error message"
-                        Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
-                        Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available" -PostBlank
-                        Write-DisplayText -Line "Connection"
-                        Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                        TerminateScript 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                    } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                        Write-DisplayText -Line "Content Switch"
-                        Write-DisplayText -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
-                        Write-DisplayText -Line "Error message"
-                        Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
-                        Write-DisplayText -Line "Connection"
-                        Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
-                        TerminateScript 1 "Unknown error found while checking the Content Switch"
-                    } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-                        Write-DisplayText -Line "Content Switch"
-                        Write-DisplayText -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP"
-                        if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
-                            Write-DisplayText -Line "Error message"
-                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
-                        }
-                        Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation." -PreBlank -PostBlank
-                        Write-DisplayText -Line "Connection"
-                        Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                        TerminateScript 1 "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                    } else {
-                        Write-DisplayText -Line "Content Switch"
-                        Write-DisplayText -ForeGroundColor Green "Found"
-                        Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
-                        Write-DisplayText -Line "State"
-                        if ($response.csvserver.curstate -eq "UP") {
-                            Write-DisplayText -ForeGroundColor Green "UP"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
-                        } else {
-                            Write-DisplayText -ForeGroundColor RED "$($response.csvserver.curstate)"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
-                        }
-                        Write-DisplayText -Line "Type"
-                        if ($response.csvserver.type -eq "CONTENT") {
-                            Write-DisplayText -ForeGroundColor Green "CONTENT"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
-                        } else {
-                            Write-DisplayText -ForeGroundColor RED "$($response.csvserver.type)"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
-                        }
-                        if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
-                            Write-DisplayText -Line "Error message"
-                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
-                        }
-                        Write-DisplayText -Line "Data"
-                        Write-DisplayText -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
-                        Write-DisplayText -Line "Connection"
-                        Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
-                        TerminateScript 1 "Content Switch verification failed."
-                    }
+        $Script:MailData += "******************************"
+        $Script:MailData += "CN: $($CertRequest.CN)"
+        Write-DisplayText -Title " ============================"
+        Write-DisplayText -Title "Request $($Round.ToString('000')) / $($TotalRounds.ToString('000'))"
+        $SkipThisCertRequest = $false
+        if (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
+            try {
+                $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
+                if ((get-date) -lt $RenewAfterDate) {
+                    Write-DisplayText -Title "Current Certificate"
+                    Write-DisplayText -Line "CN"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CN)"
+                    Write-DisplayText -Line "Valid until"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
+                    Write-DisplayText -Line "Renew after"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
+                    Write-DisplayText -Line "Status"
+                    Write-DisplayText -ForeGroundColor Cyan "Still valid, request will be skipped"
+                    Write-ToLogFile -I -C CheckCertRenewal -M "$($CertRequest.CN) is still valid until $($CertRequest.CertExpires), will be replaced after $($CertRequest.RenewAfter)"
+                    $Script:MailData += "Still valid until $($CertRequest.CertExpires), will be replaced after $($CertRequest.RenewAfter)"
+                    $SkipThisCertRequest = $true
                 }
-            } else {
-                Write-DisplayText -Line "Connection"
-                if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
-                    Write-DisplayText -ForeGroundColor Green "OK"
-                    Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
-                } else {
-                    Write-Warning "Could not verify the Citrix ADC Connection!"
-                    Write-Warning "Script will continue but uploading of certificates will probably Fail"
-                    Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
-                }
+            } catch {
+                Write-ToLogFile -E -C CheckCertRenewal -M "Caught an error while validating dates, $($_.Exception.Message)"
             }
         }
-
-        ##TODO per cert PfxPassword maybe
-        
-        #region DNSPreCheck
-        [regex]$fqdnExpression = "^(?=^.{1,254}$)(^(?:(?!\d+\.|-)[a-zA-Z0-9_\-]{1,63}(?<!-)\.?)+(?:[a-zA-Z]{2,})$)+$"
-        if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
-            $SaveConfig = $false
-            Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
-            Write-ToLogFile -I -C DNSPreCheck -M "-CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
-            Write-DisplayText -Line "CN"
-            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.CN)"
-            Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN)"
-            Write-DisplayText -Line "SAN(s)"
-            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.SANs)"
-            Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
-            $CertRequest.ValidationMethod = "dns"
-            $Parameters.settings.DisableIPCheck = $true
-            Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
-        } elseif ($CertRequest.ValidationMethod -eq "dns") {
-            $SaveConfig = $false
-            $Parameters.settings.DisableIPCheck = $true
-            Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
-            Write-DisplayText -Line "CN"
-            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.CN)"
-            Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN)"
-            Write-DisplayText -Line "SAN(s)"
-            Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.SANs)"
-            Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
+        if ($SkipThisCertRequest) {
+            Write-ToLogFile -D -C CheckCertRenewal -M "Certificate Request was skipped."
         } else {
-            $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-            if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
-                Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
-                Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
-                TerminateScript 1 "The `"-CsVipName`" cannot be empty!"
-            }
-            Write-DisplayText -Title "Certificate Request [$($Round.ToString('00'))] "
-            Write-DisplayText -Line "CN"
-            Write-DisplayText -ForeGroundColor Yellow -NoNewline "$($CertRequest.CN)"
-            if ($CertRequest.CN -match $fqdnExpression) {
-                Write-DisplayText -ForeGroundColor Green " $([Char]8730)"
-                Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN) is a valid record"
-            } else {
-                Write-DisplayText -ForeGroundColor Red " NOT a valid fqdn!"
-                TerminateScript 1 "`"$($CertRequest.CN)`" is NOT a valid fqdn!"
-            }
-            Write-DisplayText -Line "SAN(s)"
-            $CheckedSANs = @()
-            if (-Not [String]::IsNullOrEmpty($($CertRequest.SANs))) {
-                ForEach ($record in $CertRequest.SANs.Split(",")) {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewline "$record"
-                    if ($record -match $fqdnExpression) {
-                        Write-DisplayText -ForeGroundColor Green -NoNewline " $([Char]8730), "
-                        Write-ToLogFile -I -C DNSPreCheck -M "SAN Entry: $record is a valid record"
-                        $CheckedSANs += $record
-                    } else {
-                        Write-DisplayText -ForeGroundColor Red -NoNewline " NOT a valid fqdn!"
-                        Write-DisplayText -ForeGroundColor Yellow -NoNewline " SKIPPED, "
-                    }
-                }
-            } else {
-                Write-DisplayText -ForeGroundColor Green -NoNewline "none"
-            }
-            Write-DisplayText -Blank
-            $CertRequest.SANs = $CheckedSANs -Join ","
-        }
-
-        Write-ToLogFile -D -C DNSPreCheck -M "ValidationMethod is set to: `"$($CertRequest.ValidationMethod)`"."
-    
-        if ($CertRequest.ValidationMethod -eq "dns" -and ($AutoRun)) {
-            Write-ToLogFile -E -C DNSPreCheck -M "You cannot use the dns validation method with the -AutoRun parameter!"
-            Write-DisplayText -Line "Wildcard"
-            Write-DisplayText -ForeGroundColor RED "A wildcard was found while also using the -AutoRun parameter. Only HTTP validation (no Wildcard) is allowed!"
-            Break
-        }
+            Write-ToLogFile -D -C CertReqVariables -M "Setting session DATE/TIME variable."
+            [DateTime]$ScriptDateTime = Get-Date
+            [String]$SessionDateTime = $ScriptDateTime.ToString("yyyyMMdd-HHmmss")
+            $SessionID = "$($SessionDateTime)_$($CertRequest.CN.Replace('.','_').ToLower())"
+            Write-ToLogFile -D -C CertReqVariables -M "Session DATE/TIME variable value: `"$SessionDateTime`"."
+            Write-ToLogFile -D -C CertReqVariables -M "Session ID value: `"$SessionID`"."
         
-        $ResponderPrio = 10
-        $SessionRequestObject.DNSObjects += [PSCustomObject]@{
-            DNSName       = [String]$($CertRequest.CN)
-            IPAddress     = $null
-            Status        = $null
-            Match         = $null
-            SAN           = $false
-            Challenge     = $null
-            ResponderPrio = $ResponderPrio
-            Done          = $false
-        }
-        if (-not ([String]::IsNullOrEmpty($($CertRequest.SANs)))) {
-            Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
-            $SANRecords = $CertRequest.SANs.Split(",").Split(" ")
-            $SANCount = $SANRecords.Count
-            $SANRecords = $SANRecords | Select-Object -Unique
-            $CertRequest.SANs = $SANRecords -Join ","
+            $SessionRequestObjects += [PSCustomObject]@{
+                SessionID     = $SessionID
+                DateTime      = $ScriptDateTime
+                CN            = $CertRequest.CN
+                DNSObjects    = @()
+                ExitCode      = 0
+                ErrorOccurred = 0
+                Messages      = @()
+            }
+            $SessionRequestObject = $SessionRequestObjects | Where-Object { $_.SessionID -eq $SessionID }
 
-            if (-Not ($SANCount -eq $SANRecords.Count)) {
-                Write-DisplayText -Line "Double Records"
-                Write-DisplayText -ForeGroundColor Yellow "WARNING: There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
-                Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
-            } else {
-                Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
-            }
-            Foreach ($SANEntry in $SANRecords) {
-                $ResponderPrio += 10
-                if (-Not ($SANEntry -eq $($CertRequest.CN))) {
-                    $SessionRequestObject.DNSObjects += [PSCustomObject]@{
-                        DNSName       = [String]$SANEntry
-                        IPAddress     = $null
-                        Status        = $null
-                        Match         = $null
-                        SAN           = $true
-                        Challenge     = $null
-                        ResponderPrio = [int]$ResponderPrio
-                        Done          = $false
-                    }
-                } else {
-                    Write-DisplayText -Blank
-                    Write-Warning "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
-                    Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
-                }
-            }
-        }
-        Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
-        $SessionRequestObject.DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
-            Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
-        }
-    
-        #endregion DNSPreCheck
-    
-        #region Registration
-    
-        if ($CertRequest.ValidationMethod -in "http", "dns") {
-            Write-DisplayText -Title "Let's Encrypt Account & Registration"
-            Write-DisplayText -Line "Registration"
-            try {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -I -C Registration -M "Try to retrieve the existing Registration."
-                $PARegistration = Posh-ACME\Get-PAAccount -List -Contact $CertRequest.EmailAddress -Refresh | Where-Object { ($_.status -eq "valid") -and ($_.KeyLength -eq $CertRequest.KeyLength) }
-                if ($PARegistration -is [system.array]) {
-                    $PARegistration = $PARegistration | Sort-Object id | Select-Object -Last 1
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)") {
-                    Write-ToLogFile -I -C Registration -M "Existing registration found, no changes necessary."
-                } else {
-                    if ([String]::IsNullOrEmpty($($PARegistration.Contact))) {
-                        $CurrentAddress = "<empty>"
-                    } else {
-                        $CurrentAddress = $PARegistration.Contact
-                    }
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    Write-ToLogFile -I -C Registration -M "Current registration `"$CurrentAddress`" is not equal to `"$($CertRequest.EmailAddress)`", setting new registration."
-                    $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
-                }
-            } catch {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -I -C Registration -M "Setting new registration to `"$($CertRequest.EmailAddress)`"."
-                try {
-                    $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
-                    Write-ToLogFile -I -C Registration -M "New registration successful."
-                } catch {
-                    Write-ToLogFile -E -C Registration -M "Error New registration failed! Exception Message: $($_.Exception.Message)"
-                    Write-DisplayText -ForeGroundColor Red "`nError New registration failed!"
-                }
-            }
-            try {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Set-PAAccount -ID $PARegistration.id | out-null
-                Write-ToLogFile -I -C Registration -M "Account $($PARegistration.id) set as default."
-            } catch {
-                Write-ToLogFile -E -C Registration -M "Could not set default account. Exception Message: $($_.Exception.Message)."
-            }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            $PARegistration = Posh-ACME\Get-PAAccount -List -Contact $($CertRequest.EmailAddress) -Refresh | Where-Object { ($_.status -eq "valid") -and ($_.KeyLength -eq $CertRequest.KeyLength) }
-            Write-ToLogFile -D -C Registration -M "Registration: $($PARegistration | ConvertTo-Json -Compress)."
-            if (-not ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)")) {
-                Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C Registration -M "User registration failed."
-                Write-Error "User registration failed"
-                TerminateScript 1 "User registration failed"
-            }
-            if ($PARegistration.status -ne "valid") {
-                Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
-                Write-Error  "Account status is $($Account.status)"
-                TerminateScript 1 "Account status is $($Account.status)"
-            } else {
-                Write-ToLogFile -I -C Registration -M "Registration ID: $($PARegistration.id), Status: $($PARegistration.status)."
-                Write-ToLogFile -I -C Registration -M "Setting Account as default for new order."
-                Posh-ACME\Set-PAAccount -ID $PARegistration.id -Force
-            }
-            Write-DisplayText -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
-        }
-    
-        #endregion Registration
-    
-        #region Order
-    
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            if ([String]::IsNullOrEmpty($($CertRequest.FriendlyName))) {
-                $CertRequest.FriendlyName = $CertRequest.CN
-            }
-        
-            Write-DisplayText -Line "Order"
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            try {
-                Write-ToLogFile -I -C Order -M "Trying to create a new order."
-                $domains = $SessionRequestObject.DNSObjects | Select-Object DNSName -ExpandProperty DNSName
-                $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $CertRequest.KeyLength -Force -FriendlyName $CertRequest.FriendlyName -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword)
-                Start-Sleep -Seconds 1
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -D -C Order -M "Order data:"
-                $PAOrder | Select-Object MainDomain, FriendlyName, SANs, status, expires, KeyLength | ForEach-Object {
-                    Write-ToLogFile -D -C Order -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $PAChallenges = $PAOrder | Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations
-                Write-ToLogFile -D -C Order -M "Challenge status: "
-                $PAChallenges | Select-Object DNSId, status, HTTP01Status, DNS01Status | ForEach-Object {
-                    Write-ToLogFile -D -C Order -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                Write-ToLogFile -I -C Order -M "Order created successfully."
-            } catch {
-                Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C Order -M "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter. "
-                Write-ToLogFile -E -C Order -M "Exception Message: $($_.Exception.Message)"
-                Write-DisplayText -ForeGroundColor Red "ERROR: Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
-                TerminateScript 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
-            }
-            Write-DisplayText -ForeGroundColor Green " Ready"
-        }
-    
-        #endregion Order
-    
-        #region DNS-Validation
-    
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-DisplayText -Title "DNS - Validate Records"
-            Write-DisplayText -Line "Checking records"
-            Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
-            Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if ($IPv6) {
-                    $DNSObject.IPAddress = "::"
-                } else {
-                    $DNSObject.IPAddress = "0.0.0.0"
-                }
-                $DNSObject.Status = $false
-                $DNSObject.Match = $false
-                try {
-                    $PAChallenge = $PAChallenges | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
-                    if ([String]::IsNullOrWhiteSpace($PAChallenge)) {
-                        Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
-                        Write-ToLogFile -E -C DNS-Validation -M "No valid Challenge found."
-                        Write-Error "No valid Challenge found"
-                        TerminateScript 1 "No valid Challenge found"
-                    } else {
-                        $DNSObject.Challenge = $PAChallenge
-                    }
-                    if ($($Parameters.settings.DisableIPCheck)) {
-                        $DNSObject.IPAddress = "NoIPCheck"
-                        $DNSObject.Match = $true
-                        $DNSObject.Status = $true
-                    } else {
-                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                        Write-ToLogFile -I -C DNS-Validation -M "Using public DNS server ($PublicDnsServer) to verify dns records."
-                        Write-ToLogFile -D -C DNS-Validation -M "Trying to get IP Address."
-                        if ($IPv6) {
-                            try {
-                                $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction Stop).IPAddress
-                            } catch {
-                                $PublicIP = (Resolve-DnsName -Server $PublicDnsServerv6 -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction SilentlyContinue).IPAddress
-                            }
-                        } else {
-                            $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
-                        }
-                        if ([String]::IsNullOrWhiteSpace($PublicIP)) {
-                            Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
-                            Write-ToLogFile -E -C DNS-Validation -M "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`"."
-                            Write-Error "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
-                            TerminateScript 1 "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
-                        } elseif ($PublicIP -is [system.array]) {
-                            Write-ToLogFile -W -C DNS-Validation -M "More than one ip address found:"
-                            $PublicIP | ForEach-Object {
-                                Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
-                            }
-                        
-                            Write-Warning "More than one ip address found`n$($PublicIP | Format-List | Out-String)"
-                            $DNSObject.IPAddress = $PublicIP | Select-Object -First 1
-                            Write-ToLogFile -W -C DNS-Validation -M "using the first one`"$($DNSObject.IPAddress)`"."
-                            Write-Warning "using the first one`"$($DNSObject.IPAddress)`""
-                        } else {
-                            Write-ToLogFile -D -C DNS-Validation -M "Saving Public IP Address `"$PublicIP`"."
-                            $DNSObject.IPAddress = $PublicIP
-                        }
-                    }
-                } catch {
-                    Write-ToLogFile -E -C DNS-Validation -M "Error while retrieving IP Address. Exception Message: $($_.Exception.Message)"
-                    Write-DisplayText -ForeGroundColor Red "Error while retrieving IP Address,"
-                    if ($DNSObject.SAN) {
-                        Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
-                        Write-DisplayText -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped"
-                        Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter. The script will continue but `"$DNSRecord`" will be skipped."
-                        $DNSObject.IPAddress = "Skipped"
-                        $DNSObject.Match = $true
-                    } else {
-                        Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
-                        Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
-                        Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter."
-                        TerminateScript 1 "You can try to re-run the script with the -DisableIPCheck parameter."
-                    }
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if ($DNSObject.SAN) {
-                    $CNObject = $SessionRequestObject.DNSObjects | Where-Object { $_.SAN -eq $false }
-                    Write-ToLogFile -I -C DNS-Validation -M "All IP Addresses must match, checking..."
-                    if ($DNSObject.IPAddress -match $CNObject.IPAddress) {
-                        Write-ToLogFile -I -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" matches to `"$($CNObject.IPAddress)/($($CNObject.DNSName))`"."
-                        $DNSObject.Match = $true
-                        $DNSObject.Status = $true
-                    } else {
-                        Write-ToLogFile -W -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" Doesn't match to `"$($CNObject.IPAddress)/($($CNObject.DNSName))`"."
-                        $DNSObject.Match = $false
-                    }
-                } else {
-                    Write-ToLogFile -I -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" is the first entry, continuing."
-                    $DNSObject.Status = $true
-                    $DNSObject.Match = $true
-                }
-            }
-            Write-ToLogFile -D -C DNS-Validation -M "SAN Objects:"
-            $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress, Status, Match | ForEach-Object {
-                Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
-            }
-            Write-DisplayText -ForeGroundColor Green " Ready"
-        }
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-DisplayText -Line "Checking for errors"
-            Write-ToLogFile -I -C DNS-Validation -M "Checking for invalid DNS Records."
-            $InvalidDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.Status -eq $false }
-            $SkippedDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.IPAddress -eq "Skipped" }
-            if ($InvalidDNS) {
-                Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C DNS-Validation -M "Invalid DNS object(s):"
-                $InvalidDNS | Select-Object DNSName, Status | ForEach-Object {
-                    Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress -First 1 | Format-List | Out-String | ForEach-Object { Write-DisplayText -ForeGroundColor Green "$_" }
-                $InvalidDNS | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-DisplayText -ForeGroundColor Red "$_" }
-                Write-Error -Message "Invalid (not registered?) DNS Record(s) found!"
-                TerminateScript 1 "Invalid (not registered?) DNS Record(s) found!"
-            } else {
-                Write-ToLogFile -I -C DNS-Validation -M "None found, continuing"
-            }
-            if ($SkippedDNS) {
-                Write-Warning "The following DNS object(s) will be skipped:`n$($SkippedDNS | Select-Object DNSName | Format-List | Out-String)"
-                Write-ToLogFile -W -C DNS-Validation -M "The following DNS object(s) will be skipped:"
-                $SkippedDNS | Select-Object DNSName | ForEach-Object {
-                    Write-ToLogFile -D -C DNS-Validation -M "Skipped: $($_ | ConvertTo-Json -Compress)"
-                }
-            }
-            Write-ToLogFile -I -C DNS-Validation -M "Checking non-matching DNS Records"
-            $DNSNoMatch = $SessionRequestObject.DNSObjects | Where-Object { $_.Match -eq $false }
-            if ($DNSNoMatch -and (-not $($Parameters.settings.DisableIPCheck))) {
-                Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C DNS-Validation -M "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))"
-                $DNSNoMatch | Select-Object DNSName, Match | ForEach-Object {
-                    Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                $SessionRequestObject.DNSObjects[0] | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-DisplayText -ForeGroundColor Green "$_" }
-                $DNSNoMatch | Select-Object DNSName, IPAddress | Format-List | Out-String | ForEach-Object { Write-DisplayText -ForeGroundColor Red "$_" }
-                Write-Error "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
-                TerminateScript 1 "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
-            } elseif ($($Parameters.settings.DisableIPCheck)) {
-                Write-ToLogFile -I -C DNS-Validation -M "IP Addresses checking was skipped."
-            } else {
-                Write-ToLogFile -I -C DNS-Validation -M "All IP Addresses match."
-            }
-            Write-DisplayText -ForeGroundColor Green "Done"
-        }
-    
-        #endregion DNS-Validation
-    
-        #region CheckOrderValidation
-    
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-ToLogFile -I -C CheckOrderValidation -M "Checking if validation is required."
-            $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-            $ValidationRequired = $PAOrderItems | Where-Object { $_.status -ne "valid" }
-            Write-ToLogFile -D -C CheckOrderValidation -M "$($ValidationRequired.Count) validations required:"
-            $ValidationRequired | Select-Object fqdn, status, HTTP01Status, Expires | ForEach-Object {
-                Write-ToLogFile -D -C CheckOrderValidation -M "$($_ | ConvertTo-Json -Compress)"
-            }
-        
-            if ($ValidationRequired.Count -eq 0) {
-                Write-ToLogFile -I -C CheckOrderValidation -M "Validation NOT required."
-                $ADCActionsRequired = $false
-            } else {
-                Write-ToLogFile -I -C CheckOrderValidation -M "Validation IS required."
-                $ADCActionsRequired = $true
-    
-            }
-            Write-ToLogFile -D -C CheckOrderValidation -M "ADC actions required: $($ADCActionsRequired)."
-        }
-    
-        #endregion CheckOrderValidation
-    
-        #region ConfigureADC
-    
-        if (($ADCActionsRequired -and ($CertRequest.ValidationMethod -eq "http")) -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Invoke-AddInitialADCConfig
-        }
-        #endregion ConfigureADC
-    
-        #region CheckDNS
-        if (($ADCActionsRequired) -and ($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Invoke-CheckDNS
-        }
-        #endregion CheckDNS
-    
-        #region OrderValidation
-
-
-        if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-ToLogFile -I -C OrderValidation -M "Configuring the ADC Responder Policies/Actions required for the validation."
-            Write-ToLogFile -D -C OrderValidation -M "PAOrderItems:"
-            $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
-                Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
-            }
-            Write-DisplayText -Title "ADC - Order Validation"
-            foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
-                $ADCKeyAuthorization = $null
-                $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
-                Write-DisplayText -Line "DNS Hostname"
-                Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
-                Write-DisplayText -Line "Ready for Validation"
-                if ($PAOrderItem.status -eq "valid") {
-                    Write-DisplayText -ForeGroundColor Green "=> N/A, Still valid"
-                    Write-ToLogFile -I -C OrderValidation -M "`"$($DNSObject.DNSName)`" is valid, nothing to configure."
-                } else {
-                    Write-ToLogFile -I -C OrderValidation -M "New validation required for `"$($DNSObject.DNSName)`", Start configuring the ADC."
-                    $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
-                    $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
-                    $ADCKeyAuthorization = "HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)"
-                    $RspName = "{0}_{1}" -f $($Parameters.settings.RspName), $DNSObject.ResponderPrio
-                    $RsaName = "{0}_{1}" -f $($Parameters.settings.RsaName), $DNSObject.ResponderPrio
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            if ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
+                Write-DisplayText -Title "Citrix ADC Content Switch"
+                if (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
+                    $CsVipError = $false
                     try {
-                        Write-ToLogFile -I -C OrderValidation -M "Add Responder Action `"$RsaName`" to return `"$ADCKeyAuthorization`"."
-                        $payload = @{"name" = "$RsaName"; "type" = "respondwith"; "target" = "`"$ADCKeyAuthorization`""; }
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
-                        Write-ToLogFile -I -C OrderValidation -M "Responder Action added successfully."
-                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                        try {
-                            Write-ToLogFile -I -C OrderValidation -M "Add Responder Policy `"$RspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
-                            $payload = @{"name" = "$RspName"; "action" = "$RsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
-                            Write-ToLogFile -I -C OrderValidation -M "Responder Policy added successfully."
-                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                            try {
-                                Write-ToLogFile -I -C OrderValidation -M "Trying to bind the Responder Policy `"$RspName`" to LoadBalance VIP: `"$($Parameters.settings.LbName)`""
-                                $payload = @{"name" = "$($Parameters.settings.LbName)"; "policyname" = "$RspName"; "priority" = "$($DNSObject.ResponderPrio)"; }
-                                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $($Parameters.settings.LbName)
-                                Write-ToLogFile -I -C OrderValidation -M "Responder Policy successfully bound to Load Balance VIP."
-                                try {
-                                    Write-ToLogFile -I -C OrderValidation -M "Sending acknowledgment to Let's Encrypt."
-                                    Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
-                                    Write-ToLogFile -I -C OrderValidation -M "Successfully send."
-                                } catch {
-                                    Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
-                                    Write-DisplayText -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
-                                    Invoke-RegisterError 1 "Error while submitting the Challenge."
-                                    Break
-                                }
-                                Write-DisplayText -ForeGroundColor Green " Ready"
-                            } catch {
-                                Write-ToLogFile -E -C OrderValidation -M "Failed to bind Responder Policy to Load Balance VIP. Exception Message: $($_.Exception.Message)"
-                                Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
-                                ##TODO Find out why this object is made null here
-                                #$ValidationMethod = $null
-                                Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                                Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
-                                Break
+                        Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
+                    } catch {
+                        $ExceptMessage = $_.Exception.Message
+                        Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
+                    } finally {
+                        if (($response.errorcode -eq "0") -and `
+                            ($response.csvserver.type -eq "CONTENT") -and `
+                            ($response.csvserver.curstate -eq "UP") -and `
+                            ($response.csvserver.servicetype -eq "HTTP") -and `
+                            ($response.csvserver.port -eq "80") ) {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$($CertRequest.CsVipName)"
+                            Write-DisplayText -ForeGroundColor Green " (found)"
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Green "OK"
+                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
+                        } elseif ($ExceptMessage -like "*(404) Not Found*") {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Red "ERROR: The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
+                            Write-DisplayText -Line "Error message"
+                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
+                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available" -PostBlank
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                            $CsVipError = $true
+                            Invoke-RegisterError 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                        } elseif ($ExceptMessage -like "*The remote server returned an error*") {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
+                            Write-DisplayText -Line "Error message"
+                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
+                            $CsVipError = $true
+                            Invoke-RegisterError 1 "Unknown error found while checking the Content Switch"
+                        } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP"
+                            if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                                Write-DisplayText -Line "Error message"
+                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
                             }
-                        } catch {
-                            Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
-                            Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
-                            Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                            Invoke-RegisterError 1 "Failed to add Responder Policy"
-                            Break
+                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation." -PreBlank -PostBlank
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                            $CsVipError = $true
+                            Invoke-RegisterError 1 "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                        } else {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Green "Found"
+                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
+                            Write-DisplayText -Line "State"
+                            if ($response.csvserver.curstate -eq "UP") {
+                                Write-DisplayText -ForeGroundColor Green "UP"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
+                            } else {
+                                Write-DisplayText -ForeGroundColor RED "$($response.csvserver.curstate)"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
+                            }
+                            Write-DisplayText -Line "Type"
+                            if ($response.csvserver.type -eq "CONTENT") {
+                                Write-DisplayText -ForeGroundColor Green "CONTENT"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
+                            } else {
+                                Write-DisplayText -ForeGroundColor RED "$($response.csvserver.type)"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
+                            }
+                            if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                                Write-DisplayText -Line "Error message"
+                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
+                            }
+                            Write-DisplayText -Line "Data"
+                            Write-DisplayText -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
+                            $CsVipError = $true
+                            Invoke-RegisterError 1 "Content Switch verification failed."
+                        }
+                    }
+                } else {
+                    Write-DisplayText -Line "Connection"
+                    if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
+                        Write-DisplayText -ForeGroundColor Green "OK"
+                        Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
+                    } else {
+                        Write-Warning "Could not verify the Citrix ADC Connection!"
+                        Write-Warning "Script will continue but uploading of certificates will probably Fail"
+                        Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
+                    }
+                }
+            }
+            if ($CsVipError) {
+                Continue
+            }
+            ##TODO per cert PfxPassword maybe
+        
+            #region DNSPreCheck
+            [regex]$fqdnExpression = "^(?=^.{1,254}$)(^(?:(?!\d+\.|-)[a-zA-Z0-9_\-]{1,63}(?<!-)\.?)+(?:[a-zA-Z]{2,})$)+$"
+            if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
+                $SaveConfig = $false
+                Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
+                Write-ToLogFile -I -C DNSPreCheck -M "-CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
+                Write-DisplayText -Line "CN"
+                Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.CN)"
+                Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN)"
+                Write-DisplayText -Line "SAN(s)"
+                Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.SANs)"
+                Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
+                $CertRequest.ValidationMethod = "dns"
+                $CertRequest.DisableIPCheck = $true
+                Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
+            } elseif ($CertRequest.ValidationMethod -eq "dns") {
+                $SaveConfig = $false
+                $CertRequest.DisableIPCheck = $true
+                Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
+                Write-DisplayText -Line "CN"
+                Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.CN)"
+                Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN)"
+                Write-DisplayText -Line "SAN(s)"
+                Write-DisplayText -ForeGroundColor Yellow "$($CertRequest.SANs)"
+                Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
+            } else {
+                $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
+                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
+                    Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
+                    Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
+                    Invoke-RegisterError 1 "The `"-CsVipName`" cannot be empty!"
+                    Continue
+                }
+                Write-DisplayText -Title "Certificate Request"
+                Write-DisplayText -Line "CN"
+                Write-DisplayText -ForeGroundColor Yellow -NoNewline "$($CertRequest.CN)"
+                if ($CertRequest.CN -match $fqdnExpression) {
+                    Write-DisplayText -ForeGroundColor Green " $([Char]8730)"
+                    Write-ToLogFile -I -C DNSPreCheck -M "CN: $($CertRequest.CN) is a valid record"
+                } else {
+                    Write-DisplayText -ForeGroundColor Red " NOT a valid fqdn!"
+                    Invoke-RegisterError 1 "`"$($CertRequest.CN)`" is NOT a valid fqdn!"
+                    Continue
+                }
+                Write-DisplayText -Line "SAN(s)"
+                $CheckedSANs = @()
+                if (-Not [String]::IsNullOrEmpty($($CertRequest.SANs))) {
+                    ForEach ($record in $CertRequest.SANs.Split(",")) {
+                        if ($CheckedSANs.Count -eq 0) {
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewline "$record"
+                        } else {
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewline ", $record"
+                        }
+                        if ($record -match $fqdnExpression) {
+                            Write-DisplayText -ForeGroundColor Green -NoNewline " $([Char]8730)"
+                            Write-ToLogFile -I -C DNSPreCheck -M "SAN Entry: $record is a valid record"
+                            $CheckedSANs += $record
+                        } else {
+                            Write-DisplayText -ForeGroundColor Red -NoNewline " NOT a valid fqdn!"
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewline " SKIPPED"
+                            Write-ToLogFile -W -C DNSPreCheck -M "SAN Entry: $record is NOT valid record"
+                        }
+                    }
+                } else {
+                    Write-DisplayText -ForeGroundColor Green -NoNewline "none"
+                }
+                Write-DisplayText -Blank
+                $CertRequest.SANs = $CheckedSANs -Join ","
+                $Script:MailData += "SANs: $($CheckedSANs -Join ", ")"
+            }
+
+            Write-ToLogFile -D -C DNSPreCheck -M "ValidationMethod is set to: `"$($CertRequest.ValidationMethod)`"."
+    
+            if ($CertRequest.ValidationMethod -eq "dns" -and ($AutoRun)) {
+                Write-ToLogFile -E -C DNSPreCheck -M "You cannot use the dns validation method with the -AutoRun parameter!"
+                Write-DisplayText -Line "Wildcard"
+                Write-DisplayText -ForeGroundColor RED "A wildcard was found while also using the -AutoRun parameter. Only HTTP validation (no Wildcard) is allowed!"
+                Break
+            }
+        
+            $ResponderPrio = 10
+            $SessionRequestObject.DNSObjects += [PSCustomObject]@{
+                DNSName       = [String]$($CertRequest.CN)
+                IPAddress     = $null
+                Status        = $null
+                Match         = $null
+                SAN           = $false
+                Challenge     = $null
+                ResponderPrio = $ResponderPrio
+                Done          = $false
+            }
+            if (-not ([String]::IsNullOrEmpty($($CertRequest.SANs)))) {
+                Write-ToLogFile -I -C DNSPreCheck -M "Checking for double SAN values."
+                $SANRecords = $CertRequest.SANs.Split(",").Split(" ")
+                $SANCount = $SANRecords.Count
+                $SANRecords = $SANRecords | Select-Object -Unique
+                $CertRequest.SANs = $SANRecords -Join ","
+
+                if (-Not ($SANCount -eq $SANRecords.Count)) {
+                    Write-DisplayText -Line "Double Records"
+                    Write-DisplayText -ForeGroundColor Yellow "WARNING: There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
+                    Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
+                } else {
+                    Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
+                }
+                Foreach ($SANEntry in $SANRecords) {
+                    $ResponderPrio += 10
+                    if (-Not ($SANEntry -eq $($CertRequest.CN))) {
+                        $SessionRequestObject.DNSObjects += [PSCustomObject]@{
+                            DNSName       = [String]$SANEntry
+                            IPAddress     = $null
+                            Status        = $null
+                            Match         = $null
+                            SAN           = $true
+                            Challenge     = $null
+                            ResponderPrio = [int]$ResponderPrio
+                            Done          = $false
+                        }
+                    } else {
+                        Write-DisplayText -Blank
+                        Write-Warning "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
+                        Write-ToLogFile -W -C DNSPreCheck -M "Double record found, SAN value `"$SANEntry`" is the same as CN value `"$($CertRequest.CN)`". Removed double SAN entry."
+                    }
+                }
+            }
+            Write-ToLogFile -D -C DNSPreCheck -M "DNS Data:"
+            $SessionRequestObject.DNSObjects | Select-Object DNSName, SAN | ForEach-Object {
+                Write-ToLogFile -D -C DNSPreCheck -M "$($_ | ConvertTo-Json -Compress)"
+            }
+    
+            #endregion DNSPreCheck
+    
+            #region Registration
+    
+            if ($CertRequest.ValidationMethod -in "http", "dns") {
+                Write-DisplayText -Title "Let's Encrypt Account & Registration"
+                Write-DisplayText -Line "Registration"
+                try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -I -C Registration -M "Try to retrieve the existing Registration."
+                    $PARegistrations = Posh-ACME\Get-PAAccount -List -Contact $CertRequest.EmailAddress -Refresh | Where-Object { ($_.status -eq "valid") -and ($_.KeyLength -eq $CertRequest.KeyLength) }
+                    if ($PARegistrations -is [system.array]) {
+                        $PARegistration = $PARegistrations | Sort-Object id | Select-Object -Last 1
+                        Write-ToLogFile -I -C Registration -M "Found multiple Accounts"
+                        $PARegistrations | ForEach-Object { Write-ToLogFile -D -C Registration -M "$($_ | ConvertTo-Json -Compress)" }
+                    } else {
+                        $PARegistration = $PARegistrations
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)") {
+                        Write-ToLogFile -I -C Registration -M "Existing registration found, no changes necessary."
+                    } else {
+                        if ([String]::IsNullOrEmpty($($PARegistration.Contact))) {
+                            Write-ToLogFile -I -C Registration -M "Current registration is not equal to `"$($CertRequest.EmailAddress)`", currently empty! Setting new registration."
+                        } else {
+                            Write-ToLogFile -I -C Registration -M "Current registration `"$($PARegistration.Contact)`" is not equal to `"$($CertRequest.EmailAddress)`", setting new registration."
+                        }
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
+                    }
+                } catch {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -I -C Registration -M "Setting new registration to `"$($CertRequest.EmailAddress)`"."
+                    try {
+                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
+                        Write-ToLogFile -I -C Registration -M "New registration successful."
+                    } catch {
+                        Write-ToLogFile -E -C Registration -M "Error New registration failed! Exception Message: $($_.Exception.Message)"
+                        Write-DisplayText -ForeGroundColor Red "`nError New registration failed!"
+                    }
+                }
+                try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Set-PAAccount -ID $PARegistration.id -Force | out-null
+                    Write-ToLogFile -I -C Registration -M "Account $($PARegistration.id) set as default."
+                } catch {
+                    Write-ToLogFile -E -C Registration -M "Could not set default account. Exception Message: $($_.Exception.Message)."
+                }
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+
+
+                $PARegistration = Get-PAAccount -ID $PARegistration.ID -Refresh
+                #$PARegistrations = Posh-ACME\Get-PAAccount -List -Contact $($CertRequest.EmailAddress) -Refresh | Where-Object { ($_.status -eq "valid") -and ($_.KeyLength -eq $CertRequest.KeyLength) }
+                #Write-ToLogFile -D -C Registration -M "Registration: $($PARegistrations | ConvertTo-Json -Compress)."
+
+                if (-not ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)")) {
+                    Write-DisplayText -ForeGroundColor Red " Error"
+                    Write-ToLogFile -E -C Registration -M "User registration failed."
+                    Write-Error "User registration failed"
+                    Invoke-RegisterError 1 "User registration failed"
+                    Continue
+                }
+                if ($PARegistration.status -ne "valid") {
+                    Write-DisplayText -ForeGroundColor Red " Error"
+                    Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
+                    Write-Error  "Account status is $($Account.status)"
+                    Invoke-RegisterError 1 "Account status is $($Account.status)"
+                    Continue
+                } 
+                Write-DisplayText -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
+            }
+    
+            #endregion Registration
+    
+            #region Order
+    
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                if ([String]::IsNullOrEmpty($($CertRequest.FriendlyName))) {
+                    $CertRequest.FriendlyName = $CertRequest.CN
+                }
+
+                if ($CertRequest.ForceCertRenew) {
+                    Write-DisplayText -Line "Removing previous cert"
+                    try {
+                        $CertStoragePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Posh-ACME" -ErrorAction Stop
+                        $CertStoragePath = Join-Path -Path $CertStoragePath -ChildPath ([uri]$PARegistration.location).Authority -ErrorAction Stop
+                        $CertStoragePath = Join-Path -Path $CertStoragePath -ChildPath $PARegistration.id -ErrorAction Stop
+                        $CertStoragePath = Join-Path -Path $CertStoragePath -ChildPath $CertRequest.CN -ErrorAction Stop
+                        Write-ToLogFile -D -C Order -M "CertStoragePath: $CertStoragePath"
+                        $CertStorageFilePath = Join-Path -Path $CertStoragePath -ChildPath "order.json" -ErrorAction Stop
+                        Write-ToLogFile -D -C Order -M "CertStorageFilePath: CertStorageFilePath"
+                        if (Test-Path -Path  $CertStorageFilePath) {
+                            Write-ToLogFile -I -C Order -M "Old certificate found, trying to remove (ForceCertRenew was set)"
+                            Remove-Item -Path $CertStoragePath -Force -Recurse -ErrorAction Stop
+                            Write-DisplayText -ForeGroundColor Green "Done"
+                            Write-ToLogFile -I -C Order -M "Old certificate removed"
+                        } else {
+                            Write-ToLogFile -I -C Order -M "Old certificate NOT found (ForceCertRenew was set)"
+                            Write-DisplayText -ForeGroundColor Yellow "Not Found"
                         }
                     } catch {
-                        Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
-                        Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
-                        Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
-                        Invoke-RegisterError 1 "Failed to add Responder Action"
-                        Break
+                        Write-DisplayText -ForeGroundColor Red "Failed"
+                        Write-ToLogFile -E -C Order -M "Caught an error, $($_.Exception.Message)"
+                    }
+                    
+                }
+                Write-DisplayText -Line "Order"
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                try {
+                    Write-ToLogFile -I -C Order -M "Trying to create a new order."
+                    $domains = $SessionRequestObject.DNSObjects | Select-Object DNSName -ExpandProperty DNSName
+                    $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $CertRequest.KeyLength -Force -FriendlyName $CertRequest.FriendlyName -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword)
+                    Start-Sleep -Seconds 1
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -D -C Order -M "Order data:"
+                    $PAOrder | Select-Object MainDomain, FriendlyName, SANs, status, expires, KeyLength | ForEach-Object {
+                        Write-ToLogFile -D -C Order -M "$($_ | ConvertTo-Json -Compress)"
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $PAChallenges = $PAOrder | Posh-ACME\Get-PAOrder -Refresh | Posh-ACME\Get-PAAuthorizations
+                    Write-ToLogFile -D -C Order -M "Challenge status: "
+                    $PAChallenges | Select-Object DNSId, status, HTTP01Status, DNS01Status | ForEach-Object {
+                        Write-ToLogFile -D -C Order -M "$($_ | ConvertTo-Json -Compress)"
+                    }
+                    Write-ToLogFile -I -C Order -M "Order created successfully."
+                } catch {
+                    Write-DisplayText -ForeGroundColor Red " Error"
+                    if ($_.Exception.Message -like "*rate*limit*") {
+                        Write-DisplayText -PreBlank -Line -ForeGroundColor Yellow "Rate-Limit WARNING"
+                        Write-DisplayText -ForeGroundColor Yellow "$($_.Exception.Message)"
+                        $Script:MailData += "$($_.Exception.Message)"
+                        Invoke-RegisterError 1 "Could not create the order. $($_.Exception.Message)"
+                    } else {
+                        Write-ToLogFile -E -C Order -M "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter. "
+                        Write-ToLogFile -E -C Order -M "Exception Message: $($_.Exception.Message)"
+                        Write-DisplayText -ForeGroundColor Red "ERROR: Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
+                        Invoke-RegisterError 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
+                    }
+                    Continue
+                }
+                Write-DisplayText -ForeGroundColor Green " Ready"
+            }
+    
+            #endregion Order
+    
+            #region DNS-Validation
+    
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-DisplayText -Title "DNS - Validate Records"
+                Write-DisplayText -Line "Checking records"
+                Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
+                $DNSValidationError = $false
+                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ($IPv6) {
+                        $DNSObject.IPAddress = "::"
+                    } else {
+                        $DNSObject.IPAddress = "0.0.0.0"
+                    }
+                    $DNSObject.Status = $false
+                    $DNSObject.Match = $false
+                    try {
+                        $PAChallenge = $PAChallenges | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
+                        if ([String]::IsNullOrWhiteSpace($PAChallenge)) {
+                            Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
+                            Write-ToLogFile -E -C DNS-Validation -M "No valid Challenge found."
+                            Write-Error "No valid Challenge found"
+                            $DNSValidationError = $true
+                            Invoke-RegisterError 1 "No valid Challenge found"
+                            Break
+                        } else {
+                            $DNSObject.Challenge = $PAChallenge
+                        }
+                        if ($($CertRequest.DisableIPCheck)) {
+                            $DNSObject.IPAddress = "NoIPCheck"
+                            $DNSObject.Match = $true
+                            $DNSObject.Status = $true
+                        } else {
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            Write-ToLogFile -I -C DNS-Validation -M "Using public DNS server ($PublicDnsServer) to verify dns records."
+                            Write-ToLogFile -D -C DNS-Validation -M "Trying to get IP Address."
+                            if ($IPv6) {
+                                try {
+                                    $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction Stop).IPAddress
+                                } catch {
+                                    $PublicIP = (Resolve-DnsName -Server $PublicDnsServerv6 -Name $DNSObject.DNSName -DnsOnly -Type AAAA -ErrorAction SilentlyContinue).IPAddress
+                                }
+                            } else {
+                                $PublicIP = (Resolve-DnsName -Server $PublicDnsServer -Name $DNSObject.DNSName -DnsOnly -Type A -ErrorAction SilentlyContinue).IPAddress
+                            }
+                            if ([String]::IsNullOrWhiteSpace($PublicIP)) {
+                                Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
+                                Write-ToLogFile -E -C DNS-Validation -M "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`"."
+                                Write-Error "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
+                                $DNSValidationError = $true
+                                Invoke-RegisterError 1 "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
+                                Break
+                            } elseif ($PublicIP -is [system.array]) {
+                                Write-ToLogFile -W -C DNS-Validation -M "More than one ip address found:"
+                                $PublicIP | ForEach-Object {
+                                    Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
+                                }
+                        
+                                Write-Warning "More than one ip address found`n$($PublicIP | Format-List | Out-String)"
+                                $DNSObject.IPAddress = $PublicIP | Select-Object -First 1
+                                Write-ToLogFile -W -C DNS-Validation -M "using the first one`"$($DNSObject.IPAddress)`"."
+                                Write-Warning "using the first one`"$($DNSObject.IPAddress)`""
+                            } else {
+                                Write-ToLogFile -D -C DNS-Validation -M "Saving Public IP Address `"$PublicIP`"."
+                                $DNSObject.IPAddress = $PublicIP
+                            }
+                        }
+                    } catch {
+                        Write-ToLogFile -E -C DNS-Validation -M "Error while retrieving IP Address. Exception Message: $($_.Exception.Message)"
+                        Write-DisplayText -ForeGroundColor Red "Error while retrieving IP Address,"
+                        if ($DNSObject.SAN) {
+                            Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
+                            Write-DisplayText -ForeGroundColor Red "The script will continue but `"$DNSRecord`" will be skipped"
+                            Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter. The script will continue but `"$DNSRecord`" will be skipped."
+                            $DNSObject.IPAddress = "Skipped"
+                            $DNSObject.Match = $true
+                        } else {
+                            Write-DisplayText -ForeGroundColor Red " Error [$($DNSObject.DNSName)]"
+                            Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
+                            Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter."
+                            $DNSValidationError = $true
+                            Invoke-RegisterError 1 "You can try to re-run the script with the -DisableIPCheck parameter."
+                            Break
+                        }
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ($DNSObject.SAN) {
+                        $CNObject = $SessionRequestObject.DNSObjects | Where-Object { $_.SAN -eq $false }
+                        Write-ToLogFile -I -C DNS-Validation -M "All IP Addresses must match, checking..."
+                        if ($DNSObject.IPAddress -match $CNObject.IPAddress) {
+                            Write-ToLogFile -I -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" matches to `"$($CNObject.IPAddress)/($($CNObject.DNSName))`"."
+                            $DNSObject.Match = $true
+                            $DNSObject.Status = $true
+                        } else {
+                            Write-ToLogFile -W -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" Doesn't match to `"$($CNObject.IPAddress)/($($CNObject.DNSName))`"."
+                            $DNSObject.Match = $false
+                        }
+                    } else {
+                        Write-ToLogFile -I -C DNS-Validation -M "`"$($DNSObject.IPAddress)/($($DNSObject.DNSName))`" is the first entry, continuing."
+                        $DNSObject.Status = $true
+                        $DNSObject.Match = $true
                     }
                 }
+                if ($DNSValidationError) {
+                    continue
+                }
+                Write-ToLogFile -D -C DNS-Validation -M "SAN Objects:"
+                $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress, Status, Match | ForEach-Object {
+                    Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
+                }
+                Write-DisplayText -ForeGroundColor Green "Ready"
             }
-
-            if ($SessionRequestObject.ExitCode -eq 0) {
-                Write-DisplayText -Title "Waiting for Order completion"
-                Write-DisplayText -Line "Completion"
-                Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-DisplayText -Line "Checking for errors"
+                Write-ToLogFile -I -C DNS-Validation -M "Checking for invalid DNS Records."
+                $InvalidDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.Status -eq $false }
+                $SkippedDNS = $SessionRequestObject.DNSObjects | Where-Object { $_.IPAddress -eq "Skipped" }
+                if ($InvalidDNS) {
+                    Write-DisplayText -ForeGroundColor Red "Error"
+                    Write-ToLogFile -E -C DNS-Validation -M "Invalid DNS object(s):"
+                    $InvalidDNS | Select-Object DNSName, IPAddress, Status | ForEach-Object {
+                        Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
+                        Write-DisplayText -ForeGroundColor Red -Line "Record with Error"
+                        Write-DisplayText -ForeGroundColor Red "$($_.DNSName) [$($_.IPAddress)]"
+                    }
+                    Write-DisplayText -Blank
+                    Write-Error -Message "Invalid (not registered?) DNS Record(s) found!"
+                    Invoke-RegisterError 1 "Invalid (not registered?) DNS Record(s) found!"
+                    Continue
+                } else {
+                    Write-ToLogFile -I -C DNS-Validation -M "None found, continuing"
+                }
+                if ($SkippedDNS) {
+                    Write-Warning "The following DNS object(s) will be skipped:`n$($SkippedDNS | Select-Object DNSName | Format-List | Out-String)"
+                    Write-ToLogFile -W -C DNS-Validation -M "The following DNS object(s) will be skipped:"
+                    $SkippedDNS | Select-Object DNSName | ForEach-Object {
+                        Write-ToLogFile -D -C DNS-Validation -M "Skipped: $($_ | ConvertTo-Json -Compress)"
+                    }
+                }
+                Write-ToLogFile -I -C DNS-Validation -M "Checking non-matching DNS Records"
+                $DNSNoMatch = $SessionRequestObject.DNSObjects | Where-Object { $_.Match -eq $false }
+                if ($DNSNoMatch -and (-not $($CertRequest.DisableIPCheck))) {
+                    Write-DisplayText -ForeGroundColor Red "Error"
+                    Write-ToLogFile -E -C DNS-Validation -M "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))"
+                    $DNSNoMatch | Select-Object DNSName, IPAddress, Match | ForEach-Object {
+                        Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -Compress)"
+                        Write-DisplayText -ForeGroundColor Red -Line "Record with Error"
+                        Write-DisplayText -ForeGroundColor Red "$($_.DNSName) [$($_.IPAddress)]"
+                    }
+                    Write-DisplayText ""
+                    Write-Error "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
+                    Invoke-RegisterError 1 "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
+                    Continue
+                } elseif ($($CertRequest.DisableIPCheck)) {
+                    Write-ToLogFile -I -C DNS-Validation -M "IP Addresses checking was skipped."
+                } else {
+                    Write-ToLogFile -I -C DNS-Validation -M "All IP Addresses match."
+                }
+                Write-DisplayText -ForeGroundColor Green "Done"
+            }
+    
+            #endregion DNS-Validation
+    
+            #region CheckOrderValidation
+    
+            if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-ToLogFile -I -C CheckOrderValidation -M "Checking if validation is required."
                 $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                Write-ToLogFile -D -C OrderValidation -M "Listing PAOrderItems"
+                $ValidationRequired = $PAOrderItems | Where-Object { $_.status -ne "valid" }
+                Write-ToLogFile -D -C CheckOrderValidation -M "$($ValidationRequired.Count) validations required:"
+                $ValidationRequired | Select-Object fqdn, status, HTTP01Status, Expires | ForEach-Object {
+                    Write-ToLogFile -D -C CheckOrderValidation -M "$($_ | ConvertTo-Json -Compress)"
+                }
+        
+                if ($ValidationRequired.Count -eq 0) {
+                    Write-ToLogFile -I -C CheckOrderValidation -M "Validation NOT required."
+                    $ADCActionsRequired = $false
+                } else {
+                    Write-ToLogFile -I -C CheckOrderValidation -M "Validation IS required."
+                    $ADCActionsRequired = $true
+    
+                }
+                Write-ToLogFile -D -C CheckOrderValidation -M "ADC actions required: $($ADCActionsRequired)."
+            }
+    
+            #endregion CheckOrderValidation
+    
+            #region ConfigureADC
+    
+            if (($ADCActionsRequired -and ($CertRequest.ValidationMethod -eq "http")) -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Invoke-AddInitialADCConfig
+            }
+            #endregion ConfigureADC
+    
+            #region CheckDNS
+            if (($ADCActionsRequired) -and ($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Invoke-CheckDNS
+            }
+            #endregion CheckDNS
+    
+            #region OrderValidation
+
+
+            if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-ToLogFile -I -C OrderValidation -M "Configuring the ADC Responder Policies/Actions required for the validation."
+                Write-ToLogFile -D -C OrderValidation -M "PAOrderItems:"
                 $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
                     Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
                 }
-                $WaitLoop = 10
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
-                while ($true) {
-                    Start-Sleep -Seconds 5
-                    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                    Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
-                    if ($WaitLoop -eq 0) {
-                        Write-ToLogFile -D -C OrderValidation -M "Loop ended, max reties reached!"
-                        break
-                    } elseif ($((($PAOrderItems | Where-Object { $_.status -eq "pending" }) | Measure-Object).Count) -eq 0) {
-                        Write-ToLogFile -D -C OrderValidation -M "Loop ended no pending items left."
-                        break
+                Write-DisplayText -Title "ADC - Order Validation"
+                foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                    $ADCKeyAuthorization = $null
+                    $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
+                    Write-DisplayText -Line "DNS Hostname"
+                    Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
+                    Write-DisplayText -Line "Ready for Validation"
+                    if ($PAOrderItem.status -eq "valid") {
+                        Write-DisplayText -ForeGroundColor Green "=> N/A, Still valid"
+                        Write-ToLogFile -I -C OrderValidation -M "`"$($DNSObject.DNSName)`" is valid, nothing to configure."
+                    } else {
+                        Write-ToLogFile -I -C OrderValidation -M "New validation required for `"$($DNSObject.DNSName)`", Start configuring the ADC."
+                        $PAToken = ".well-known/acme-challenge/$($PAOrderItem.HTTP01Token)"
+                        $KeyAuth = Posh-ACME\Get-KeyAuthorization -Token $($PAOrderItem.HTTP01Token) -Account $PAAccount
+                        $ADCKeyAuthorization = "HTTP/1.0 200 OK\r\n\r\n$($KeyAuth)"
+                        $RspName = "{0}_{1}" -f $($Parameters.settings.RspName), $DNSObject.ResponderPrio
+                        $RsaName = "{0}_{1}" -f $($Parameters.settings.RsaName), $DNSObject.ResponderPrio
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        try {
+                            Write-ToLogFile -I -C OrderValidation -M "Add Responder Action `"$RsaName`" to return `"$ADCKeyAuthorization`"."
+                            $payload = @{"name" = "$RsaName"; "type" = "respondwith"; "target" = "`"$ADCKeyAuthorization`""; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderaction -Payload $payload -Action add
+                            Write-ToLogFile -I -C OrderValidation -M "Responder Action added successfully."
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            try {
+                                Write-ToLogFile -I -C OrderValidation -M "Add Responder Policy `"$RspName`" to: `"HTTP.REQ.URL.CONTAINS(`"$PAToken`")`""
+                                $payload = @{"name" = "$RspName"; "action" = "$RsaName"; "rule" = "HTTP.REQ.URL.CONTAINS(`"$PAToken`")"; }
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type responderpolicy -Payload $payload -Action add
+                                Write-ToLogFile -I -C OrderValidation -M "Responder Policy added successfully."
+                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                try {
+                                    Write-ToLogFile -I -C OrderValidation -M "Trying to bind the Responder Policy `"$RspName`" to LoadBalance VIP: `"$($Parameters.settings.LbName)`""
+                                    $payload = @{"name" = "$($Parameters.settings.LbName)"; "policyname" = "$RspName"; "priority" = "$($DNSObject.ResponderPrio)"; }
+                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $($Parameters.settings.LbName)
+                                    Write-ToLogFile -I -C OrderValidation -M "Responder Policy successfully bound to Load Balance VIP."
+                                    try {
+                                        Write-ToLogFile -I -C OrderValidation -M "Sending acknowledgment to Let's Encrypt."
+                                        Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
+                                        Write-ToLogFile -I -C OrderValidation -M "Successfully send."
+                                    } catch {
+                                        Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
+                                        Write-DisplayText -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
+                                        Invoke-RegisterError 1 "Error while submitting the Challenge."
+                                        Break
+                                    }
+                                    Write-DisplayText -ForeGroundColor Green " Ready"
+                                } catch {
+                                    Write-ToLogFile -E -C OrderValidation -M "Failed to bind Responder Policy to Load Balance VIP. Exception Message: $($_.Exception.Message)"
+                                    Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
+                                    Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                                    Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
+                                    Break
+                                }
+                            } catch {
+                                Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
+                                Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
+                                Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                                Invoke-RegisterError 1 "Failed to add Responder Policy"
+                                Break
+                            }
+                        } catch {
+                            Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
+                            Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
+                            Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
+                            Invoke-RegisterError 1 "Failed to add Responder Action"
+                            Break
+                        }
                     }
-                    $WaitLoop--
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 }
-                $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
-                    Write-DisplayText -ForeGroundColor Red "Failed"
-                    Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items. Failed Records:"
-                    $PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
+
+                if ($SessionRequestObject.ExitCode -eq 0) {
+                    Write-DisplayText -Title "Waiting for Order completion"
+                    Write-DisplayText -Line "Completion"
+                    Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                    Write-ToLogFile -D -C OrderValidation -M "Listing PAOrderItems"
+                    $PAOrderItems | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
                         Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
                     }
-                    Write-DisplayText -Title "Invalid items:"
-                    ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
-                        Write-DisplayText -Line "DNS Hostname"
-                        Write-DisplayText -ForeGroundColor Cyan "$($Item.fqdn)"
-                        Write-DisplayText -Line "Status"
-                        Write-DisplayText -ForeGroundColor Red "ERROR [$($Item.status)]"
-                        Write-DisplayText -ForeGroundColor Red -Line "Error Status | Type"
-                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status) | $($Item.challenges.error.type)"
-                        Write-DisplayText -ForeGroundColor Red -Line "Details"
-                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.detail)"
-                        Write-DisplayText -ForeGroundColor Red -Line "Hostname | Port"
-                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.hostname) | $($Item.challenges.validationRecord.port)"
-                        Write-DisplayText -ForeGroundColor Red -Line "IPAddress Used | Resolved"
-                        Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.addressUsed) | $($Item.challenges.validationRecord.addressesResolved -join ', ')"
-                        Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.error | ConvertTo-Json -Compress)"
-                        Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.validationRecord | ConvertTo-Json -Compress)"
+                    $WaitLoop = 10
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
+                    while ($true) {
+                        Start-Sleep -Seconds 5
+                        $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                        Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
+                        if ($WaitLoop -eq 0) {
+                            Write-ToLogFile -D -C OrderValidation -M "Loop ended, max reties reached!"
+                            break
+                        } elseif ($((($PAOrderItems | Where-Object { $_.status -eq "pending" }) | Measure-Object).Count) -eq 0) {
+                            Write-ToLogFile -D -C OrderValidation -M "Loop ended no pending items left."
+                            break
+                        }
+                        $WaitLoop--
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     }
-                    Write-DisplayText -ForegroundColor Red "`r`nERROR: There are some invalid items"
-                    Invoke-RegisterError 1 "There are some invalid items"
+                    $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                    if ($PAOrderItems | Where-Object { $_.status -ne "valid" }) {
+                        Write-DisplayText -ForeGroundColor Red "Failed"
+                        Write-ToLogFile -E -C OrderValidation -M "Unfortunately there are invalid items. Failed Records:"
+                        $PAOrderItems | Where-Object { $_.status -ne "valid" } | Select-Object fqdn, status, Expires, HTTP01Status, DNS01Status | ForEach-Object {
+                            Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -Compress)"
+                        }
+                        Write-DisplayText -Title "Invalid items:"
+                        ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
+                            Write-DisplayText -Line "DNS Hostname"
+                            Write-DisplayText -ForeGroundColor Cyan "$($Item.fqdn)"
+                            Write-DisplayText -Line "Status"
+                            Write-DisplayText -ForeGroundColor Red "ERROR [$($Item.status)]"
+                            Write-DisplayText -ForeGroundColor Red -Line "Error Status | Type"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status) | $($Item.challenges.error.type)"
+                            Write-DisplayText -ForeGroundColor Red -Line "Details"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.detail)"
+                            Write-DisplayText -ForeGroundColor Red -Line "Hostname | Port"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.hostname) | $($Item.challenges.validationRecord.port)"
+                            Write-DisplayText -ForeGroundColor Red -Line "IPAddress Used | Resolved"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.addressUsed) | $($Item.challenges.validationRecord.addressesResolved -join ', ')"
+                            Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.error | ConvertTo-Json -Compress)"
+                            Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.validationRecord | ConvertTo-Json -Compress)"
+                        }
+                        Write-DisplayText -ForegroundColor Red "`r`nERROR: There are some invalid items"
+                        Invoke-RegisterError 1 "There are some invalid items"
+                        Continue
+                    } else {
+                        Write-DisplayText -ForeGroundColor Green " Completed"
+                        Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
+                    }
                 } else {
-                    Write-DisplayText -ForeGroundColor Green " Completed"
-                    Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
+                    Write-ToLogFile -D -C OrderValidation -M "Skipped Order Completion, Exit Code: $($SessionRequestObject.ExitCode)"
+                    $CertRequestResult | ConvertTo-Json
                 }
-            } else {
-                Write-ToLogFile -D -C OrderValidation -M "Skipped Order Completion, Exit Code: $($SessionRequestObject.ExitCode)"
-                $CertRequestResult | ConvertTo-Json
-            }
-            #endregion OrderValidation
+                #endregion OrderValidation
 
-            #region CleanupADC
+                #region CleanupADC
 
-            if ($CertRequest.ValidationMethod -in "http", "dns") {
-                Invoke-ADCCleanup -Full
-            }
-
-            #endregion CleanupADC
-
-            #region ExitIfErrors
-            ##ToDo Cleanup
-            if ($Script:CertReq.ErrorOccurred -gt 0) {
-                if ($AutoRun) {
-                    Invoke-RegisterError 2 "To many errors found, ending the request early!"
-                    Break
-                } else {
-                    Invoke-RegisterError -ExitNow
+                if ($CertRequest.ValidationMethod -in "http", "dns") {
+                    Invoke-ADCCleanup -Full
                 }
+
+                #endregion CleanupADC
             }
     
-            #endregion ExitIfErrors
-        }
+            #region DNSChallenge
     
-        #region DNSChallenge
-    
-        if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-            $TXTRecords = $PAOrderItems | Select-Object fqdn, `
-            @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
-            @{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
-            Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-            Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
-            Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
-            Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
-            Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
-            foreach ($Record in $TXTRecords) {
-                Write-DisplayText -Blank
-                Write-DisplayText -Line "DNS Hostname"
-                Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                Write-DisplayText -Line "TXT Record Name."
-                Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                Write-DisplayText -Line "TXT Record Value"
-                Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
-                Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
-            }
-            Write-DisplayText -Blank
-            Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
-            $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
-            Write-DisplayText -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
-            $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
-            if (-not ($answer.ToLower() -eq "yes")) {
-                Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
-                $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue, or something else to stop and exit"
-                if (-not ($answer.ToLower() -eq "yes")) {
-                    Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
-                    Exit (0)
-                }
-            }
-            Write-DisplayText "Continuing, Waiting 30 seconds for the records to settle"
-            Start-Sleep -Seconds 30
-            Write-ToLogFile -I -C DNSChallenge -M "Start verifying the TXT records."
-            $issues = $false
-            try {
-                Write-DisplayText -Title "Pre-Checking the TXT records"
-                Foreach ($Record in $TXTRecords) {
+            if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                $TXTRecords = $PAOrderItems | Select-Object fqdn, `
+                @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
+                @{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
+                Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
+                Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
+                Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+                Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
+                Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
+                foreach ($Record in $TXTRecords) {
+                    Write-DisplayText -Blank
                     Write-DisplayText -Line "DNS Hostname"
                     Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                    Write-DisplayText -Line "TXT Record check"
-                    Write-ToLogFile -I -C DNSChallenge -M "Trying to retrieve the TXT record for `"$($Record.fqdn)`"."
-                    $result = $null
-                    $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
-                    if ([String]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
-                        Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records."
-                        $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
-                    } else {
-                        Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$($dnsserver.PrimaryServer)`" for resolving the TXT records."
-                        $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly
-                    }
-                    Write-ToLogFile -D -C DNSChallenge -M "Output: $($result | ConvertTo-Json -Compress)"
-                    if ([String]::IsNullOrWhiteSpace($result.Strings -like "*$($Record.TXTValue)*")) {
-                        Write-DisplayText -ForegroundColor Yellow "Could not determine"
-                        $issues = $true
-                        Write-ToLogFile -W -C DNSChallenge -M "Could not determine."
-                    } else {
-                        Write-DisplayText -ForegroundColor Green "OK"
-                        Write-ToLogFile -I -C DNSChallenge -M "Check OK."
-                    }
+                    Write-DisplayText -Line "TXT Record Name."
+                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                    Write-DisplayText -Line "TXT Record Value"
+                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
+                    Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
                 }
-            } catch {
-                Write-ToLogFile -E -C DNSChallenge -M "Caught an error. Exception Message: $($_.Exception.Message)"
-                $issues = $true
-            }
-            if ($issues) {
                 Write-DisplayText -Blank
-                Write-Warning "Found issues during the initial test. TXT validation might fail. Waiting an additional 30 seconds before continuing..."
-                Write-ToLogFile -W -C DNSChallenge -M "Found issues during the initial test. TXT validation might fail."
-                Start-Sleep -Seconds 20
-            }
-        }
-    
-        #endregion DNSChallenge
-    
-        #region FinalizingOrder
-    
-        if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-ToLogFile -I -C FinalizingOrder -M "Check if DNS Records need to be validated."
-            Write-DisplayText -Title "Sending Acknowledgment"
-            Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
-                Write-DisplayText -Line "DNS Hostname"
-                Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
-                Write-ToLogFile -I -C FinalizingOrder -M "Validating item: `"$($DNSObject.DNSName)`"."
-                Write-DisplayText -Line "Send Ack"
-                $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -D -C FinalizingOrder -M "OrderItem:"
-                $PAOrderItem | Select-Object fqdn, status, DNS01Status, expires | ForEach-Object {
-                    Write-ToLogFile -D -C FinalizingOrder -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
-                    try {
-                        Write-ToLogFile -I -C FinalizingOrder -M "Validation required, start submitting Challenge."
-                        Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
-                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                        Write-ToLogFile -I -C FinalizingOrder -M "Submitted the Challenge successfully."
-                    } catch {
-                        Write-DisplayText -ForeGroundColor Red " ERROR"
-                        Write-ToLogFile -E -C FinalizingOrder -M "Caught an error. Exception Message: $($_.Exception.Message)"
-                        Write-Error "Error while submitting the Challenge"
-                        TerminateScript 1 "Error while submitting the Challenge"
-                    }
-                    Write-DisplayText -ForeGroundColor Green " Sent Successfully"
-                } elseif ($PAOrderItem.DNS01Status -like "valid") {
-                    Write-ToLogFile -I -C FinalizingOrder -M "The item is valid."
-                    $DNSObject.Done = $true
-                    Write-DisplayText -ForeGroundColor Green " Still valid"
-                } else {
-                    Write-ToLogFile -W -C FinalizingOrder -M "Unexpected status: $($PAOrderItem.DNS01Status)"
-                }
-                $PAOrderItem = $null
-            }
-            $i = 1
-            Write-DisplayText -Title "Validation"
-            Write-ToLogFile -I -C FinalizingOrder -M "Start validation."
-            while ($i -le 20) {
-                Write-DisplayText -Line "Attempt"
-                Write-DisplayText "$i"
-                Write-ToLogFile -I -C FinalizingOrder -M "Validation attempt: $i"
-                $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
-                    if ($DNSObject.Done -eq $false) {
-                        Write-DisplayText -Line "DNS Hostname"
-                        Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
-                        try {
-                            $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
-                            Write-ToLogFile -D -C FinalizingOrder -M "OrderItem:"
-                            $PAOrderItem | Select-Object fqdn, status, DNS01Status, expires | ForEach-Object {
-                                Write-ToLogFile -D -C FinalizingOrder -M "$($_ | ConvertTo-Json -Compress)"
-                            }
-                            Write-DisplayText -Line "Status"
-                            switch ($PAOrderItem.DNS01Status.ToLower()) {
-                                "pending" {
-                                    Write-DisplayText -ForeGroundColor Yellow "$($PAOrderItem.DNS01Status)"
-                               }
-                                "invalid" {
-                                    $DNSObject.Done = $true
-                                    Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.DNS01Status)"
-                                }
-                                "valid" {
-                                    $DNSObject.Done = $true
-                                    Write-DisplayText -ForeGroundColor Green "$($PAOrderItem.DNS01Status)"
-                                }
-                                default {
-                                    Write-DisplayText -ForeGroundColor Red "UNKNOWN [$($PAOrderItem.DNS01Status)]"
-                                }
-                            }
-                            Write-ToLogFile -I -C FinalizingOrder -M "$($DNSObject.DNSName): $($PAOrderItem.DNS01Status)"
-                        } catch {
-                            Write-ToLogFile -E -C FinalizingOrder -M "Error while Retrieving validation status. Exception Message: $($_.Exception.Message)"
-                            Write-Error "Error while Retrieving validation status"
-                            TerminateScript 1 "Error while Retrieving validation status"
-                        }
-                        $PAOrderItem = $null
+                Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
+                $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
+                Write-DisplayText -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
+                $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
+                if (-not ($answer.ToLower() -eq "yes")) {
+                    Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
+                    $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue, or something else to stop and exit"
+                    if (-not ($answer.ToLower() -eq "yes")) {
+                        Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
+                        Exit (0)
                     }
                 }
-                if (-NOT ($SessionRequestObject.DNSObjects | Where-Object { $_.Done -eq $false })) {
-                    Write-ToLogFile -I -C FinalizingOrder -M "All items validated."
-                    if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "invalid" }) {
-                        Write-DisplayText -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
-                        Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, invalid items found!"
-                        TerminateScript 1 "Validation Failed, invalid items found!"
-                    }
-                    if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "pending" }) {
-                        Write-DisplayText -ForegroundColor Red "`r`nERROR: Validation Failed, still pending items left! Exiting now!"
-                        Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, still pending items left!"
-                        TerminateScript 1 "Validation Failed, still pending items left!"
-                    }
-                    break
-                }
-                Write-ToLogFile -I -C FinalizingOrder -M "Waiting, round: $i"
-                Start-Sleep -Seconds 15
-                $i++
-                Write-DisplayText -Blank
-            }
-        }
-    
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-DisplayText -Title "Certificates"
-            Write-DisplayText -Line "Status"
-            Write-ToLogFile -I -C FinalizingOrder -M "Checking if order is ready."
-            $Order = $PAOrder | Posh-ACME\Get-PAOrder -Refresh
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            Write-ToLogFile -D -C FinalizingOrder -M "Order state: $($Order.status)"
-            if ($Order.status -eq "ready") {
-                Write-ToLogFile -I -C FinalizingOrder -M "Order is ready."
-            } else {
-                Invoke-RegisterError 1 "Order not ready! Order state: $($Order.status)"
-                Write-DisplayText -ForeGroundColor Red " Error, order not ready! Order state: $($Order.status)"
-                Write-ToLogFile -E -C FinalizingOrder -M "Order is still not ready, validation failed?"
-            }
-            if ($SessionRequestObject.ExitCode -eq 0) {
-                Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
+                Write-DisplayText "Continuing, Waiting 30 seconds for the records to settle"
+                Start-Sleep -Seconds 30
+                Write-ToLogFile -I -C DNSChallenge -M "Start verifying the TXT records."
+                $issues = $false
                 try {
-                    $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction Stop
-                    Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
-                    Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
-                    $PAOrder = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN)
-                    $CertRequest.CertExpires = $PAOrder.CertExpires
-                    $CertRequest.RenewAfter = $PAOrder.RenewAfter
-                    Write-ToLogFile -D -C FinalizingOrder -M "CertExpires: $($CertRequest.CertExpires) | RenewAfter: $($CertRequest.RenewAfter)"
-                } catch {
-                    Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Start-Sleep -Seconds 1
-            }
-        }
-    
-        #endregion FinalizingOrder
-    
-        #region CertFinalization
-    
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            $CertificateAlias = "CRT-SAN-$SessionDateTime-$($CertRequest.CN.Replace('*.',''))"
-            $CertificateDirectory = Join-Path -Path $($CertRequest.CertDir) -ChildPath "$CertificateAlias"
-            Write-ToLogFile -I -C CertFinalization -M "Create directory `"$CertificateDirectory`" for storing the new certificates."
-            New-Item $CertificateDirectory -ItemType directory -force | Out-Null
-            $CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$($CertRequest.CN.Replace('*.',''))"
-            if (Test-Path $CertificateDirectory) {
-                Write-ToLogFile -I -C CertFinalization -M "Retrieving certificate info."
-                $PACertificate = Posh-ACME\Get-PACertificate -MainDomain $($CertRequest.CN)
-                Write-ToLogFile -I -C CertFinalization -M "Retrieved successfully."
-                $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
-                $CAName = $ChainFile.DnsNameList.Unicode.Replace("'", "")
-                $IntermediateCACertKeyName = "$($CAName)-int"
-                $IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
-                $IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
-    
-                Write-ToLogFile -D -C CertFinalization -M "Intermediate: `"$IntermediateCAFileName`"."
-                Copy-Item $PACertificate.ChainFile -Destination $IntermediateCAFullPath -Force
-                if ($Production) {
-                    if ($CertificateName.length -ge 31) {
-                        $CertificateName = "$($CertificateName.subString(0,31))"
-                        Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
-                    } else {
-                        $CertificateName = "$CertificateName"
-                        Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
-                    }
-                    if ($CertificateAlias.length -ge 59) {
-                        $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
-                        Write-ToLogFile -D -C CertFinalization -M "Certificate (new name): `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
-                        $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
-                        Write-ToLogFile -D -C CertFinalization -M "Key (new name): `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
-                    } else {
-                        $CertificateFileName = "$($CertificateAlias).crt"
-                        Write-ToLogFile -D -C CertFinalization -M "Certificate: `"$CertificateFileName`" ($($CertificateFileName.length) max 63)"
-                        $CertificateKeyFileName = "$($CertificateAlias).key"
-                        Write-ToLogFile -D -C CertFinalization -M "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
-                    }
-                    $CertificatePfxFileName = "$CertificateAlias.pfx"
-                    $CertificatePemFileName = "$CertificateAlias.pem"
-                    $CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
-                } else {
-                    if ($CertificateName.length -ge 27) {
-                        $CertificateName = "TST-$($CertificateName.subString(0,27))"
-                        Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
-                    } else {
-                        $CertificateName = "TST-$($CertificateName)"
-                        Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
-                    }
-                    if ($CertificateAlias.length -ge 55) {
-                        $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
-                        Write-ToLogFile -D -C CertFinalization -M "Certificate (new name): `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
-                        $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
-                        Write-ToLogFile -D -C CertFinalization -M "Key (new name): `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
-                    } else {
-                        $CertificateFileName = "TST-$($CertificateAlias).crt"
-                        Write-ToLogFile -D -C CertFinalization -M "Certificate: `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
-                        $CertificateKeyFileName = "TST-$($CertificateAlias).key"
-                        Write-ToLogFile -D -C CertFinalization -M "Key: `"$CertificateKeyFileName`"($($CertificateFileName.length) max 63)"
-                    }
-                    $CertificatePfxFileName = "TST-$CertificateAlias.pfx"
-                    $CertificatePemFileName = "TST-$CertificateAlias.pem"
-                    $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
-                $CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
-                $CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
-                $CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
-                Write-ToLogFile -D -C CertFinalization -M "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
-                Copy-Item $PACertificate.CertFile -Destination $CertificateFullPath -Force
-                Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
-                Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
-                $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
-                $NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
-                Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
-            } else {
-                Write-ToLogFile -E -C CertFinalization -M "Could not test Certificate directory."
-            }
-        }
-    
-        #endregion CertFinalization
-    
-        #region ADC-CertUpload
-    
-        if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
-            try {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the certificate to the Citrix ADC."
-                Write-ToLogFile -D -C ADC-CertUpload -M "Retrieving existing CA Intermediate Certificate."
-                $Filters = @{"serial" = "$($ChainFile.SerialNumber)" }
-                $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
-                if ([String]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "Second attempt, trying without leading zero's."
-                    $Filters = @{"serial" = "$($ChainFile.SerialNumber.TrimStart("00"))" }
-                    $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -D -C ADC-CertUpload -M "Details:"
-                $ADCIntermediateCA.sslcertkey | Select-Object certkey, issuer, subject, serial, clientcertnotbefore, clientcertnotafter | ForEach-Object {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
-                }
-                Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists."
-                if ([String]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
-                    try {
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Uploading `"$IntermediateCAFileName`" to the ADC."
-                        $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
-                        $payload = @{"filename" = "$IntermediateCAFileName"; "filecontent" = "$IntermediateCABase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Succeeded, Add the certificate to the ADC config."
-                        $payload = @{"certkey" = "$IntermediateCACertKeyName"; "cert" = "/nsconfig/ssl/$($IntermediateCAFileName)"; }
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Certificate added."
-                    } catch {
-                        Write-Warning "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required"
-                        Write-ToLogFile -W -C ADC-CertUpload -M "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required."
-                    }
-                } else {
-                    $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
-                    Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" for later use."
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if ([String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
-                    Write-ToLogFile -I -C ADC-CertUpload -M "CertKeyNameToUpdate variable was not configured."
-                    $ExistingCertificateDetails = $Null
-                } else {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "CertKeyNameToUpdate: `"$($CertRequest.CertKeyNameToUpdate)`""
-
-                    Write-ToLogFile -I -C ADC-CertUpload -M "CertKeyNameToUpdate variable was configured, trying to retrieve data."
-                    $Filters = @{"certkey" = "$($CertRequest.CertKeyNameToUpdate)" }
-                    $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $($CertRequest.CertKeyNameToUpdate) -Filters $Filters -ErrorAction SilentlyContinue } catch { $null }
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
-                    $CertificateCertKeyName = $($ExistingCertificateDetails.sslcertkey.certkey)
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$CertificateCertKeyName`" found on the ADC, start updating."
-                    try {
-                        Write-ToLogFile -D -C ADC-CertUpload -M "Unlinking certificate."
-                        $payload = @{"certkey" = "$CertificateCertKeyName"; }
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
-    
-                    } catch {
-                        Write-ToLogFile -D -C ADC-CertUpload -M "Certificate was not linked."
-                    }
-                    $ADCCertKeyUpdating = $true
-                } else {
-                    Write-ToLogFile -I -C ADC-CertUpload -M "No existing certificate found on the ADC that needs to be updated."
-                    $CertRequest.RemovePrevious = $false
-                    if (-Not [String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
-                        $CertificateCertKeyName = $($CertRequest.CertKeyNameToUpdate)
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$($CertRequest.CertKeyNameToUpdate)`""
-                    } else {
-                        $CertificateCertKeyName = $CertificateName
-                        $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
-                        if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
-                            Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
-                            Write-ToLogFile -W -C ADC-CertUpload -M "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
-                            TerminateScript 1 "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
-                        }
-                    }
-                    $ADCCertKeyUpdating = $false
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -D -C ADC-CertUpload -M "CertificateName: $CertificateName"
-                Write-ToLogFile -D -C ADC-CertUpload -M "CertificateCertKeyName: $CertificateCertKeyName"
-                $CertificatePfxBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificatePfxFullPath -Encoding "Byte"))
-                Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the Pfx certificate."
-                $payload = @{"filename" = "$CertificatePfxFileName"; "filecontent" = "$CertificatePfxBase64"; filelocation = "/nsconfig/ssl/"; fileencoding = "BASE64"; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
-    
-                if ($ADCVersion -lt 12) {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is lower than 12, converting the Pfx certificate to a pem file ($CertificatePemFileName)"
-                    $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(ConvertTo-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
-                    $payload = @{certkey = "$CertificateCertKeyName"; cert = "$CertificatePemFileName"; key = $CertificatePemFileName; password = "true"; inform = "PEM"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
-                } else {
-                    Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is higher than 12, using Pfx certificates"
-                    $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePfxFileName; password = "true"; inform = "PFX"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
-                }
-                try {
-                    if ($ADCCertKeyUpdating) {
-                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Updated successfully."
-                        if ($CertRequest.RemovePrevious) {
-                            try {
-                                Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was specified, retrieving files."
-                                $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.cert)"; filelocation = "/nsconfig/ssl/" }
-                                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
-                                $PreviousCertFileName = $response.systemfile.filename
-                                Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousCertFileName: `"$PreviousCertFileName`""
-                                $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.key)"; filelocation = "/nsconfig/ssl/" }
-                                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
-                                $PreviousKeyFileName = $response.systemfile.filename
-                                Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousKeyFileName: `"$PreviousKeyFileName`""
-                                $Arguments = @{ filelocation = "/nsconfig/ssl/" }
-                                if (-Not [String]::IsNullOrEmpty($PreviousCertFileName)) {
-                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousCertFileName`""
-                                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousCertFileName -Arguments $Arguments
-                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
-                                }
-                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                                if ((-Not [String]::IsNullOrEmpty($PreviousKeyFileName)) -And ($PreviousCertFileName -ne $PreviousKeyFileName)) {
-                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousKeyFileName`""
-                                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousKeyFileName -Arguments $Arguments
-                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
-                                } else {
-                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "Same file, `"/nsconfig/ssl/$PreviousKeyFileName`" was already removed."
-                                }
-                            } catch {
-                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
-                            }
-                        } else {
-                            Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was NOT specified, not removing previous files."
-                        }
-                    } else {
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Add the certificate and key to the ADC config."
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Added successfully."
-                    }
-                } catch {
-                    Write-Warning "Caught an error, certificate not added to the ADC Config"
-                    Write-Warning "Details: $($_.Exception.Message | Out-String)"
-                    Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, certificate not added to the ADC Config. Exception Message: $($_.Exception.Message)"
-                }
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
-                try {
-                    $payload = @{"certkey" = "$CertificateCertKeyName"; "linkcertkeyname" = "$IntermediateCACertKeyName"; }
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Link successfully."
-                } catch {
-                    Write-Warning -Message "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`""
-                    Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
-                    Write-ToLogFile -E -C ADC-CertUpload -M "Exception Message: $($_.Exception.Message)"
-                }
-                Write-DisplayText -ForeGroundColor Green " Ready"
-
-                if ($PfxPasswordGenerated) {
-                    Write-DisplayText -Blank
-                    Write-Warning "No Password was specified, so a random password was generated!"
-                    Write-ToLogFile -W -C ADC-CertUpload -M "No Password was specified, so a random password was generated! (Password not saved in Log)"
-                    Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-                    Write-DisplayText -Blank
-                    Write-DisplayText -Line "PFX Password"
-                    Write-DisplayText -ForeGroundColor Yellow $(ConvertTo-PlainText -SecureString $PfxPassword)
-                    Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-                }
-                Write-DisplayText -Line "Certificate Usage" 
-                if ($Production) {
-                    Write-DisplayText -ForeGroundColor Cyan "Production"
-                } else {
-                    Write-DisplayText -ForeGroundColor Yellow "!! Test !!"
-                }
-                Write-DisplayText -Line "Keysize"
-                Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.KeyLength)"
-                Write-DisplayText -Line "Certkey Name" 
-                Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
-                Write-DisplayText -Line "Certificate expires" 
-                Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
-                Write-DisplayText -Line "Renew after" 
-                Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
-                Write-DisplayText -Line "Cert Dir" 
-                Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
-                Write-DisplayText -Line "CRT Filename"
-                Write-DisplayText -ForeGroundColor Cyan $CertificateFileName
-                Write-DisplayText -Line "KEY Filename"
-                Write-DisplayText -ForeGroundColor Cyan $CertificateKeyFileName
-                Write-DisplayText -Line "PFX Filename"
-                Write-DisplayText -ForeGroundColor Cyan $CertificatePfxFileName
-                Write-DisplayText -Line "PFX (with Chain)"
-                Write-DisplayText -ForeGroundColor Cyan $CertificatePfxWithChainFileName
-                Write-DisplayText -Line "Certificate State"
-                Write-DisplayText -ForeGroundColor Green "Finished with the certificate for CN: $($CertRequest.CN)!"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Keysize: $($CertRequest.KeyLength)"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
-                Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
-                Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
-                Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
-                Write-ToLogFile -I -C ADC-CertUpload -M "PFX (with Chain): $CertificatePfxWithChainFileName"
-                Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificate for CN: $($CertRequest.CN)!"
-
-                $MailData += "Certificates stored in: $CertificateDirectory"
-                try {
-                    $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
-                    $MailData += "CRT Filename: $CertificateFileName"
-                    $MailData += "PFX Filename: $CertificatePfxFileName"
-                    $MailData += "Valid until: $($MailCertificate.NotAfter.ToUniversalTime())"
-                    $MailData += "Approved by CA: $($MailCertificate.Issuer)"
-                    $MailData += "CN: $($MailCertificate.Subject)"
-                    $MailData += "SANs: $($MailCertificate.DnsNameList.Unicode -Join ", ")"
-                    $MailData += "Public Key Size: $($MailCertificate.PublicKey.key.KeySize)"
-                } catch { }
-
-                ##Saving Config if required    
-                Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
-
-                #region IISActions
-    
-                if ($UpdateIIS) {
-                    Write-DisplayText -Title "IIS"
-                    try {
-                        Import-Module WebAdministration -ErrorAction Stop
-                        $WebAdministrationModule = $true
-                    } catch {
-                        $WebAdministrationModule = $false
-                    }
-                    if ($WebAdministrationModule) {
-                        try {
-                            Write-DisplayText -Line "IIS Site" 
-                            Write-DisplayText -ForeGroundColor Cyan $IISSiteToUpdate
-                            $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
-                            Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
-                            Write-DisplayText -Line "Binding" 
-                            $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
-                            if ($CurrentWebBinding) {
-                                Write-ToLogFile -I -C IISActions -M "Current binding exists."
-                                Write-DisplayText -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
-                                $CurrentCertificateBinding = Get-Item IIS:\SslBindings\0.0.0.0!443 -ErrorAction SilentlyContinue
-                                Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
-                                Write-DisplayText -Line "Unbinding Current Cert" 
-                                Write-ToLogFile -I -C IISActions -M "Unbinding Current Certificate, $($CurrentCertificateBinding.Thumbprint)"
-                                $CurrentCertificateBinding | Remove-Item -ErrorAction SilentlyContinue
-                                Write-DisplayText -ForeGroundColor Yellow "Removed [$($CurrentCertificateBinding.Thumbprint)]"
-                            } else {
-                                Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
-                                try {
-                                    New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
-                                    $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
-                                    Write-DisplayText -ForeGroundColor Green "New, created [$($CurrentWebBinding.bindingInformation)]"
-                                    Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
-                                } catch {
-                                    Write-DisplayText -ForeGroundColor Red "Failed"
-                                    Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
-                                }
-                            }
-                            try {
-                                Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
-                                Write-DisplayText -Line "Binding New Cert" 
-                                New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
-                                Write-DisplayText -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
-                                $MailData += "IIS Binding updated for site `"$IISSiteToUpdate`": $($ImportedCertificate.Thumbprint)"
-                            } catch {
-                                Write-DisplayText -ForeGroundColor Red "Could not bind"
-                                Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
-                            }
-                        } catch {
-                            Write-DisplayText -ForeGroundColor Red "Caught an error while updating"
-                            Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
-                        }
-                    } else {
-                        Write-DisplayText -Line "Module" 
-                        Write-DisplayText -ForeGroundColor Red "WebAdministration Module could not be found, please install feature!"
-                    }
-                }
-    
-                #endregion IISActions
-    
-                if ($CertRequest.ValidationMethod -eq "dns") {
-                    Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
-                    Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
-                    Write-DisplayText -ForegroundColor Magenta "********************************************************************"
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
-                    foreach ($Record in $TXTRecords) {
-                        Write-DisplayText -Blank
+                    Write-DisplayText -Title "Pre-Checking the TXT records"
+                    Foreach ($Record in $TXTRecords) {
                         Write-DisplayText -Line "DNS Hostname"
                         Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                        Write-DisplayText -Line "TXT Record Name"
-                        Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                        Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
+                        Write-DisplayText -Line "TXT Record check"
+                        Write-ToLogFile -I -C DNSChallenge -M "Trying to retrieve the TXT record for `"$($Record.fqdn)`"."
+                        $result = $null
+                        $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
+                        if ([String]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
+                            Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records."
+                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
+                        } else {
+                            Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$($dnsserver.PrimaryServer)`" for resolving the TXT records."
+                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly
+                        }
+                        Write-ToLogFile -D -C DNSChallenge -M "Output: $($result | ConvertTo-Json -Compress)"
+                        if ([String]::IsNullOrWhiteSpace($result.Strings -like "*$($Record.TXTValue)*")) {
+                            Write-DisplayText -ForegroundColor Yellow "Could not determine"
+                            $issues = $true
+                            Write-ToLogFile -W -C DNSChallenge -M "Could not determine."
+                        } else {
+                            Write-DisplayText -ForegroundColor Green "OK"
+                            Write-ToLogFile -I -C DNSChallenge -M "Check OK."
+                        }
                     }
+                } catch {
+                    Write-ToLogFile -E -C DNSChallenge -M "Caught an error. Exception Message: $($_.Exception.Message)"
+                    $issues = $true
+                }
+                if ($issues) {
                     Write-DisplayText -Blank
-                    Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                    Write-Warning "Found issues during the initial test. TXT validation might fail. Waiting an additional 30 seconds before continuing..."
+                    Write-ToLogFile -W -C DNSChallenge -M "Found issues during the initial test. TXT validation might fail."
+                    Start-Sleep -Seconds 20
                 }
-                if (-not $Production) {
-                    Write-DisplayText -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
-                    Write-DisplayText -ForeGroundColor Yellow "Add the `"-Production`" parameter and rerun the same script." -PostBlank
-                    Write-ToLogFile -I -C ADC-CertUpload -M "You are now ready for the Production version! Add the `"-Production`" parameter and rerun the same script."
-                }
-            } catch {
-                Write-ToLogFile -E -C ADC-CertUpload -M "Certificate completion failed. Exception Message: $($_.Exception.Message)"
-                Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
-                TerminateScript 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
             }
-            if ($SessionRequestObject.ErrorOccurred -gt 0 ) {
-                Write-DisplayText -Blank
-                Write-Warning "There were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!"
-                $MailData += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
-            }
-
-        }
     
-        #endregion ADC-CertUpload
+            #endregion DNSChallenge
+    
+            #region FinalizingOrder
+    
+            if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-ToLogFile -I -C FinalizingOrder -M "Check if DNS Records need to be validated."
+                Write-DisplayText -Title "Sending Acknowledgment"
+                $DNSValidationError = $false
+                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                    Write-DisplayText -Line "DNS Hostname"
+                    Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
+                    Write-ToLogFile -I -C FinalizingOrder -M "Validating item: `"$($DNSObject.DNSName)`"."
+                    Write-DisplayText -Line "Send Ack"
+                    $PAOrderItem = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -D -C FinalizingOrder -M "OrderItem:"
+                    $PAOrderItem | Select-Object fqdn, status, DNS01Status, expires | ForEach-Object {
+                        Write-ToLogFile -D -C FinalizingOrder -M "$($_ | ConvertTo-Json -Compress)"
+                    }
+                    if (($PAOrderItem.DNS01Status -notlike "valid") -and ($PAOrderItem.DNS01Status -notlike "invalid")) {
+                        try {
+                            Write-ToLogFile -I -C FinalizingOrder -M "Validation required, start submitting Challenge."
+                            Posh-ACME\Send-ChallengeAck -ChallengeUrl $($PAOrderItem.DNS01Url) -Account $PAAccount
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            Write-ToLogFile -I -C FinalizingOrder -M "Submitted the Challenge successfully."
+                        } catch {
+                            Write-DisplayText -ForeGroundColor Red " ERROR"
+                            Write-ToLogFile -E -C FinalizingOrder -M "Caught an error. Exception Message: $($_.Exception.Message)"
+                            Write-Error "Error while submitting the Challenge"
+                            $DNSValidationError = $true
+                            Invoke-RegisterError 1 "Error while submitting the Challenge"
+                            Break
+                        }
+                        Write-DisplayText -ForeGroundColor Green " Sent Successfully"
+                    } elseif ($PAOrderItem.DNS01Status -like "valid") {
+                        Write-ToLogFile -I -C FinalizingOrder -M "The item is valid."
+                        $DNSObject.Done = $true
+                        Write-DisplayText -ForeGroundColor Green " Still valid"
+                    } else {
+                        Write-ToLogFile -W -C FinalizingOrder -M "Unexpected status: $($PAOrderItem.DNS01Status)"
+                    }
+                    $PAOrderItem = $null
+                }
+                if ($DNSValidationError) {
+                    Continue
+                }
+                $i = 1
+                Write-DisplayText -Title "Validation"
+                Write-ToLogFile -I -C FinalizingOrder -M "Start validation."
+                $ValidationError = $false
+                while ($i -le 20) {
+                    Write-DisplayText -Line "Attempt"
+                    Write-DisplayText "$i"
+                    Write-ToLogFile -I -C FinalizingOrder -M "Validation attempt: $i"
+                    $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                    Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                        if ($DNSObject.Done -eq $false -And (-Not $ValidationError)) {
+                            Write-DisplayText -Line "DNS Hostname"
+                            Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
+                            try {
+                                $PAOrderItem = $PAOrderItems | Where-Object { $_.fqdn -eq $DNSObject.DNSName }
+                                Write-ToLogFile -D -C FinalizingOrder -M "OrderItem:"
+                                $PAOrderItem | Select-Object fqdn, status, DNS01Status, expires | ForEach-Object {
+                                    Write-ToLogFile -D -C FinalizingOrder -M "$($_ | ConvertTo-Json -Compress)"
+                                }
+                                Write-DisplayText -Line "Status"
+                                switch ($PAOrderItem.DNS01Status.ToLower()) {
+                                    "pending" {
+                                        Write-DisplayText -ForeGroundColor Yellow "$($PAOrderItem.DNS01Status)"
+                                    }
+                                    "invalid" {
+                                        $DNSObject.Done = $true
+                                        Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.DNS01Status)"
+                                    }
+                                    "valid" {
+                                        $DNSObject.Done = $true
+                                        Write-DisplayText -ForeGroundColor Green "$($PAOrderItem.DNS01Status)"
+                                    }
+                                    default {
+                                        Write-DisplayText -ForeGroundColor Red "UNKNOWN [$($PAOrderItem.DNS01Status)]"
+                                    }
+                                }
+                                Write-ToLogFile -I -C FinalizingOrder -M "$($DNSObject.DNSName): $($PAOrderItem.DNS01Status)"
+                            } catch {
+                                Write-ToLogFile -E -C FinalizingOrder -M "Error while Retrieving validation status. Exception Message: $($_.Exception.Message)"
+                                Write-Error "Error while Retrieving validation status"
+                                $ValidationError = $true
+                                Invoke-RegisterError 1 "Error while Retrieving validation status"
+                                Break
+                            }
+                            $PAOrderItem = $null
+                        }
+                    }
+                    if ($ValidationError) {
+                        Break
+                    }
+                    if (-NOT ($SessionRequestObject.DNSObjects | Where-Object { $_.Done -eq $false })) {
+                        Write-ToLogFile -I -C FinalizingOrder -M "All items validated."
+                        if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "invalid" }) {
+                            Write-DisplayText -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
+                            Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, invalid items found!"
+                            $ValidationError = $true
+                            Invoke-RegisterError 1 "Validation Failed, invalid items found!"
+                        }
+                        if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "pending" }) {
+                            Write-DisplayText -ForegroundColor Red "`r`nERROR: Validation Failed, still pending items left! Exiting now!"
+                            Write-ToLogFile -E -C FinalizingOrder -M "Validation Failed, still pending items left!"
+                            $ValidationError = $true
+                            Invoke-RegisterError 1 "Validation Failed, still pending items left!"
+                        }
+                        break
+                    }
+                    Write-ToLogFile -I -C FinalizingOrder -M "Waiting, round: $i"
+                    Start-Sleep -Seconds 15
+                    $i++
+                    Write-DisplayText -Blank
+                }
+            }
+            if ($ValidationError) {
+                Continue
+            }
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-DisplayText -Title "Certificates"
+                Write-DisplayText -Line "Status"
+                Write-ToLogFile -I -C FinalizingOrder -M "Checking if order is ready."
+                $PAOrder = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN)
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                Write-ToLogFile -D -C FinalizingOrder -M "Order state: $($PAOrder.status)"
+                if ($PAOrder.status -eq "ready") {
+                    Write-ToLogFile -I -C FinalizingOrder -M "Order is ready."
+                } else {
+                    Invoke-RegisterError 1 "Order not ready! Order state: $($PAOrder.status)"
+                    Write-DisplayText -ForeGroundColor Red " Error, order not ready! Order state: $($PAOrder.status)"
+                    Write-ToLogFile -E -C FinalizingOrder -M "Order is still not ready, validation failed?"
+                }
+                if ($SessionRequestObject.ExitCode -eq 0) {
+                    Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
+                    try {
+                        if ($CertRequest.ForceCertRenew) {
+                            $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -Force -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction stop
+                        } else {
+                            $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction stop
+                        }
+                        Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -Compress)"
+                        Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
+                    } catch {
+                        Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Start-Sleep -Seconds 1
+                }
+            }
+    
+            #endregion FinalizingOrder
+    
+            #region CertFinalization
+    
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                $CertificateAlias = "CRT-SAN-$SessionDateTime-$($CertRequest.CN.Replace('*.',''))"
+                $CertificateDirectory = Join-Path -Path $($CertRequest.CertDir) -ChildPath "$CertificateAlias"
+                Write-ToLogFile -I -C CertFinalization -M "Create directory `"$CertificateDirectory`" for storing the new certificates."
+                New-Item $CertificateDirectory -ItemType directory -force | Out-Null
+                $CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$($CertRequest.CN.Replace('*.',''))"
+                if (Test-Path $CertificateDirectory) {
+                    Write-ToLogFile -I -C CertFinalization -M "Retrieving certificate info."
+                    $PACertificate = Posh-ACME\Get-PACertificate -MainDomain $($CertRequest.CN)
+                    Write-ToLogFile -I -C CertFinalization -M "Retrieved successfully."
+                    if ([String]::IsNullOrEmpty($($PACertificate.ChainFile))) {
+                        Write-DisplayText -ForeGroundColor Red " Error, certificate not found!"
+                        Write-ToLogFile -E -C CertFinalization -M "No Certificate Found!"
+                        Invoke-RegisterError 1 "No Certificate Found!"
+                        Continue
+                    }
+                    $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
+                    $CAName = $ChainFile.DnsNameList.Unicode.Replace("'", "")
+                    $IntermediateCACertKeyName = "$($CAName)-int"
+                    $IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
+                    $IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
+    
+                    Write-ToLogFile -D -C CertFinalization -M "Intermediate: `"$IntermediateCAFileName`"."
+                    Copy-Item $PACertificate.ChainFile -Destination $IntermediateCAFullPath -Force
+                    if ($Production) {
+                        if ($CertificateName.length -ge 31) {
+                            $CertificateName = "$($CertificateName.subString(0,31))"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        } else {
+                            $CertificateName = "$CertificateName"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        }
+                        if ($CertificateAlias.length -ge 59) {
+                            $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
+                            $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
+                            $CertificatePfxFileName = "$($CertificateAlias.subString(0,59)).pfx"
+                            $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
+                        } else {
+                            $CertificateFileName = "$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "$($CertificateAlias).key"
+                            $CertificatePfxFileName = "$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "$($CertificateAlias).pem"
+                        }
+                        $CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
+                    } else {
+                        if ($CertificateName.length -ge 27) {
+                            $CertificateName = "TST-$($CertificateName.subString(0,27))"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        } else {
+                            $CertificateName = "TST-$($CertificateName)"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        }
+                        if ($CertificateAlias.length -ge 55) {
+                            $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
+                            $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
+                            $CertificatePfxFileName = "TST-$($CertificateAlias.subString(0,55)).pfx"
+                            $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
+                        } else {
+                            $CertificateFileName = "TST-$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "TST-$($CertificateAlias).key"
+                            $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "TST-$($CertificateAlias).pem"
+                        }
+                        $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
+                    }
+                    Write-ToLogFile -D -C CertFinalization -M "Crt: `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
+                    Write-ToLogFile -D -C CertFinalization -M "Key: `"$CertificateKeyFileName`"($($CertificateKeyFileName.length) max 63)"
+                    Write-ToLogFile -D -C CertFinalization -M "Pfx: `"$CertificatePfxFileName`"($($CertificatePfxFileName.length) max 63)"
+                    Write-ToLogFile -D -C CertFinalization -M "Pem: `"$CertificatePemFileName`"($($CertificatePemFileName.length) max 63)"
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
+                    $CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
+                    $CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
+                    $CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
+                    Write-ToLogFile -D -C CertFinalization -M "PFX: `"$CertificatePfxFileName`" ($($CertificatePfxFileName.length))"
+                    Copy-Item $PACertificate.CertFile -Destination $CertificateFullPath -Force
+                    Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
+                    Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
+                    $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
+                    $NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
+                    Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
+                    if ($CertRequest.ForceCertRenew) {
+                        $CertRequest.ForceCertRenew = $false
+                        Write-ToLogFile -D -C CertFinalization -M "ForceCertRenew was reset to `"false`""
+                    }
+                    
+                } else {
+                    Write-ToLogFile -E -C CertFinalization -M "Could not test Certificate directory."
+                }
+            }
+    
+            #endregion CertFinalization
+    
+            #region ADC-CertUpload
+    
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
+                try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the certificate to the Citrix ADC."
+                    Write-ToLogFile -D -C ADC-CertUpload -M "Retrieving existing CA Intermediate Certificate."
+                    $Filters = @{"serial" = "$($ChainFile.SerialNumber)" }
+                    $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
+                    if ([String]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Second attempt, trying without leading zero's."
+                        $Filters = @{"serial" = "$($ChainFile.SerialNumber.TrimStart("00"))" }
+                        $ADCIntermediateCA = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Filters $Filters -ErrorAction SilentlyContinue
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -D -C ADC-CertUpload -M "Details:"
+                    $ADCIntermediateCA.sslcertkey | Select-Object certkey, issuer, subject, serial, clientcertnotbefore, clientcertnotafter | ForEach-Object {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
+                    }
+                    Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists."
+                    if ([String]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
+                        try {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Uploading `"$IntermediateCAFileName`" to the ADC."
+                            $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
+                            $payload = @{"filename" = "$IntermediateCAFileName"; "filecontent" = "$IntermediateCABase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Succeeded, Add the certificate to the ADC config."
+                            $payload = @{"certkey" = "$IntermediateCACertKeyName"; "cert" = "/nsconfig/ssl/$($IntermediateCAFileName)"; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Certificate added."
+                        } catch {
+                            Write-Warning "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required"
+                            Write-ToLogFile -W -C ADC-CertUpload -M "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required."
+                        }
+                    } else {
+                        $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
+                        Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" for later use."
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ([String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
+                        Write-ToLogFile -I -C ADC-CertUpload -M "CertKeyNameToUpdate variable was not configured."
+                        $ExistingCertificateDetails = $Null
+                    } else {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "CertKeyNameToUpdate: `"$($CertRequest.CertKeyNameToUpdate)`""
+
+                        Write-ToLogFile -I -C ADC-CertUpload -M "CertKeyNameToUpdate variable was configured, trying to retrieve data."
+                        $Filters = @{"certkey" = "$($CertRequest.CertKeyNameToUpdate)" }
+                        $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $($CertRequest.CertKeyNameToUpdate) -Filters $Filters -ErrorAction SilentlyContinue } catch { $null }
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
+                        $CertificateCertKeyName = $($ExistingCertificateDetails.sslcertkey.certkey)
+                        Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$CertificateCertKeyName`" found on the ADC, start updating."
+                        try {
+                            Write-ToLogFile -D -C ADC-CertUpload -M "Unlinking certificate."
+                            $payload = @{"certkey" = "$CertificateCertKeyName"; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
+    
+                        } catch {
+                            Write-ToLogFile -D -C ADC-CertUpload -M "Certificate was not linked."
+                        }
+                        $ADCCertKeyUpdating = $true
+                    } else {
+                        Write-ToLogFile -I -C ADC-CertUpload -M "No existing certificate found on the ADC that needs to be updated."
+                        $CertRequest.RemovePrevious = $false
+                        if (-Not [String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
+                            $CertificateCertKeyName = $($CertRequest.CertKeyNameToUpdate)
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$($CertRequest.CertKeyNameToUpdate)`""
+                        } else {
+                            $CertificateCertKeyName = $CertificateName
+                            $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
+                            if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
+                                Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
+                                Write-ToLogFile -W -C ADC-CertUpload -M "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
+                                Invoke-RegisterError 1 "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
+                                Continue
+                            }
+                        }
+                        $ADCCertKeyUpdating = $false
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -D -C ADC-CertUpload -M "CertificateName: $CertificateName"
+                    Write-ToLogFile -D -C ADC-CertUpload -M "CertificateCertKeyName: $CertificateCertKeyName"
+                    $CertificatePfxBase64 = [System.Convert]::ToBase64String($(Get-Content $CertificatePfxFullPath -Encoding "Byte"))
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Uploading the Pfx certificate."
+                    $payload = @{"filename" = "$CertificatePfxFileName"; "filecontent" = "$CertificatePfxBase64"; filelocation = "/nsconfig/ssl/"; fileencoding = "BASE64"; }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
+    
+                    if ($ADCVersion -lt 12) {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is lower than 12, converting the Pfx certificate to a pem file ($CertificatePemFileName)"
+                        $payload = @{"outfile" = "$CertificatePemFileName"; "Import" = "true"; "pkcs12file" = "$CertificatePfxFileName"; "des3" = "true"; "password" = "$(ConvertTo-PlainText -SecureString $PfxPassword)"; "pempassphrase" = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslpkcs12 -Payload $payload -Action convert
+                        $payload = @{certkey = "$CertificateCertKeyName"; cert = "$CertificatePemFileName"; key = $CertificatePemFileName; password = "true"; inform = "PEM"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
+                    } else {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "ADC verion is higher than 12, using Pfx certificates"
+                        $payload = @{certkey = $CertificateCertKeyName; cert = $CertificatePfxFileName; key = $CertificatePfxFileName; password = "true"; inform = "PFX"; passplain = "$(ConvertTo-PlainText -SecureString $PfxPassword)" }
+                    }
+                    try {
+                        if ($ADCCertKeyUpdating) {
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Updated successfully."
+                            if ($CertRequest.RemovePrevious) {
+                                try {
+                                    Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was specified, retrieving files."
+                                    $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.cert)"; filelocation = "/nsconfig/ssl/" }
+                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
+                                    $PreviousCertFileName = $response.systemfile.filename
+                                    Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousCertFileName: `"$PreviousCertFileName`""
+                                    $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.key)"; filelocation = "/nsconfig/ssl/" }
+                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
+                                    $PreviousKeyFileName = $response.systemfile.filename
+                                    Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousKeyFileName: `"$PreviousKeyFileName`""
+                                    $Arguments = @{ filelocation = "/nsconfig/ssl/" }
+                                    if (-Not [String]::IsNullOrEmpty($PreviousCertFileName)) {
+                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousCertFileName`""
+                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousCertFileName -Arguments $Arguments
+                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
+                                    }
+                                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                    if ((-Not [String]::IsNullOrEmpty($PreviousKeyFileName)) -And ($PreviousCertFileName -ne $PreviousKeyFileName)) {
+                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousKeyFileName`""
+                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousKeyFileName -Arguments $Arguments
+                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
+                                    } else {
+                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Same file, `"/nsconfig/ssl/$PreviousKeyFileName`" was already removed."
+                                    }
+                                } catch {
+                                    Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
+                                }
+                            } else {
+                                Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was NOT specified, not removing previous files."
+                            }
+                        } else {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Add the certificate and key to the ADC config."
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Added successfully."
+                        }
+                    } catch {
+                        Write-Warning "Caught an error, certificate not added to the ADC Config"
+                        Write-Warning "Details: $($_.Exception.Message | Out-String)"
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, certificate not added to the ADC Config. Exception Message: $($_.Exception.Message)"
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
+                    try {
+                        $payload = @{"certkey" = "$CertificateCertKeyName"; "linkcertkeyname" = "$IntermediateCACertKeyName"; }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link
+                        Write-ToLogFile -I -C ADC-CertUpload -M "Link successfully."
+                    } catch {
+                        Write-Warning -Message "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`""
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Exception Message: $($_.Exception.Message)"
+                    }
+                    Write-DisplayText -ForeGroundColor Green " Ready"
+
+                    if ($PfxPasswordGenerated) {
+                        Write-DisplayText -Blank
+                        Write-Warning "No Password was specified, so a random password was generated!"
+                        Write-ToLogFile -W -C ADC-CertUpload -M "No Password was specified, so a random password was generated! (Password not saved in Log)"
+                        Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
+                        Write-DisplayText -Blank
+                        Write-DisplayText -Line "PFX Password"
+                        Write-DisplayText -ForeGroundColor Yellow $(ConvertTo-PlainText -SecureString $PfxPassword)
+                        Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
+                    }
+                    Write-DisplayText -Line "Certificate Usage" 
+                    if ($Production) {
+                        Write-DisplayText -ForeGroundColor Cyan "Production"
+                    } else {
+                        Write-DisplayText -ForeGroundColor Yellow "!! Test !!"
+                    }
+                    try {
+                        $PAOrder = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN)
+                        if ([String]::IsNullOrEmpty($($CertRequest | Get-Member -Name CertExpires))) {
+                            $CertRequest | Add-Member -MemberType NoteProperty -Name "CertExpires" -Value $PAOrder.CertExpires
+                        } else {
+                            $CertRequest.CertExpires = $PAOrder.CertExpires
+                        }
+                        if ([String]::IsNullOrEmpty($($CertRequest | Get-Member -Name RenewAfter))) {
+                            $CertRequest | Add-Member -MemberType NoteProperty -Name "RenewAfter" -Value $PAOrder.RenewAfter
+                        } else {
+                            $CertRequest.RenewAfter = $PAOrder.RenewAfter
+                        }
+                        Write-ToLogFile -D -C ADC-CertUpload -M "CertExpires: $($CertRequest.CertExpires) | RenewAfter: $($CertRequest.RenewAfter)"
+                        $SaveConfig = $true
+                    } catch {
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving expiration details, $($_.Exception.Message)"
+                    }
+                    Write-DisplayText -Line "Certificate expires" 
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
+                    Write-DisplayText -Line "Renew after" 
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
+                    Write-DisplayText -Line "Keysize"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.KeyLength)"
+                    Write-DisplayText -Line "Certkey Name" 
+                    Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
+                    Write-DisplayText -Line "Cert Dir" 
+                    Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
+                    Write-DisplayText -Line "CRT Filename"
+                    Write-DisplayText -ForeGroundColor Cyan $CertificateFileName
+                    Write-DisplayText -Line "KEY Filename"
+                    Write-DisplayText -ForeGroundColor Cyan $CertificateKeyFileName
+                    Write-DisplayText -Line "PFX Filename"
+                    Write-DisplayText -ForeGroundColor Cyan $CertificatePfxFileName
+                    Write-DisplayText -Line "PFX (with Chain)"
+                    Write-DisplayText -ForeGroundColor Cyan $CertificatePfxWithChainFileName
+                    Write-DisplayText -Line "Certificate State"
+                    Write-DisplayText -ForeGroundColor Green "Finished with the certificate for CN: $($CertRequest.CN)!"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Keysize: $($CertRequest.KeyLength)"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "PFX (with Chain): $CertificatePfxWithChainFileName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificate for CN: $($CertRequest.CN)!"
+                    $Script:MailData += "Certificates stored in: $CertificateDirectory"
+                    try {
+                        $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
+                        $Script:MailData += "ADC CertkeyName: $($CertificateCertKeyName)"
+                        $Script:MailData += "Valid until: $($CertRequest.CertExpires)"
+                        $Script:MailData += "Renew after: $($CertRequest.RenewAfter)"
+                        $Script:MailData += "Issued by CA: $(try { ($MailCertificate.Issuer -Split ',')[0] -Replace ('CN=',$null) } catch {$MailCertificate.Issuer})"
+                        $Script:MailData += "Public Key Size: $($MailCertificate.PublicKey.key.KeySize)"
+                    } catch { }
+
+                    ##Saving Config if required    
+                    Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
+
+                    #region IISActions
+    
+                    if ($UpdateIIS) {
+                        Write-DisplayText -Title "IIS"
+                        try {
+                            Import-Module WebAdministration -ErrorAction Stop
+                            $WebAdministrationModule = $true
+                        } catch {
+                            $WebAdministrationModule = $false
+                        }
+                        if ($WebAdministrationModule) {
+                            try {
+                                Write-DisplayText -Line "IIS Site" 
+                                Write-DisplayText -ForeGroundColor Cyan $IISSiteToUpdate
+                                $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
+                                Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
+                                Write-DisplayText -Line "Binding" 
+                                $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                                if ($CurrentWebBinding) {
+                                    Write-ToLogFile -I -C IISActions -M "Current binding exists."
+                                    Write-DisplayText -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
+                                    $CurrentCertificateBinding = Get-Item IIS:\SslBindings\0.0.0.0!443 -ErrorAction SilentlyContinue
+                                    Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                                    Write-DisplayText -Line "Unbinding Current Cert" 
+                                    Write-ToLogFile -I -C IISActions -M "Unbinding Current Certificate, $($CurrentCertificateBinding.Thumbprint)"
+                                    $CurrentCertificateBinding | Remove-Item -ErrorAction SilentlyContinue
+                                    Write-DisplayText -ForeGroundColor Yellow "Removed [$($CurrentCertificateBinding.Thumbprint)]"
+                                } else {
+                                    Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
+                                    try {
+                                        New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
+                                        $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                                        Write-DisplayText -ForeGroundColor Green "New, created [$($CurrentWebBinding.bindingInformation)]"
+                                        Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
+                                    } catch {
+                                        Write-DisplayText -ForeGroundColor Red "Failed"
+                                        Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
+                                    }
+                                }
+                                try {
+                                    Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
+                                    Write-DisplayText -Line "Binding New Cert" 
+                                    New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
+                                    Write-DisplayText -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
+                                    $Script:MailData += "IIS Binding updated for site `"$IISSiteToUpdate`": $($ImportedCertificate.Thumbprint)"
+                                } catch {
+                                    Write-DisplayText -ForeGroundColor Red "Could not bind"
+                                    Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
+                                }
+                            } catch {
+                                Write-DisplayText -ForeGroundColor Red "Caught an error while updating"
+                                Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
+                            }
+                        } else {
+                            Write-DisplayText -Line "Module" 
+                            Write-DisplayText -ForeGroundColor Red "WebAdministration Module could not be found, please install feature!"
+                        }
+                    }
+    
+                    #endregion IISActions
+    
+                    if ($CertRequest.ValidationMethod -eq "dns") {
+                        Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
+                        Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
+                        Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                        Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
+                        foreach ($Record in $TXTRecords) {
+                            Write-DisplayText -Blank
+                            Write-DisplayText -Line "DNS Hostname"
+                            Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
+                            Write-DisplayText -Line "TXT Record Name"
+                            Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                            Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
+                        }
+                        Write-DisplayText -Blank
+                        Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                    }
+                    if (-not $Production) {
+                        Write-DisplayText -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
+                        Write-DisplayText -ForeGroundColor Yellow "Add the `"-Production`" parameter and rerun the same script." -PostBlank
+                        Write-ToLogFile -I -C ADC-CertUpload -M "You are now ready for the Production version! Add the `"-Production`" parameter and rerun the same script."
+                    }
+                } catch {
+                    Write-ToLogFile -E -C ADC-CertUpload -M "Certificate completion failed. Exception Message: $($_.Exception.Message)"
+                    Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
+                    Invoke-RegisterError 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
+                    Continue
+                }
+                if ($SessionRequestObject.ErrorOccurred -gt 0 ) {
+                    Write-DisplayText -Blank
+                    Write-Warning "There were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!"
+                    $Script:MailData += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
+                }
+
+            }
+    
+            #endregion ADC-CertUpload
+        }
     } #END Loop
 }
 
