@@ -162,7 +162,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.9.0
+    Version   : v2.9.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -447,8 +447,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.9.0"
-$PoshACMEVersion = "4.2.0"
+$ScriptVersion = "2.9.1"
+$PoshACMEVersion = "4.3.2"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -2309,11 +2309,13 @@ try {
         Write-DisplayText -Line "New Production URL"
         Write-DisplayText -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
+        $Script:MailData += "New version available: v$($AvailableVersions.master), $($AvailableVersions.masterurl)"
         if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
             Write-DisplayText -Blank
             Write-DisplayText -Line "IMPORTANT Note"
             Write-DisplayText -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
             Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
+            $Script:MailData += "IMPORTANT Note: $($AvailableVersions.masterimportant)"
         }
         $Script:MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
     } else {
@@ -3407,7 +3409,7 @@ if ($CertificateActions) {
                                     Write-ToLogFile -I -C OrderValidation -M "Responder Policy successfully bound to Load Balance VIP."
                                     try {
                                         Write-ToLogFile -I -C OrderValidation -M "Sending acknowledgment to Let's Encrypt."
-                                        Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount
+                                        Send-ChallengeAck -ChallengeUrl $($PAOrderItem.HTTP01Url) -Account $PAAccount -ErrorAction Stop
                                         Write-ToLogFile -I -C OrderValidation -M "Successfully send."
                                     } catch {
                                         Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
@@ -3454,7 +3456,7 @@ if ($CertificateActions) {
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -D -C OrderValidation -M "Items still pending: $(($PAOrderItems | Where-Object { $_.status -eq "pending" }).Count -gt 0)"
                     while ($true) {
-                        Start-Sleep -Seconds 5
+                        Start-Sleep -Seconds 10
                         $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
                         Write-ToLogFile -I -C OrderValidation -M "Still $((($PAOrderItems | Where-Object {$_.status -eq "pending"})| Measure-Object).Count) `"pending`" items left. Waiting an extra 5 seconds."
                         if ($WaitLoop -eq 0) {
@@ -3495,8 +3497,8 @@ if ($CertificateActions) {
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.hostname) | $($Item.challenges.validationRecord.port)"
                             Write-DisplayText -ForeGroundColor Red -Line "IPAddress Used | Resolved"
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.addressUsed) | $($Item.challenges.validationRecord.addressesResolved -join ', ')"
-                            Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.error | ConvertTo-Json -Compress)"
-                            Write-ToLogFile -E -C OrderValidation -M "$($Item.challenges.validationRecord | ConvertTo-Json -Compress)"
+                            Write-ToLogFile -E -C OrderValidation -M "Error: $($Item.challenges.error | ConvertTo-Json -Compress -ErrorAction SilentlyContinue)"
+                            Write-ToLogFile -E -C OrderValidation -M "ValidationRecord: $($Item.challenges.validationRecord | ForEach-Object {$_ | ConvertTo-Json -Compress -ErrorAction SilentlyContinue})"
                         }
                         Write-DisplayText -ForegroundColor Red "`r`nERROR: There are some invalid items"
                         Invoke-RegisterError 1 "There are some invalid items"
@@ -3507,7 +3509,6 @@ if ($CertificateActions) {
                     }
                 } else {
                     Write-ToLogFile -D -C OrderValidation -M "Skipped Order Completion, Exit Code: $($SessionRequestObject.ExitCode)"
-                    $CertRequestResult | ConvertTo-Json
                 }
                 #endregion OrderValidation
 
