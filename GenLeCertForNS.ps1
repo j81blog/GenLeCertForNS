@@ -162,7 +162,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.9.1
+    Version   : v2.9.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -447,7 +447,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.9.1"
+$ScriptVersion = "2.9.2"
 $PoshACMEVersion = "4.3.2"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -822,6 +822,7 @@ function Invoke-ADCRestApi {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
+        [alias("ADCSession")]
         [PSObject]$Session,
 
         [Parameter(Mandatory = $true)]
@@ -837,7 +838,6 @@ function Invoke-ADCRestApi {
 
         [hashtable]$Arguments = @{ },
 
-        [ValidateCount(1, 1)]
         [hashtable]$Query = @{ },
 
         [Switch]$Stat = $false,
@@ -1078,6 +1078,97 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
     }
 }
 
+
+function Invoke-ADCGetHanode {
+    <#
+        .SYNOPSIS
+            Get High Availability configuration object(s)
+        .DESCRIPTION
+            Get High Availability configuration object(s)
+        .PARAMETER id 
+           Number that uniquely identifies the node. For self node, it will always be 0. Peer node values can . 
+        .PARAMETER GetAll 
+            Retreive all hanode object(s)
+        .PARAMETER Count
+            If specified, the count of the hanode object(s) will be returned
+        .PARAMETER Filter
+            Specify a filter
+            -Filter @{ 'name'='<value>' }
+        .EXAMPLE
+            Invoke-ADCGetHanode
+        .EXAMPLE 
+            Invoke-ADCGetHanode -GetAll 
+        .EXAMPLE 
+            Invoke-ADCGetHanode -Count
+        .EXAMPLE
+            Invoke-ADCGetHanode -name <string>
+        .EXAMPLE
+            Invoke-ADCGetHanode -Filter @{ 'name'='<value>' }
+        .NOTES
+            File Name : Invoke-ADCGetHanode
+            Version   : v2101.0322
+            Author    : John Billekens
+            Reference : https://developer-docs.citrix.com/projects/citrix-adc-nitro-api-reference/en/latest/configuration/ha/hanode/
+            Requires  : PowerShell v5.1 and up
+                        ADC 11.x and up
+        .LINK
+            https://blog.j81.nl
+    #>
+    [CmdletBinding(DefaultParameterSetName = "Getall")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingUserNameAndPasswordParams', '')]
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseBOMForUnicodeEncodedFile', '')]
+    param(
+        [hashtable]$ADCSession,
+    
+        [Parameter(ParameterSetName = 'GetByResource')]
+        [ValidateRange(1, 64)]
+        [double]$id,
+    
+        [Parameter(ParameterSetName = 'Count', Mandatory = $true)]
+        [Switch]$Count,
+                
+        [hashtable]$Filter = @{ },
+    
+        [Parameter(ParameterSetName = 'GetAll')]
+        [Switch]$GetAll
+    
+    )
+    begin {
+        Write-Verbose "Invoke-ADCGetHanode: Beginning"
+    }
+    process {
+        try {
+            if ( $PsCmdlet.ParameterSetName -eq 'Getall' ) {
+                $Query = @{ }
+                Write-Verbose "Retrieving all hanode objects"
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Query $Query -Filter $Filter -GetWarning
+            } elseif ( $PsCmdlet.ParameterSetName -eq 'Count' ) {
+                if ($PSBoundParameters.ContainsKey('Count')) { $Query = @{ 'count' = 'yes' } }
+                Write-Verbose "Retrieving total count for hanode objects"
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Query $Query -Filter $Filter -GetWarning
+            } elseif ( $PsCmdlet.ParameterSetName -eq 'GetByArgument' ) {
+                Write-Verbose "Retrieving hanode objects by arguments"
+                $Arguments = @{ } 
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Arguments $Arguments -GetWarning
+            } elseif ( $PsCmdlet.ParameterSetName -eq 'GetByResource' ) {
+                Write-Verbose "Retrieving hanode configuration for property 'id'"
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Resource $id -Filter $Filter -GetWarning
+            } else {
+                Write-Verbose "Retrieving hanode configuration objects"
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Query $Query -Filter $Filter -GetWarning
+            }
+        } catch {
+            Write-Verbose "ERROR: $($_.Exception.Message)"
+            $response = $null
+        }
+        Write-Output $response
+    }
+    end {
+        Write-Verbose "Invoke-ADCGetHanode: Ended"
+    }
+}
+    
 function ConvertTo-TxtValue {
     [cmdletbinding()]
     param(
@@ -2033,7 +2124,7 @@ try {
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if (-Not ($Parameters.certrequests -is [Array])) { $Parameters.certrequests = @() }
             } catch {
-                Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid"
+                Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
             }
             Write-DisplayText -ForeGroundColor Green " Done"
         } else {
@@ -2143,6 +2234,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ForceCertRenew -Value $([bool]::Parse($ForceCertRenew))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableIPCheck -Value $([bool]::Parse($DisableIPCheck))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PfxPassword -Value $PfxPassword
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UpdateIIS -Value $([bool]::Parse($UpdateIIS))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name IISSiteToUpdate -Value $IISSiteToUpdate
     }
     $SaveConfig = $true
     Write-DisplayText -ForeGroundColor Green " Done"
@@ -2210,7 +2303,6 @@ if ($CertificateActions) {
     } else {
         Write-ToLogFile -I -C DOTNETCheck -M ".NET Framework 4.7.1 or higher is installed."
     }
-    #$ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
     Write-DisplayText -Line "Loading Modules"
     Write-ToLogFile -I -C LoadModule -M "Try loading the Posh-ACME v$PoshACMEVersion Modules."
     $modules = Get-Module -ListAvailable -Verbose:$false | Where-Object { ($_.Name -like "*Posh-ACME*") -and ($_.Version -ge [System.Version]$PoshACMEVersion) }
@@ -2364,6 +2456,23 @@ Write-DisplayText -Line "Username"
 Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Username)"
 Write-DisplayText -Line "Password"
 Write-DisplayText -ForeGroundColor Cyan "**ENCRYPTED**"
+try {
+    $hanode = (Invoke-ADCGetHanode -ADCSession $ADCSession).hanode | Select-Object -First 1
+    Write-DisplayText -Line "Node"
+    if ($hanode.state -like "primary") {
+        Write-DisplayText -ForeGroundColor Cyan $hanode.state
+        Write-ToLogFile -I -C ADC-Check -M "You are connected to the $($hanode.state) node."
+    } else {
+        Write-DisplayText -ForeGroundColor Yellow $hanode.state
+        Write-DisplayText -Blank
+        Write-Warning "You are connected to the $($hanode.state) node, http certificate request will fail!"
+        Write-ToLogFile -W -C ADC-Check -M "You are connected to the $($hanode.state) node, http certificate request will fail!"
+        Write-DisplayText -Blank
+        Start-Sleep -Seconds 5
+    }
+} catch {
+    Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the HA NOde info, $($_.Exception.message)"
+}
 Write-DisplayText -Line "Version"
 Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Version)"
 try {
@@ -2860,7 +2969,7 @@ if ($CertificateActions) {
             #endregion DNSPreCheck
 
             Write-DisplayText -Title "Citrix ADC Content Switch"
-            if ($CertRequest.ValidationMethod -eq "dns"){
+            if ($CertRequest.ValidationMethod -eq "dns") {
                 Write-DisplayText -Line "Connection"
                 Write-DisplayText -ForeGroundColor Yellow "Skipped"
             } elseif ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
@@ -3773,8 +3882,15 @@ if ($CertificateActions) {
                         Continue
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
-                    $CAName = $ChainFile.DnsNameList.Unicode.Replace("'", "")
-                    $IntermediateCACertKeyName = "$($CAName)-int"
+                    $IntermediateCACertKeyName = $ChainFile.DnsNameList.Unicode.Replace("'", $null).Replace("(", $null).Replace(")", $null)
+                    if ($IntermediateCACertKeyName.length -gt 31) {
+                        $IntermediateCACertKeyName = $IntermediateCACertKeyName -Replace '(?sm)\W', $null
+                        Write-ToLogFile -D -C CertFinalization -M "Intermediatecert to long, new name: `"$IntermediateCACertKeyName`"."
+                    }
+                    if ($IntermediateCACertKeyName.length -gt 31) {
+                        $IntermediateCACertKeyName = "$($IntermediateCACertKeyName.subString(0,31))"
+                        Write-ToLogFile -D -C CertFinalization -M "Intermediatecert STILL to long, new name: `"$IntermediateCACertKeyName`"."
+                    }
                     $IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
                     $IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
     
@@ -3880,8 +3996,11 @@ if ($CertificateActions) {
                             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
                             Write-ToLogFile -I -C ADC-CertUpload -M "Certificate added."
                         } catch {
-                            Write-Warning "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required"
+                            Write-DisplayText -Blank
+                            Write-Warning "Could not upload or get the Intermediate CA `"$($ChainFile.DnsNameList.Unicode)`",`r`n         manual action may be required"
                             Write-ToLogFile -W -C ADC-CertUpload -M "Could not upload or get the Intermediate CA ($($ChainFile.DnsNameList.Unicode)), manual action may be required."
+                            Write-DisplayText -Blank
+                            Write-DisplayText -Line "Status"
                         }
                     } else {
                         $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
@@ -3996,6 +4115,7 @@ if ($CertificateActions) {
                         Write-Warning "Caught an error, certificate not added to the ADC Config"
                         Write-Warning "Details: $($_.Exception.Message | Out-String)"
                         Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, certificate not added to the ADC Config. Exception Message: $($_.Exception.Message)"
+                        Write-DisplayText -Line "Status"
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
@@ -4004,9 +4124,12 @@ if ($CertificateActions) {
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link
                         Write-ToLogFile -I -C ADC-CertUpload -M "Link successfully."
                     } catch {
-                        Write-Warning -Message "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`""
+                        Write-DisplayText -Blank
+                        Write-Warning -Message "Could not link the certificate`"$CertificateCertKeyName`"`r`n         to Intermediate `"$IntermediateCACertKeyName`""
                         Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
                         Write-ToLogFile -E -C ADC-CertUpload -M "Exception Message: $($_.Exception.Message)"
+                        Write-DisplayText -Blank
+                        Write-DisplayText -Line "Status"
                     }
                     Write-DisplayText -ForeGroundColor Green " Ready"
 
@@ -4051,6 +4174,8 @@ if ($CertificateActions) {
                     Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.KeyLength)"
                     Write-DisplayText -Line "Certkey Name" 
                     Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
+                    Write-DisplayText -Line "Intermediate" 
+                    Write-DisplayText -ForeGroundColor Cyan "$($ChainFile.DnsNameList.Unicode) ($IntermediateCACertKeyName)"
                     Write-DisplayText -Line "Cert Dir" 
                     Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
                     Write-DisplayText -Line "CRT Filename"
@@ -4085,7 +4210,7 @@ if ($CertificateActions) {
 
                     #region IISActions
     
-                    if ($UpdateIIS) {
+                    if ($CertRequest.UpdateIIS) {
                         Write-DisplayText -Title "IIS"
                         try {
                             Import-Module WebAdministration -ErrorAction Stop
@@ -4096,11 +4221,11 @@ if ($CertificateActions) {
                         if ($WebAdministrationModule) {
                             try {
                                 Write-DisplayText -Line "IIS Site" 
-                                Write-DisplayText -ForeGroundColor Cyan $IISSiteToUpdate
+                                Write-DisplayText -ForeGroundColor Cyan $($CertRequest.IISSiteToUpdate)
                                 $ImportedCertificate = Import-PfxCertificate -FilePath $CertificatePfxFullPath -CertStoreLocation Cert:\LocalMachine\My -Password $PfxPassword
                                 Write-ToLogFile -D -C IISActions -M "ImportedCertificate $($ImportedCertificate | Select-Object Thumbprint,Subject | ConvertTo-Json -Compress)"
                                 Write-DisplayText -Line "Binding" 
-                                $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                                $CurrentWebBinding = Get-WebBinding -Name $CertRequest.IISSiteToUpdate -Protocol https
                                 if ($CurrentWebBinding) {
                                     Write-ToLogFile -I -C IISActions -M "Current binding exists."
                                     Write-DisplayText -ForeGroundColor Green "Current [$($CurrentWebBinding.bindingInformation)]"
@@ -4113,8 +4238,8 @@ if ($CertificateActions) {
                                 } else {
                                     Write-ToLogFile -I -C IISActions -M "No current binding exists, trying to add one."
                                     try {
-                                        New-WebBinding -Name $IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
-                                        $CurrentWebBinding = Get-WebBinding -Name $IISSiteToUpdate -Protocol https
+                                        New-WebBinding -Name $CertRequest.IISSiteToUpdate -IPAddress "*" -Port 443 -Protocol https
+                                        $CurrentWebBinding = Get-WebBinding -Name $CertRequest.IISSiteToUpdate -Protocol https
                                         Write-DisplayText -ForeGroundColor Green "New, created [$($CurrentWebBinding.bindingInformation)]"
                                         Write-ToLogFile -D -C IISActions -M "CurrentCertificateBinding $($CurrentCertificateBinding | Select-Object IPAddress,Port,Host,Store,@{ name="Sites"; expression={$_.Sites.Value} } | ConvertTo-Json -Compress)"
                                     } catch {
@@ -4127,7 +4252,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -Line "Binding New Cert" 
                                     New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
                                     Write-DisplayText -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
-                                    $Script:MailData += "IIS Binding updated for site `"$IISSiteToUpdate`": $($ImportedCertificate.Thumbprint)"
+                                    $Script:MailData += "IIS Binding updated for site `"$($CertRequest.IISSiteToUpdate)`": $($ImportedCertificate.Thumbprint)"
                                 } catch {
                                     Write-DisplayText -ForeGroundColor Red "Could not bind"
                                     Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
