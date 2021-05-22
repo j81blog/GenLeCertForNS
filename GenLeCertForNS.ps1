@@ -162,18 +162,18 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.9.3
+    Version   : v2.10.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
                 Run As Administrator
-                Posh-ACME 4.2.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.4.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
 .LINK
     https://blog.j81.nl
 #>
 
-[cmdletbinding(DefaultParameterSetName = "LECertificates")]
+[cmdletbinding(DefaultParameterSetName = "LECertificatesHTTP")]
 [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingWriteHost", "")]
 [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPlainTextForPassword", "")]
 param(
@@ -188,13 +188,15 @@ param(
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
     [Switch]$RemoveTestCertificates,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Switch]$CleanPoshACMEStorage,
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -203,7 +205,8 @@ param(
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
@@ -212,7 +215,8 @@ param(
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
@@ -229,40 +233,55 @@ param(
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [alias("NSCredential", "ADCCredential")]
     [System.Management.Automation.PSCredential]
     [System.Management.Automation.Credential()]$Credential = [System.Management.Automation.PSCredential]::Empty,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [String]$CN,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String[]]$SAN = @(),
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String]$FriendlyName,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [ValidateSet('http', 'dns', IgnoreCase = $true)]
     [String]$ValidationMethod = "http",
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [String]$DNSPlugin = "Manual",
+
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Object]$DNSParams = @{ },
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [alias("NSCertNameToUpdate")]
     [ValidateLength(1, 31)]
     [String]$CertKeyNameToUpdate,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$RemovePrevious,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [String]$CertDir,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [ValidateScript( {
             if ($_ -is [SecureString]) {
                 return $true
@@ -273,10 +292,12 @@ param(
             }
         })][object]$PfxPassword = $null,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [String]$EmailAddress,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [ValidateScript( {
             if ($_ -lt 2048 -Or $_ -gt 4096 -Or ($_ % 128) -ne 0) {
                 throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
@@ -285,18 +306,21 @@ param(
             }
         })][int32]$KeyLength = 2048,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $false)]
     [Switch]$Production,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [Switch]$DisableLogging,
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
@@ -305,7 +329,8 @@ param(
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
     [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
@@ -313,45 +338,57 @@ param(
    
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("SaveNSConfig")]
     [Switch]$SaveADCConfig,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$SendMail,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String[]]$SMTPTo,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String]$SMTPFrom,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [System.Management.Automation.PSCredential]
     [System.Management.Automation.Credential()]$SMTPCredential = [System.Management.Automation.PSCredential]::Empty,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String]$SMTPServer,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$LogAsAttachment,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$DisableIPCheck,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$IPv6,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Switch]$UpdateIIS,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String]$IISSiteToUpdate = "Default Web Site",
     
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
     [alias("NSCsVipName")]
@@ -359,45 +396,52 @@ param(
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSCspName")]
     [String]$CspName = "csp_letsencrypt",
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSCsVipBinding")]
     [String]$CsVipBinding = 11,
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSSvcName")]
     [String]$SvcName = "svc_letsencrypt_cert_dummy",
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSSvcDestination")]
     [String]$SvcDestination = "1.2.3.4",
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSLbName")]
     [String]$LbName = "lb_letsencrypt_cert",
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSRspName")]
     [String]$RspName = "rsp_letsencrypt",
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
     [alias("NSRsaName")]
     [String]$RsaName = "rsa_letsencrypt",
@@ -430,14 +474,16 @@ param(
         })]
     [object]$ApiPassword,
 
-    [Parameter(ParameterSetName = "LECertificates", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $true)]
     [String]$ConfigFile = $null,
 
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $true)]
     [Switch]$AutoRun = $false,
 
-    [Parameter(ParameterSetName = "LECertificates")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [Parameter(ParameterSetName = "AutoRun")]
     [Alias('Force')]
     [Switch]$ForceCertRenew = $false,
@@ -447,8 +493,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.9.3"
-$PoshACMEVersion = "4.3.2"
+$ScriptVersion = "2.10.0"
+$PoshACMEVersion = "4.4.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -1088,7 +1134,7 @@ function Invoke-ADCGetHanode {
         .PARAMETER id 
            Number that uniquely identifies the node. For self node, it will always be 0. Peer node values can . 
         .PARAMETER GetAll 
-            Retreive all hanode object(s)
+            Retrieve all hanode object(s)
         .PARAMETER Count
             If specified, the count of the hanode object(s) will be returned
         .PARAMETER Filter
@@ -2059,6 +2105,23 @@ if (-Not [String]::IsNullOrEmpty($SAN)) {
 
 $ScriptRoot = $(if ($psISE) { Split-Path -Path $psISE.CurrentFile.FullPath } else { $(if ($global:PSScriptRoot.Length -gt 0) { $global:PSScriptRoot } else { $global:pwd.Path }) })
 
+if (-Not [String]::IsNullOrEmpty($DNSParams)) { 
+    if ($DNSParams -is [Array]) {
+        [String]$DNSParams = $DNSParams -Join "`r`n"
+        [hashtable]$DNSParams = ConvertFrom-StringData -StringData $DNSParams
+    } elseif ($DNSParams -is [String]) {
+        [String]$DNSParams = ($DNSParams -Split (";") | ForEach-Object { "$($_.Trim())" }) -Join "`r`n"
+        [hashtable]$DNSParams = ConvertFrom-StringData -StringData $DNSParams
+    } elseif ($DNSParams -is [hashtable]) {
+        if ($DNSParams.count -eq 0) {
+            $DNSPlugin = "Manual"
+        }
+    } else {
+        $DNSPlugin = "Manual"
+        [hashtable]$DNSParams = @{ }
+    }
+}
+
 try {
     if (-Not $AutoRun) {
         if (($Password -is [String]) -and ($Password.Length -gt 0)) {
@@ -2218,6 +2281,8 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CspName -Value $CspName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsVipBinding -Value $CsVipBinding
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ScriptVersion -Value $ScriptVersion
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSParams -Value $DNSParams
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSPlugin -Value $DNSPlugin
     if (($Parameters.certrequests.Count -eq 1) -and (-Not $AutoRun )) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
@@ -3311,7 +3376,7 @@ if ($CertificateActions) {
                                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                             } catch {
                                 $DNSCNAMEDetails = $null
-                                Write-ToLogFile -E -C DNS-Validation -M "Could not retreive CNAME details. $($_.Exception.Message)"
+                                Write-ToLogFile -E -C DNS-Validation -M "Could not retrieve CNAME details. $($_.Exception.Message)"
                             }   
                             $DNSObject.DNSType = $RecordType
                             $DNSObject.DNSCNAMEDetails = $DNSCNAMEDetails
@@ -3634,36 +3699,64 @@ if ($CertificateActions) {
     
             if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+                #ToDo Remove
+                #$TXTRecords = $PAOrderItems | Select-Object fqdn, `
+                #@{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
+                #@{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
                 $TXTRecords = $PAOrderItems | Select-Object fqdn, `
                 @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
-                @{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
-                Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-                Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
-                Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
-                Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
-                Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
-                foreach ($Record in $TXTRecords) {
-                    Write-DisplayText -Blank
-                    Write-DisplayText -Line "DNS Hostname"
-                    Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                    Write-DisplayText -Line "TXT Record Name."
-                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                    Write-DisplayText -Line "TXT Record Value"
-                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
-                    Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
-                }
-                Write-DisplayText -Blank
-                Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
-                $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
-                Write-DisplayText -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
-                $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
-                if (-not ($answer.ToLower() -eq "yes")) {
-                    Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
-                    $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue, or something else to stop and exit"
-                    if (-not ($answer.ToLower() -eq "yes")) {
-                        Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
-                        Exit (0)
+                @{L = 'TXTValue'; E = { (Get-KeyAuthorization $_.DNS01Token -ForDNS) } }, `
+                @{L = 'SanitizedFqdn'; E = { "$($_.fqdn.Replace('*.',''))" } }, `
+                @{L = 'Token'; E = { $_.DNS01Token } }
+                $PoshACMEPluginUsed = $false
+                if ([String]::IsNullOrEmpty($DNSParams) -or [String]::IsNullOrEmpty($DNSPlugin) -or ($DNSParams.Count -eq 0) -or ($DNSPlugin -like "Manual")) {
+                    Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
+                    Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
+                    Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+                    Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
+                    Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
+                    foreach ($Record in $TXTRecords) {
+                        Write-DisplayText -Blank
+                        Write-DisplayText -Line "DNS Hostname"
+                        Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
+                        Write-DisplayText -Line "TXT Record Name."
+                        Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                        Write-DisplayText -Line "TXT Record Value"
+                        Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
+                        Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
                     }
+                    Write-DisplayText -Blank
+                    Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
+                    $($TXTRecords | Format-List | Out-String).Trim() | clip.exe
+                    Write-DisplayText -ForegroundColor Yellow "`r`nINFO: Data is copied tot the clipboard"
+                    $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue"
+                    if (-not ($answer.ToLower() -eq "yes")) {
+                        Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", last chance to continue"
+                        $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue, or something else to stop and exit"
+                        if (-not ($answer.ToLower() -eq "yes")) {
+                            Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
+                            Exit (0)
+                        }
+                    }
+                } else {
+                    Write-ToLogFile -I -C DNSChallenge -M "Using the Posh-ACME Plugin: `"$DNSPlugin`""
+                    foreach ($Record in $TXTRecords) {
+                        try {
+                            Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" adding using plugin. Record: $($Record.fqdn) TXTValue: $($Record.TXTValue)"
+                            Write-ToLogFile -D -C DNSChallenge -M "DNS Arguments: $($DNSParams | ConvertTo-Json -Compress)"
+                            Write-ToLogFile -D -C DNSChallenge -M "Domain: $($Record.SanitizedFqdn) Token: $($Record.Token) -Plugin: $DNSPlugin"
+                            Publish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
+                        } catch {
+                            try {
+                                Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
+                                Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
+                            } catch {
+                                Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
+                            }
+                        }    
+
+                    }
+                    $PoshACMEPluginUsed = $true
                 }
                 Write-DisplayText "Continuing, Waiting 30 seconds for the records to settle"
                 Start-Sleep -Seconds 30
@@ -3677,7 +3770,11 @@ if ($CertificateActions) {
                         Write-DisplayText -Line "TXT Record check"
                         Write-ToLogFile -I -C DNSChallenge -M "Trying to retrieve the TXT record for `"$($Record.fqdn)`"."
                         $result = $null
-                        $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
+                        if ($IPv6) {
+                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServerv6 -DnsOnly
+                        } else {
+                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
+                        }
                         if ([String]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
                             Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records."
                             $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
@@ -3885,11 +3982,11 @@ if ($CertificateActions) {
                     $IntermediateCACertKeyName = $ChainFile.DnsNameList.Unicode.Replace("'", $null).Replace("(", $null).Replace(")", $null)
                     if ($IntermediateCACertKeyName.length -gt 31) {
                         $IntermediateCACertKeyName = $IntermediateCACertKeyName -Replace '(?sm)\W', $null
-                        Write-ToLogFile -D -C CertFinalization -M "Intermediatecert to long, new name: `"$IntermediateCACertKeyName`"."
+                        Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate to long, new name: `"$IntermediateCACertKeyName`"."
                     }
                     if ($IntermediateCACertKeyName.length -gt 31) {
                         $IntermediateCACertKeyName = "$($IntermediateCACertKeyName.subString(0,31))"
-                        Write-ToLogFile -D -C CertFinalization -M "Intermediatecert STILL to long, new name: `"$IntermediateCACertKeyName`"."
+                        Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate STILL to long, new name: `"$IntermediateCACertKeyName`"."
                     }
                     $IntermediateCAFileName = "$($IntermediateCACertKeyName).crt"
                     $IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
@@ -4270,20 +4367,35 @@ if ($CertificateActions) {
                     #endregion IISActions
     
                     if ($CertRequest.ValidationMethod -eq "dns") {
-                        Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
-                        Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
-                        Write-DisplayText -ForegroundColor Magenta "********************************************************************"
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
-                        foreach ($Record in $TXTRecords) {
+                        if ($PoshACMEPluginUsed -ne $true) {
+                            Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
+                            Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
+                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
+                            foreach ($Record in $TXTRecords) {
+                                Write-DisplayText -Blank
+                                Write-DisplayText -Line "DNS Hostname"
+                                Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
+                                Write-DisplayText -Line "TXT Record Name"
+                                Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                                Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
+                            }
                             Write-DisplayText -Blank
-                            Write-DisplayText -Line "DNS Hostname"
-                            Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                            Write-DisplayText -Line "TXT Record Name"
-                            Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                            Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
+                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                        } else {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Using the Posh-ACME Plugin: `"$DNSPlugin`""
+                            foreach ($Record in $TXTRecords) {
+                                try {
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "Removing DNS record for $($Record.fqdn)"
+                                    Write-ToLogFile -D -C DNSChallenge -M "DNS Arguments: $($DNSParams | ConvertTo-Json -Compress)"
+                                    Write-ToLogFile -D -C DNSChallenge -M "Domain: $($Record.SanitizedFqdn) Token: $($Record.Token) -Plugin: $DNSPlugin"
+                                    Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
+                                } catch {
+                                    Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, $($_.Exception.Message)"
+                                }
+                            }
                         }
-                        Write-DisplayText -Blank
-                        Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+
                     }
                     if (-not $Production) {
                         Write-DisplayText -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
@@ -4479,13 +4591,11 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 
 TerminateScript 0
 
-#endregion Final Actions
-
 # SIG # Begin signature block
-# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCyToEKnztgmhYX
-# jM2nUJ/uAz3TD7vPen6OljgNIgIJvaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBhZbIWaWQszvWE
+# BTVr8EFvu5U3B1YNJt1SWw5LEMkHiaCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -4573,17 +4683,109 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
-# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
-# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
-# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
-# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
-# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgDITVxjrugsZnzBZN0gzfxdfy4IuHyNLyGcxs+0kZmnswDQYJKoZIhvcNAQEB
-# BQAEggEAqeay+8Er83fj9T6VNPA0JFxQQDggLikQ0UeHlVHO4SN1XZFyoMz1pSbD
-# Jjk6H1V+J7+cBrZGTYAffy0ZioQA1JR4FRGACaCUJb8utBwPo1cyMy7DkO6jpivM
-# nH8VHuO4FivZKsJtccoAdF3zjb4ve+kNd6h/oDJHfmferZdfqwBsUI4o1++vGngC
-# vIk3HPZol7N8lvoPKZfJpza4GmXRLhmwtzcGcAwf2BVyC7ysH9jrbdMrH7nF17zo
-# XcRjzehkrK9/Xfzf/TXS/xrRMiD7nLvvG+oSWc0NiQNAgVoY8GW9jj4J2MtChiaH
-# h/z3NvmXI4NLmO2Lv6fScRTlfJK6HA==
+# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
+# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
+# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
+# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
+# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
+# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
+# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
+# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
+# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
+# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
+# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
+# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
+# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
+# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
+# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
+# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
+# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
+# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
+# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
+# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
+# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
+# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
+# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
+# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
+# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
+# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
+# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
+# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
+# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
+# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
+# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
+# 4/kKyVRd1LlqdJ69SK6YMIIHBzCCBO+gAwIBAgIRAIx3oACP9NGwxj2fOkiDjWsw
+# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
+# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
+# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
+# DTIwMTAyMzAwMDAwMFoXDTMyMDEyMjIzNTk1OVowgYQxCzAJBgNVBAYTAkdCMRsw
+# GQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAW
+# BgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoGA1UEAwwjU2VjdGlnbyBSU0EgVGlt
+# ZSBTdGFtcGluZyBTaWduZXIgIzIwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIK
+# AoICAQCRh0ssi8HxHqCe0wfGAcpSsL55eV0JZgYtLzV9u8D7J9pCalkbJUzq70DW
+# mn4yyGqBfbRcPlYQgTU6IjaM+/ggKYesdNAbYrw/ZIcCX+/FgO8GHNxeTpOHuJre
+# TAdOhcxwxQ177MPZ45fpyxnbVkVs7ksgbMk+bP3wm/Eo+JGZqvxawZqCIDq37+fW
+# uCVJwjkbh4E5y8O3Os2fUAQfGpmkgAJNHQWoVdNtUoCD5m5IpV/BiVhgiu/xrM2H
+# YxiOdMuEh0FpY4G89h+qfNfBQc6tq3aLIIDULZUHjcf1CxcemuXWmWlRx06mnSlv
+# 53mTDTJjU67MximKIMFgxvICLMT5yCLf+SeCoYNRwrzJghohhLKXvNSvRByWgiKV
+# KoVUrvH9Pkl0dPyOrj+lcvTDWgGqUKWLdpUbZuvv2t+ULtka60wnfUwF9/gjXcRX
+# yCYFevyBI19UCTgqYtWqyt/tz1OrH/ZEnNWZWcVWZFv3jlIPZvyYP0QGE2Ru6eEV
+# YFClsezPuOjJC77FhPfdCp3avClsPVbtv3hntlvIXhQcua+ELXei9zmVN29OfxzG
+# PATWMcV+7z3oUX5xrSR0Gyzc+Xyq78J2SWhi1Yv1A9++fY4PNnVGW5N2xIPugr4s
+# rjcS8bxWw+StQ8O3ZpZelDL6oPariVD6zqDzCIEa0USnzPe4MQIDAQABo4IBeDCC
+# AXQwHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0UojtE1XwYSBFUwHQYDVR0OBBYEFGl1
+# N3u7nTVCTr9X05rbnwHRrt7QMA4GA1UdDwEB/wQEAwIGwDAMBgNVHRMBAf8EAjAA
+# MBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEAGA1UdIAQ5MDcwNQYMKwYBBAGyMQEC
+# AQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8vc2VjdGlnby5jb20vQ1BTMEQGA1Ud
+# HwQ9MDswOaA3oDWGM2h0dHA6Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRp
+# bWVTdGFtcGluZ0NBLmNybDB0BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0
+# dHA6Ly9jcnQuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNy
+# dDAjBggrBgEFBQcwAYYXaHR0cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcN
+# AQEMBQADggIBAEoDeJBCM+x7GoMJNjOYVbudQAYwa0Vq8ZQOGVD/WyVeO+E5xFu6
+# 6ZWQNze93/tk7OWCt5XMV1VwS070qIfdIoWmV7u4ISfUoCoxlIoHIZ6Kvaca9QIV
+# y0RQmYzsProDd6aCApDCLpOpviE0dWO54C0PzwE3y42i+rhamq6hep4TkxlVjwmQ
+# Lt/qiBcW62nW4SW9RQiXgNdUIChPynuzs6XSALBgNGXE48XDpeS6hap6adt1pD55
+# aJo2i0OuNtRhcjwOhWINoF5w22QvAcfBoccklKOyPG6yXqLQ+qjRuCUcFubA1X9o
+# GsRlKTUqLYi86q501oLnwIi44U948FzKwEBcwp/VMhws2jysNvcGUpqjQDAXsCkW
+# mcmqt4hJ9+gLJTO1P22vn18KVt8SscPuzpF36CAT6Vwkx+pEC0rmE4QcTesNtbiG
+# oDCni6GftCzMwBYjyZHlQgNLgM7kTeYqAT7AXoWgJKEXQNXb2+eYEKTx6hkbgFT6
+# R4nomIGpdcAO39BolHmhoJ6OtrdCZsvZ2WsvTdjePjIeIOTsnE1CjZ3HM5mCN0TU
+# JikmQI54L7nu+i/x8Y/+ULh43RSW3hwOcLAqhWqxbGjpKuQQK24h/dN8nTfkKgbW
+# w/HXaONPB3mBCBP+smRe6bE85tB4I7IJLOImYr87qZdRzMdEMoGyr8/fMYIFkzCC
+# BY8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hl
+# c3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVk
+# MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
+# /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
+# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgJUUwJn3+t6r7kZlJvgv71pnt
+# 19CAfVvyU1/C4txRtOYwDQYJKoZIhvcNAQEBBQAEggEABmbko1yew2/o3CI8Zzew
+# Z+vXlaktxCovLRMrmsyaJfnqHkWJTsUFpUVhqAYpaLScM4nhBayJoGZtOFiXzqVl
+# NEC7CssOlyjdlBgZqi+rRvIo3pw6XCBS9T6zUiZZvPMvS+CR6sWjZ+siUKL/u8Hd
+# ku2NgkyFW++l5cGDqlaCdF1iCiSG3Gj9XpxcFCqt1QBQlW7/2c7D4+D6/RH6AFEc
+# W6OB/GzC1SoYZZ+ZD+oR27HVK77QLZ/JG0Dxf/r0Wp4osGHXnDBFCZ6UnaX8srKY
+# jxoW1K/YrB+Q5VUw12IXHtKjfU8kxeAFWtW+nZJx4vWFcCIre4MXGZzP4ltjJpIR
+# 8qGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
+# QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
+# MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
+# IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
+# AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
+# MjEwNTIyMTgzMzA1WjA/BgkqhkiG9w0BCQQxMgQwQaMNai7B+fFfB6vScttH8N5y
+# Ia3mZ2i2qqWyNSVKWd6pgpXuzxYDyOSIa5AFRVfPMA0GCSqGSIb3DQEBAQUABIIC
+# ACPuk2SsQU45jslZb5JvxgxEfMPOfizZF7yVh8kSACPrBYIOl7o4RTTxk6XJPmer
+# 00CZaVpiMfxIs4eY3Y5Ut8BpgAzLaZeTBnFwpJa1sKMYJ+4dIE/SB9KB7rxRPkh2
+# NmEJncR7UXVn/rNw0lF/KWoCkPJXds62cdtBSVpmC88oPRNODUnwRA3wVMfPaB5a
+# pD9qYmMo4i7WJUw7LG5uPdFNciVSW92pgc3g+uEWNv+2GfO2XnKd5X0VJVXJvGzw
+# RDozdnLOxapH9HzcreVdRt27sP0DPE8TswzOQLWXrYrFNJ1E+wKR7Ivy6wAb3Ng8
+# GOJRLeSZfj02cgep50raWMG07f8JcK4QQzibZylfhA1IaWXYOFXvCyGXurga17Wg
+# aQG9d6coniNps1Wh9iiSg896orbv/fOvxdKZ98xNrUNv6EYnKYKvtYdGKmlA5++I
+# DiFqOrPEDQcDyFI44LYo9yI8uGHCG1MbkAgB1a3P9Tap5101PWmx732yYV0hF+fR
+# U8wHgNrRGSJ5cWVTjRftjs1JGAv6LvbFzNgcfkd41SzL3xTBzFZX5R5mUvgUm6oj
+# /NoTQl7dxNF6zXpsnMEhPupDdXNr05h2hI0KEf7POu+eZWRf4ho+PhKgn1ITKdSD
+# IXKbCP8ZnmOKOKkJss2ao2ihvR1VaV1VowtJBixEOeOb
 # SIG # End signature block
