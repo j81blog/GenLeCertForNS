@@ -68,6 +68,17 @@
     The display name of the certificate, if not specified the CN will used. You can specify an empty value if required.
     Example (Empty display name) : ""
     Example (Set your own name) : "Custom Name"
+.PARAMETER ValidationMethod
+    The validation method, this will be determined automatically. By default the 'http' validation method is being chosen unless you have defined a wildcard (*.domain.com) request.
+    Options: 'http' or 'dns'
+.PARAMETER DNSPlugin
+    Refer to the Posh-ACME plugins for the parameters, https://github.com/rmbolger/Posh-ACME/tree/main/Posh-ACME/Plugins
+    Define the name with this parameter. You must also configure the 'DNSParams' parameter.
+    Example: -DNSPlugin 'Aurora'
+.PARAMETER DNSParams
+    Define the Parameters required for the DNS plugin to be used with the 'DNSPlugin' parameter.
+    You can define the value as a hashtable: -DNSParams @{ Api='api.auroradns.eu'; Key='XXXXXXXXXX'; Secret='YYYYYYYYYYYYYYYY' }
+    Or as a string value (to be used in batch files): -DNSParams "Api=api.auroradns.eu;Key=XXXXXXXXXX;Secret=YYYYYYYYYYYYYYYY"
 .PARAMETER Production
     Use the production Let's encrypt server, without this parameter the staging (test) server will be used
 .PARAMETER CreateUserPermissions
@@ -139,7 +150,11 @@
     .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -CsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "san_domain_com" -LogLevel Debug -Production
     Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "san_domain_com" -LogLevel Debug -Production
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com","*.test.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "wildcard_domain_com" -LogLevel Debug -Production
+    Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
+    NOTE: Only a DNS verification is possible when using WildCards!
+.EXAMPLE
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "wildcard_domain_com" -DNSPlugin "Aurora" -DNSParams @{ Api="api.auroradns.eu"; Key="XXXXXXXXXX"; Secret="YYYYYYYYYYYYYYYY" } -Production
     Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
     NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
@@ -162,7 +177,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.10.0
+    Version   : v2.10.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 11.x and up
@@ -493,7 +508,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.10.0"
+$ScriptVersion = "2.10.1"
 $PoshACMEVersion = "4.4.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -2105,6 +2120,9 @@ if (-Not [String]::IsNullOrEmpty($SAN)) {
 
 $ScriptRoot = $(if ($psISE) { Split-Path -Path $psISE.CurrentFile.FullPath } else { $(if ($global:PSScriptRoot.Length -gt 0) { $global:PSScriptRoot } else { $global:pwd.Path }) })
 
+if ($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') {
+    $ValidationMethod = "dns"
+}
 if (-Not [String]::IsNullOrEmpty($DNSParams)) { 
     if ($DNSParams -is [Array]) {
         [String]$DNSParams = $DNSParams -Join "`r`n"
@@ -4594,8 +4612,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBhZbIWaWQszvWE
-# BTVr8EFvu5U3B1YNJt1SWw5LEMkHiaCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB9/4t/CNwEYxA1
+# anQbWf02/QRZcVz/u6/V1HdO47ExEKCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -4763,29 +4781,29 @@ TerminateScript 0
 # MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
 # /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgJUUwJn3+t6r7kZlJvgv71pnt
-# 19CAfVvyU1/C4txRtOYwDQYJKoZIhvcNAQEBBQAEggEABmbko1yew2/o3CI8Zzew
-# Z+vXlaktxCovLRMrmsyaJfnqHkWJTsUFpUVhqAYpaLScM4nhBayJoGZtOFiXzqVl
-# NEC7CssOlyjdlBgZqi+rRvIo3pw6XCBS9T6zUiZZvPMvS+CR6sWjZ+siUKL/u8Hd
-# ku2NgkyFW++l5cGDqlaCdF1iCiSG3Gj9XpxcFCqt1QBQlW7/2c7D4+D6/RH6AFEc
-# W6OB/GzC1SoYZZ+ZD+oR27HVK77QLZ/JG0Dxf/r0Wp4osGHXnDBFCZ6UnaX8srKY
-# jxoW1K/YrB+Q5VUw12IXHtKjfU8kxeAFWtW+nZJx4vWFcCIre4MXGZzP4ltjJpIR
-# 8qGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg3uNYuepyLta+5lXgrqGFEjRT
+# HYdTJFNm0zvThcdmpOQwDQYJKoZIhvcNAQEBBQAEggEARc+Autoh/XwTtjOffvFE
+# UiGcVjdQP86niGtCtJxkfoEJntD/7VsLwMwe+h5APC/3I5KCs2w39inxCQCzfpKK
+# S/0oFg2p9pC13mz0MZWQ3/kC7rYd7qub0UZ9WCuAyQEFOwls44MAmmkK1yYrOR2Q
+# dNyFJXdD5wUSvBTjIoFqDb9HP+mHatatkqpVQC5cx24zBZOeZOd4CEDI+1gqM9Jm
+# lEMpSzC8W6prTg3ipCSk7MOB0rxk5vfyaLX+z58N5DkguJl4D0AJWSzAV2g3DIt8
+# yfPruG3v5MNjLB1aD8m+1uNU9rP3SttFLPLO9hRPGgGJTc64sH53KDVWhCWdrKw8
+# yKGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
 # QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
 # MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
 # IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
 # AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
-# MjEwNTIyMTgzMzA1WjA/BgkqhkiG9w0BCQQxMgQwQaMNai7B+fFfB6vScttH8N5y
-# Ia3mZ2i2qqWyNSVKWd6pgpXuzxYDyOSIa5AFRVfPMA0GCSqGSIb3DQEBAQUABIIC
-# ACPuk2SsQU45jslZb5JvxgxEfMPOfizZF7yVh8kSACPrBYIOl7o4RTTxk6XJPmer
-# 00CZaVpiMfxIs4eY3Y5Ut8BpgAzLaZeTBnFwpJa1sKMYJ+4dIE/SB9KB7rxRPkh2
-# NmEJncR7UXVn/rNw0lF/KWoCkPJXds62cdtBSVpmC88oPRNODUnwRA3wVMfPaB5a
-# pD9qYmMo4i7WJUw7LG5uPdFNciVSW92pgc3g+uEWNv+2GfO2XnKd5X0VJVXJvGzw
-# RDozdnLOxapH9HzcreVdRt27sP0DPE8TswzOQLWXrYrFNJ1E+wKR7Ivy6wAb3Ng8
-# GOJRLeSZfj02cgep50raWMG07f8JcK4QQzibZylfhA1IaWXYOFXvCyGXurga17Wg
-# aQG9d6coniNps1Wh9iiSg896orbv/fOvxdKZ98xNrUNv6EYnKYKvtYdGKmlA5++I
-# DiFqOrPEDQcDyFI44LYo9yI8uGHCG1MbkAgB1a3P9Tap5101PWmx732yYV0hF+fR
-# U8wHgNrRGSJ5cWVTjRftjs1JGAv6LvbFzNgcfkd41SzL3xTBzFZX5R5mUvgUm6oj
-# /NoTQl7dxNF6zXpsnMEhPupDdXNr05h2hI0KEf7POu+eZWRf4ho+PhKgn1ITKdSD
-# IXKbCP8ZnmOKOKkJss2ao2ihvR1VaV1VowtJBixEOeOb
+# MjEwNTIyMjAyNTQ1WjA/BgkqhkiG9w0BCQQxMgQwL4tf+RgFvh8HcTZTG3Y1O3Wc
+# AKSBjHj23nAAXyXhhLie/hb2yZWxsuPaB/qkMA+vMA0GCSqGSIb3DQEBAQUABIIC
+# AHt83zDby1OBlrNxYkZ6sHzoIXHqUEDiIuiDSZSoVSMCno2UIZLOXimyAHvRdzZV
+# mITHWDsW/YVt6lgKRpY/jPebVJV4M14S28pB3QrOQbHxgfkEO0FQtWp+mQQ9HTFC
+# XGzRd3Fj35idHx4lLbGdOCkixOWXMuzmR/gcmEYmyRBPPZU59W3G0r+UdZkA0xVA
+# z/H1Su5s2y+2YlJ2BQUyypyqM0/I3xf9k88DT0LgvgUeia8iaUNt7JInunzKNXcr
+# LQqtSLax05aqfzc9KwntavYZwkxnQK4edFvEi11JfFWtypeTZg7qDDxy8wu81Lzh
+# d+94WoIcaX9IhoVlebTTPsjhFov9oRtsVsb+bmESdxQgvFsn8x5Q4HznpuNbWCPM
+# dVRaSAGFnxjiF+3Jk6HBFrmYl8MEFRosRIHGIoICNKQwwCuwAaNUZtM7oV9fHYYK
+# yGRtMFfYLgXtc5lrZWYf5xkH2fiOhXJTvTcHZQxN+XhCelCeonsNegP+3LP0rsQO
+# xxLPoq/Q9CPVdntt8r1nyfQgCAbcG6NtrjBL/HrdGRBaOoj+jtLQ3v9mPSEIyHQ0
+# h9zNleMDJBdR09ShmwHgvRgVJm3vs/y8n62zMZ5eh10E2sdbLBoXHQ2Qc7BEo2E8
+# nKN9xdWw0nyPQujqpyt+I5nrLJZ6mhUR9yn5Gl48Pupl
 # SIG # End signature block
