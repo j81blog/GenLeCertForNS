@@ -154,7 +154,7 @@
     Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
     NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "wildcard_domain_com" -DNSPlugin "Aurora" -DNSParams @{ Api="api.auroradns.eu"; Key="XXXXXXXXXX"; Secret="YYYYYYYYYYYYYYYY" } -Production
+    .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "*.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "wildcard_domain_com" -DNSPlugin "Aurora" -DNSParams  @{AuroraCredential=$((New-Object PSCredential 'KEYKEYKEY',$(ConvertTo-SecureString -String 'SECRETSECRETSECRET' -AsPlainText -Force))); AuroraApi='api.auroradns.eu'} -Production
     Generate a (Production) Wildcard (*) certificate for hostname "domain.com" with alternate names : "*.domain.com, *.test.domain.com. Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC.
     NOTE: Only a DNS verification is possible when using WildCards!
 .EXAMPLE
@@ -177,13 +177,13 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.10.1
+    Version   : v2.10.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
-                ADC 11.x and up
+                ADC 12.1 and higher
                 Run As Administrator
                 Posh-ACME 4.4.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
-                Microsoft .NET Framework 4.7.1 or later (when using Posh-ACME/WildCard certificates)
+                Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
 #>
@@ -508,7 +508,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.10.1"
+$ScriptVersion = "2.10.2"
 $PoshACMEVersion = "4.4.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -2375,16 +2375,16 @@ if ($CleanPoshACMEStorage) {
 #region LoadModule
 
 if ($CertificateActions) {
-    Write-ToLogFile -I -C DOTNETCheck -M "Checking if .NET Framework 4.7.1 or higher is installed."
+    Write-ToLogFile -I -C DOTNETCheck -M "Checking if .NET Framework 4.7.2 or higher is installed."
     $NetRelease = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Release).Release
-    if ($NetRelease -lt 461308) {
-        Write-ToLogFile -W -C DOTNETCheck -M ".NET Framework 4.7.1 or higher is NOT installed."
+    if ($NetRelease -lt 461808) {
+        Write-ToLogFile -W -C DOTNETCheck -M ".NET Framework 4.7.2 or higher is NOT installed."
         Write-DisplayText -NoNewLine -ForeGroundColor RED "`n`nWARNING: "
-        Write-DisplayText ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
+        Write-DisplayText ".NET Framework 4.7.2 or higher is not installed, please install before continuing!"
         Start-Process https://www.microsoft.com/net/download/dotnet-framework-runtime
-        TerminateScript 1 ".NET Framework 4.7.1 or higher is not installed, please install before continuing!"
+        TerminateScript 1 ".NET Framework 4.7.2 or higher is not installed, please install before continuing!"
     } else {
-        Write-ToLogFile -I -C DOTNETCheck -M ".NET Framework 4.7.1 or higher is installed."
+        Write-ToLogFile -I -C DOTNETCheck -M ".NET Framework 4.7.2 or higher is installed."
     }
     Write-DisplayText -Line "Loading Modules"
     Write-ToLogFile -I -C LoadModule -M "Try loading the Posh-ACME v$PoshACMEVersion Modules."
@@ -4612,8 +4612,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB9/4t/CNwEYxA1
-# anQbWf02/QRZcVz/u6/V1HdO47ExEKCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCrvgnN/uyNYDcK
+# sHxKxk1W1cqLNsToVN8dv0xrgDQSiqCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -4781,29 +4781,29 @@ TerminateScript 0
 # MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
 # /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg3uNYuepyLta+5lXgrqGFEjRT
-# HYdTJFNm0zvThcdmpOQwDQYJKoZIhvcNAQEBBQAEggEARc+Autoh/XwTtjOffvFE
-# UiGcVjdQP86niGtCtJxkfoEJntD/7VsLwMwe+h5APC/3I5KCs2w39inxCQCzfpKK
-# S/0oFg2p9pC13mz0MZWQ3/kC7rYd7qub0UZ9WCuAyQEFOwls44MAmmkK1yYrOR2Q
-# dNyFJXdD5wUSvBTjIoFqDb9HP+mHatatkqpVQC5cx24zBZOeZOd4CEDI+1gqM9Jm
-# lEMpSzC8W6prTg3ipCSk7MOB0rxk5vfyaLX+z58N5DkguJl4D0AJWSzAV2g3DIt8
-# yfPruG3v5MNjLB1aD8m+1uNU9rP3SttFLPLO9hRPGgGJTc64sH53KDVWhCWdrKw8
-# yKGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgT3wwTKFafpnch3x5bIZp3YQ+
+# oceVeuZvd3CtWo1RDpkwDQYJKoZIhvcNAQEBBQAEggEAb63OAIfF9OkXS9SJwMCS
+# wGRXkwfDbmcJEgf+wvfT5LFh+gazVD0pw3s5JmJ1+4LRe8+v9RbYl7+KuWTPGjPi
+# JP7UekZpsEZhMJUShjxzJ34BpGIXl2QrhGY3FuL+eYsI5NiW8Ji083fgsC8No1Xc
+# c8no9O1dT4XminvKo/CLoPf5M6qlkWpkpZ9bk+9Ft/lrLffm+NT/4pjTLj8R6pkr
+# jSJd23MXO6R8bgBWV6/ez7VzktRuErSWKBGdJEPLMJtmGMdJBj2Yketr6SiFC998
+# 1rILXtSnkEDrOinTjbWMjrc08GE6HP0B/DxPUudkOuwGB4BswY0QH8RmG4M+/0aM
+# T6GCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
 # QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
 # MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
 # IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
 # AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
-# MjEwNTIyMjAyNTQ1WjA/BgkqhkiG9w0BCQQxMgQwL4tf+RgFvh8HcTZTG3Y1O3Wc
-# AKSBjHj23nAAXyXhhLie/hb2yZWxsuPaB/qkMA+vMA0GCSqGSIb3DQEBAQUABIIC
-# AHt83zDby1OBlrNxYkZ6sHzoIXHqUEDiIuiDSZSoVSMCno2UIZLOXimyAHvRdzZV
-# mITHWDsW/YVt6lgKRpY/jPebVJV4M14S28pB3QrOQbHxgfkEO0FQtWp+mQQ9HTFC
-# XGzRd3Fj35idHx4lLbGdOCkixOWXMuzmR/gcmEYmyRBPPZU59W3G0r+UdZkA0xVA
-# z/H1Su5s2y+2YlJ2BQUyypyqM0/I3xf9k88DT0LgvgUeia8iaUNt7JInunzKNXcr
-# LQqtSLax05aqfzc9KwntavYZwkxnQK4edFvEi11JfFWtypeTZg7qDDxy8wu81Lzh
-# d+94WoIcaX9IhoVlebTTPsjhFov9oRtsVsb+bmESdxQgvFsn8x5Q4HznpuNbWCPM
-# dVRaSAGFnxjiF+3Jk6HBFrmYl8MEFRosRIHGIoICNKQwwCuwAaNUZtM7oV9fHYYK
-# yGRtMFfYLgXtc5lrZWYf5xkH2fiOhXJTvTcHZQxN+XhCelCeonsNegP+3LP0rsQO
-# xxLPoq/Q9CPVdntt8r1nyfQgCAbcG6NtrjBL/HrdGRBaOoj+jtLQ3v9mPSEIyHQ0
-# h9zNleMDJBdR09ShmwHgvRgVJm3vs/y8n62zMZ5eh10E2sdbLBoXHQ2Qc7BEo2E8
-# nKN9xdWw0nyPQujqpyt+I5nrLJZ6mhUR9yn5Gl48Pupl
+# MjEwNTI0MTMzMDE4WjA/BgkqhkiG9w0BCQQxMgQwbVLIOO12YIuD3Ww6pi4MBEBP
+# HjWhEUVWcad6EHqKL42A8MQ/PBdKsZyIxTFOYbznMA0GCSqGSIb3DQEBAQUABIIC
+# AGGloYkySM5ma5/HUPNXye8+zCcLLKnkv7HTbgDg1OiM/7bGJhoPO0z+ZijzUVS6
+# DqBzaDWEgORomw+4ZK3S3LIghdvVfW7xb1nl7zBsCRabUKWjs1FoB2YwTm5ghQuc
+# yS5HO4C81TgGJM0WlYsGIpakYyNJbWnYFNBbjEAtnxgFUp0zTYfHBhyJ5RV8u7f4
+# bvuw+2uHhgbX6CCiSPM8NO4p1QpCVu0MCou7D+PnK6kN7Wia8Of8kmiok59RGWVH
+# 841ez4vbQwrjy3E11lveonB2TMKklw47YVlrSFNJEd1BNjlOcLCcHBdVjLaxycaD
+# 8JSJL4OQbb8aLFLW26gqkWA5bi1hoWqbEZ2ihods6E04Gj/iammzbV+ItlhZuNv0
+# 5byfupVVIQv/oDwvkG16EABSMIefTGhGSDKNrp891G2c3dc39trMSeOD8t65HpO2
+# mQFmaU8M1VUQUgjYIUQQa8/3IYyMs2+lOo2/quMBCLXiwyjTh9P0jz6SivxGl3Vc
+# BDxpGitEb8QGS1Lh6lcKDZWlREXupVnY9nJLNRBriJzQEYCLtQWlcR1MraqKO710
+# aqr2j6U5A3HAgnWU6gwqm9KllbdzjDI+a/GIr7sMNDSy0KUagEd4ymss35If2U1U
+# pyt5EmCf5LdCOhR1cW+BD9PEw38pVEwShMc80+qhWDsx
 # SIG # End signature block
