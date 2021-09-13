@@ -964,7 +964,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## NOTES
 File Name : GenLeCertForNS.ps1
-Version   : v2.9.3
+Version   : v2.10.2
 Author    : John Billekens
 Requires  : PowerShell v5.1 and up
             ADC 11.x and up
@@ -975,4 +975,3 @@ Requires  : PowerShell v5.1 and up
 ## RELATED LINKS
 
 [https://blog.j81.nl](https://blog.j81.nl)
-
