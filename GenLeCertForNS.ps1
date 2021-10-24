@@ -131,6 +131,10 @@
     The email address can be specified as "user.name@domain.com" or "User Name <user.name@domain.com>"
 .PARAMETER SMTPServer
     Specify the SMTP Mail server fqdn or IP-address
+.PARAMETER SMTPPort
+    Specify the SMTP Mail server port
+.PARAMETER SMTPUseSSL
+    Specify if the SMTP Mail server must use SSL
 .PARAMETER SMTPCredential
     Specify the Mail server credentials, only if credentials are required to send mails
 .PARAMETER LogAsAttachment
@@ -189,12 +193,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.10.3
+    Version   : v2.11.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.8.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.10.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -316,7 +320,7 @@ param(
             } elseif ($_ -is [String]) {
                 return $true
             } else {
-                throw "You passed an unexpected object type for the credential (-PfxPassword)"
+                throw "You passed an unexpected object type for the password (-PfxPassword). Must be (Secure)String"
             }
         })][object]$PfxPassword = $null,
 
@@ -392,6 +396,14 @@ param(
     [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
     [String]$SMTPServer,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Int]$SMTPPort,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Switch]$SMTPUseSSL,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
     [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
@@ -533,8 +545,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.10.3"
-$PoshACMEVersion = "4.8.1"
+$ScriptVersion = "2.11.0"
+$PoshACMEVersion = "4.10.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -628,11 +640,10 @@ function Write-ToLogFile {
         [string[]]$Message,
 
         [Parameter(ParameterSetName = "Block", Mandatory = $true)]
-        [ValidateNotNullOrEmpty()]
         [Alias("B")]
         [object[]]$Block,
 
-        [Parameter(ParameterSetName = "Block", Mandatory = $false)]
+        [Parameter(ParameterSetName = "Block")]
         [Alias("BI")]
         [Switch]$BlockIndent,
 
@@ -645,6 +656,7 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Info")]
         [Switch]$I,
 
+        [Parameter(ParameterSetName = "Block")]
         [Parameter(ParameterSetName = "Debug")]
         [Switch]$D,
 
@@ -690,6 +702,7 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Warning")]
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
         [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
         [String]$LogLevel,
 
@@ -729,12 +742,12 @@ function Write-ToLogFile {
     }
     #Check if a LogLevel is defined in a script. If defined, get value.
     try {
-        if ([String]::IsNullOrEmpty($LogLevel) -and (-Not $Block) -and (-Not $WriteHeader)) {
+        if ([String]::IsNullOrEmpty($LogLevel) -and (-Not $WriteHeader)) {
             $LogLevelVar = Get-Variable -Scope Global -Name LogLevel -ValueOnly -ErrorAction Stop
             $LogLevel = $LogLevelVar
         }
     } catch { 
-        if ([String]::IsNullOrEmpty($LogLevel) -and (-Not $Block)) {
+        if ([String]::IsNullOrEmpty($LogLevel)) {
             $LogLevel = "Info"
         }
     }
@@ -803,6 +816,9 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
         #Define the log sting for the Message Type
         if ($Block -Or $WriteHeader) {
             $WriteLog = $true
+            if ($D -and ($LogLevel -ne "Debug")) {
+                $WriteLog = $false
+            }
         } elseif ($E -and (($LogLevel -eq "Error") -Or ($LogLevel -eq "Warning") -Or ($LogLevel -eq "Info") -Or ($LogLevel -eq "Debug"))) {
             Write-Verbose -Message "LogType: [Error], LogLevel: [$LogLevel]"
             $MessageType = "ERROR"
@@ -815,7 +831,7 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
             Write-Verbose -Message "LogType: [Info], LogLevel: [$LogLevel]"
             $MessageType = "INFO "
             $WriteLog = $true
-        } elseif ($D -and (($LogLevel -eq "Debug"))) {
+        } elseif ($D -and ($LogLevel -eq "Debug")) {
             Write-Verbose -Message "LogType: [Debug], LogLevel: [$LogLevel]"
             $MessageType = "DEBUG"
             $WriteLog = $true
@@ -1380,29 +1396,50 @@ $($Script:MailData | Out-String)
             $message.IsBodyHTML = $false
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $message.Body = $SMTPBody
-            if ($LogAsAttachment) {
+            $smtp = New-Object Net.Mail.SmtpClient($($Script:Parameters.settings.SMTPServer))
+            if (-Not ($Script:SMTPCredential -eq [PSCredential]::Empty)) {
+                Write-ToLogFile -D -C SendMail -M "Setting SMTP Credentials, Username: $($Script:SMTPCredential.Username)"
+                $smtp.Credentials = $Script:SMTPCredential
+            }
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            if (-Not ([String]::IsNullOrEmpty(($Script:Parameters.settings.SMTPPort)))) {
+                Write-ToLogFile -D -C SendMail -M "Configuring SMTP Port: $($Script:Parameters.settings.SMTPPort)"
+                $smtp.Port = $Script:Parameters.settings.SMTPPort
+            }
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            if ($Script:Parameters.settings.SMTPUseSSL) {
+                Write-ToLogFile -D -C SendMail -M "Enabling SSL for mail"
+                $smtp.EnableSsl = $Script:Parameters.settings.SMTPUseSSL
+            } else {
+                Write-ToLogFile -D -C SendMail -M "Disabling SSL for mail"
+                $smtp.EnableSsl = $false
+            }
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            if ($Script:Parameters.settings.LogAsAttachment) {
                 try {
                     $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $Script:Parameters.settings.LogFile))
                 } catch {
                     Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Write-DisplayText -ForeGroundColor Red -NoNewLine " Could not attach LogFile "
                 }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             }
-            $smtp = New-Object Net.Mail.SmtpClient($($Script:Parameters.settings.SMTPServer))
-            if (-Not ($Script:SMTPCredential -eq [PSCredential]::Empty)) {
-                $smtp.Credentials = $Script:SMTPCredential
-            }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
                 $smtp.Send($message)
+                $smtp.Dispose()
+                $message.Dispose()
                 Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
+                $smtp.Dispose()
+                $message.Dispose()
                 Write-DisplayText -ForeGroundColor Red " Failed, Could not send mail"
                 Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
         } catch {
             Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Red " ERROR, Could not send mail: $($_.Exception.Message)"
         }
         
@@ -1467,7 +1504,8 @@ function Invoke-ADCCleanup {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
             }
         } catch {
-            Write-ToLogFile -W -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch LoadBalance Binding"
             Write-DisplayText -Line "Cleanup"
         }
@@ -1486,6 +1524,7 @@ function Invoke-ADCCleanup {
             }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
             Write-DisplayText -Line "Cleanup"
         }
@@ -1520,6 +1559,7 @@ function Invoke-ADCCleanup {
             }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
             Write-DisplayText -Line "Cleanup"
         }
@@ -1537,6 +1577,7 @@ function Invoke-ADCCleanup {
             }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
             Write-DisplayText -Line "Cleanup"
         }
@@ -1547,6 +1588,7 @@ function Invoke-ADCCleanup {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
         if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
             Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Policies found:"
@@ -1571,10 +1613,12 @@ function Invoke-ADCCleanup {
                             }
                         } catch {
                             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         }
                     }
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 }
                 try {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
@@ -1582,6 +1626,7 @@ function Invoke-ADCCleanup {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy removed successfully."
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 }
             }
         } else {
@@ -1593,6 +1638,7 @@ function Invoke-ADCCleanup {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
         if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
             Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Actions found:"
@@ -1606,6 +1652,7 @@ function Invoke-ADCCleanup {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Action removed successfully."
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 }
             }
         } else {
@@ -1659,6 +1706,7 @@ function Invoke-AddInitialADCConfig {
                 $ExceptMessage = $_.Exception.Message
                 Write-DisplayText -ForeGroundColor Red " Error"
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available? Exception Message: $ExceptMessage"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 Write-Error "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
                 TerminateScript 1 "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
                 if ($ExceptMessage -like "*(404) Not Found*") {
@@ -1717,6 +1765,7 @@ function Invoke-AddInitialADCConfig {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policies found"
@@ -1741,10 +1790,12 @@ function Invoke-AddInitialADCConfig {
                                 }
                             } catch {
                                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }
                         }
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
                     try {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
@@ -1752,6 +1803,7 @@ function Invoke-AddInitialADCConfig {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
                 }
         
@@ -1764,6 +1816,7 @@ function Invoke-AddInitialADCConfig {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
                 Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Responder Actions found:"
@@ -1778,6 +1831,7 @@ function Invoke-AddInitialADCConfig {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Action removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
                 }
             } else {
@@ -1818,6 +1872,7 @@ function Invoke-AddInitialADCConfig {
         } catch {
             Write-DisplayText -ForeGroundColor Red " Error"
             Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not configure the ADC. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-Error "Could not configure the ADC!"
             TerminateScript 1 "Could not configure the ADC!"
         }
@@ -1849,6 +1904,7 @@ function Invoke-CheckDNS {
             } catch {
                 $result = $null
                 Write-ToLogFile -E -C Invoke-CheckDNS -M "Internal check failed. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             Write-DisplayText -Line "Internal DNS Test"
             if ($result.RawContent -eq "HTTP/1.0 200 OK`r`n`r`nXXXX") {
@@ -1877,6 +1933,7 @@ function Invoke-CheckDNS {
             } catch {
                 $result = $null
                 Write-ToLogFile -E -C Invoke-CheckDNS -M "External check failed. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             [ref]$ValidIP = [IPAddress]::None
             if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not $CertRequest.DisableIPCheck)) {
@@ -2083,6 +2140,41 @@ function Write-DisplayText {
     }
 }
 
+function Get-ExceptionDetails {
+    [CmdletBinding(DefaultParameterSetName = "Default")]
+    param(
+        [Parameter(ParameterSetName = "Default", Position = 0, Mandatory)]
+        [Parameter(ParameterSetName = "Full", Position = 0, Mandatory)]
+        [Parameter(ParameterSetName = "Summary", Position = 0, Mandatory)]
+        [Object]$Exception,
+
+        [Parameter(ParameterSetName = "Full")]
+        [Switch]$Full,
+
+        [Parameter(ParameterSetName = "Summary")]
+        [Switch]$Summary
+    )
+    $ErrorLines = [System.Text.StringBuilder]::new()
+    if ($Summary) {
+        try { [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String).Trim()) } catch { }
+    } else {
+        [void]$ErrorLines.AppendLine("======================: Exception")
+        try { [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String).Trim()) } catch { }
+        [void]$ErrorLines.AppendLine($("======================: InvocationInfo"))
+        try { [void]$ErrorLines.AppendLine($($Exception.InvocationInfo | Format-List * -Force | Out-String).Trim()) } catch { }
+        if ($Full) {
+            try { 
+                for ($i = 0; $Exception; $i++, ($Exception = $Exception.InnerException)) {
+                    [void]$ErrorLines.AppendLine($("======================: InnerException - $i"))
+                    [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String ).Trim())
+                }
+            } catch { }
+        }
+        [void]$ErrorLines.AppendLine("=======================")
+    }
+    return $ErrorLines.ToString()
+}
+
 #endregion Functions
 
 #region Help
@@ -2095,22 +2187,72 @@ if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
 
 #region ScriptBasics
 
-if ($MyInvocation.Line -like "*-CleanNS*" ) { Write-Warning "Parameter `"-CleanNS`" is deprecated, please use `"-CleanADC`" instead." }
-if ($MyInvocation.Line -like "*-NSManagementURL*" ) { Write-Warning "Parameter `"-NSManagementURL`" is deprecated, please use `"-ManagementURL`" instead." }
-if ($MyInvocation.Line -like "*-NSUsername*" ) { Write-Warning "Parameter `"-NSUsername`" is deprecated, please use `"-Username`" instead." }
-if ($MyInvocation.Line -like "*-NSPassword*" ) { Write-Warning "Parameter `"-NSPassword`" is deprecated, please use `"-Password`" instead." }
-if ($MyInvocation.Line -like "*-NSCredential*" ) { Write-Warning "Parameter `"-NSCredential`" is deprecated, please use `"-Credential`" instead." }
-if ($MyInvocation.Line -like "*-NSCertNameToUpdate*" ) { Write-Warning "Parameter `"-NSCertNameToUpdate`" is deprecated, please use `"-CertKeyNameToUpdate`" instead." }
-if ($MyInvocation.Line -like "*-LogLocation*" ) { Write-Warning "Parameter `"-LogLocation`" is deprecated, please use `"-LogFile`" instead." }
-if ($MyInvocation.Line -like "*-SaveNSConfig*" ) { Write-Warning "Parameter `"-SaveNSConfig`" is deprecated, please use `"-SaveADCConfig`" instead." }
-if ($MyInvocation.Line -like "*-NSCsVipName*" ) { Write-Warning "Parameter `"-NSCsVipName`" is deprecated, please use `"-CsVipName`" instead." }
-if ($MyInvocation.Line -like "*-NSCspName*" ) { Write-Warning "Parameter `"-NSCspName`" is deprecated, please use `"-CspName`" instead." }
-if ($MyInvocation.Line -like "*-NSCsVipBinding*" ) { Write-Warning "Parameter `"-NSCsVipBinding`" is deprecated, please use `"-CsVipBinding`" instead." }
-if ($MyInvocation.Line -like "*-NSSvcName*" ) { Write-Warning "Parameter `"-NSSvcName`" is deprecated, please use `"-SvcName`" instead." }
-if ($MyInvocation.Line -like "*-NSSvcDestination*" ) { Write-Warning "Parameter `"-NSSvcDestination`" is deprecated, please use `"-SvcDestination`" instead." }
-if ($MyInvocation.Line -like "*-NSLbName*" ) { Write-Warning "Parameter `"-NSLbName`" is deprecated, please use `"-LbName`" instead." }
-if ($MyInvocation.Line -like "*-NSRspName*" ) { Write-Warning "Parameter `"-NSRspName`" is deprecated, please use `"-RspName`" instead." }
-if ($MyInvocation.Line -like "*-NSRsaName*" ) { Write-Warning "Parameter `"-NSRsaName`" is deprecated, please use `"-RsaName`" instead." }
+$PreLogLines = @()
+
+if ($MyInvocation.Line -like "*-CleanNS*" ) { 
+    Write-Warning "Parameter `"-CleanNS`" is deprecated, please use `"-CleanADC`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-CleanNS`" is deprecated, please use `"-CleanADC`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSManagementURL*" ) { 
+    Write-Warning "Parameter `"-NSManagementURL`" is deprecated, please use `"-ManagementURL`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSManagementURL`" is deprecated, please use `"-ManagementURL`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSUsername*" ) { 
+    Write-Warning "Parameter `"-NSUsername`" is deprecated, please use `"-Username`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSUsername`" is deprecated, please use `"-Username`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSPassword*" ) { 
+    Write-Warning "Parameter `"-NSPassword`" is deprecated, please use `"-Password`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSPassword`" is deprecated, please use `"-Password`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSCredential*" ) { 
+    Write-Warning "Parameter `"-NSCredential`" is deprecated, please use `"-Credential`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSCredential`" is deprecated, please use `"-Credential`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSCertNameToUpdate*" ) { 
+    Write-Warning "Parameter `"-NSCertNameToUpdate`" is deprecated, please use `"-CertKeyNameToUpdate`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSCertNameToUpdate`" is deprecated, please use `"-CertKeyNameToUpdate`" instead." 
+}
+if ($MyInvocation.Line -like "*-LogLocation*" ) { 
+    Write-Warning "Parameter `"-LogLocation`" is deprecated, please use `"-LogFile`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-LogLocation`" is deprecated, please use `"-LogFile`" instead." 
+}
+if ($MyInvocation.Line -like "*-SaveNSConfig*" ) { 
+    Write-Warning "Parameter `"-SaveNSConfig`" is deprecated, please use `"-SaveADCConfig`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-SaveNSConfig`" is deprecated, please use `"-SaveADCConfig`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSCsVipName*" ) { 
+    Write-Warning "Parameter `"-NSCsVipName`" is deprecated, please use `"-CsVipName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSCsVipName`" is deprecated, please use `"-CsVipName`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSCspName*" ) { 
+    Write-Warning "Parameter `"-NSCspName`" is deprecated, please use `"-CspName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSCspName`" is deprecated, please use `"-CspName`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSCsVipBinding*" ) { 
+    Write-Warning "Parameter `"-NSCsVipBinding`" is deprecated, please use `"-CsVipBinding`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSCsVipBinding`" is deprecated, please use `"-CsVipBinding`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSSvcName*" ) { 
+    Write-Warning "Parameter `"-NSSvcName`" is deprecated, please use `"-SvcName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSSvcName`" is deprecated, please use `"-SvcName`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSSvcDestination*" ) { 
+    Write-Warning "Parameter `"-NSSvcDestination`" is deprecated, please use `"-SvcDestination`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSSvcDestination`" is deprecated, please use `"-SvcDestination`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSLbName*" ) { 
+    Write-Warning "Parameter `"-NSLbName`" is deprecated, please use `"-LbName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSLbName`" is deprecated, please use `"-LbName`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSRspName*" ) { 
+    Write-Warning "Parameter `"-NSRspName`" is deprecated, please use `"-RspName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSRspName`" is deprecated, please use `"-RspName`" instead." 
+}
+if ($MyInvocation.Line -like "*-NSRsaName*" ) { 
+    Write-Warning "Parameter `"-NSRsaName`" is deprecated, please use `"-RsaName`" instead." 
+    $PreLogLines += "W;PARAMETERS;Parameter `"-NSRsaName`" is deprecated, please use `"-RsaName`" instead." 
+}
 
 $CertificateActions = $true
 $ADCActionsRequired = $true
@@ -2127,6 +2269,7 @@ if ($IPv6 -and $CertificateActions) {
     Write-DisplayText -Title "IPv6"
     Write-DisplayText -Line "IPv6 checks"
     Write-Warning "IPv6 Checks are experimental"
+    $PreLogLines += "W;INITIAL;IPv6 Checks are experimental"
     $PublicDnsServerv6 = "2606:4700:4700::1111"
 }
 
@@ -2212,8 +2355,9 @@ try {
             $ConfigFile = Join-Path -Path $ScriptRoot -ChildPath $(Split-Path -Path $ConfigFile -Leaf -ErrorAction SilentlyContinue ) -ErrorAction SilentlyContinue
         }
         Write-DisplayText -Line "Config File"
-        Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$ConfigFile"
+        Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$(if ($PSScriptRoot) {$ConfigFile.Replace("$PSScriptRoot\",$null)} else {$ConfigFile})"
         if (Test-Path -Path $ConfigFile) {
+            $PreLogLines += "I;CONFIGFILE;Config File `"$ConfigFile`" was found!"
             Write-DisplayText -ForeGroundColor Green " (found)"
             try {
                 if ($AutoRun) {
@@ -2242,6 +2386,7 @@ try {
             Write-DisplayText -Blank
             Write-DisplayText -Line "Status"
             Write-DisplayText -ForeGroundColor Cyan "Not Found, creating new ConfigFile"
+            $PreLogLines += "I;CONFIGFILE;`"$ConfigFile`" not Found, creating new ConfigFile"
             if ($AutoRun) {
                 Write-DisplayText -ForeGroundColor Red "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
                 Throw "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
@@ -2277,36 +2422,44 @@ if (-Not ($CreateUserPermissions) -and ($CsVipName -is [Array])) {
 
 Write-DisplayText -Line "Defining parameters"
 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+$PreLogLines += "I;PARAMETERS;Defining parameters"
 if ($AutoRun) {
+    $PreLogLines += "I;PARAMETERS;AutoRun active, defining the SMTPCredential."
     try {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         $ADCCredentialUsername = $Parameters.settings.ADCCredentialUsername
         $ADCCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword)
         $Credential = New-Object -TypeName PSCredential -ArgumentList $ADCCredentialUsername, $ADCCredentialPassword
+        $PreLogLines += "D;PARAMETERS;ADCCredential ready. Username:$($Credential.UserName)"
         if (-Not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
             Invoke-AddUpdateParameter -Object $Parameters.settings -Name ADCCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $ADCCredentialPassword)
             $SaveConfig = $true
         }
     } catch {
-        Throw "Could not read ADC credentials"
+        $PreLogLines += "E;PARAMETERS;Could not read the ADCCredential. ERROR:$($_.Exception.Message)"
+        Throw "Could not read ADC credentials. ERROR:$($_.Exception.Message)"
     }
     try {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        $PreLogLines += "I;PARAMETERS;Defining the SMTPCredential."
         $SMTPCredentialUsername = $Parameters.settings.SMTPCredentialUsername
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
         $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
+        $PreLogLines += "D;PARAMETERS;SMTPCredential ready. Username:$($SMTPCredential.UserName)"
         if (-Not $Parameters.settings.SMTPCredentialPassword.IsEncrypted) {
             Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $SMTPCredentialPassword)
             $SaveConfig = $true
         }
 
     } catch {
+        $PreLogLines += "E;PARAMETERS;Could not read the SMTPCredential, setting EmptyCredential. ERROR:$($_.Exception.Message)"
         $SMTPCredential = [PSCredential]::Empty
     }
     $Global:LogLevel = $Parameters.settings.LogLevel
     Write-DisplayText -ForeGroundColor Green " Done"
 } else {
     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+    $PreLogLines += "I;PARAMETERS;AutoRun NOT active, parsing/updating the parameters."
     $SMTPCredentialUsername = $SMTPCredential.Username
     $SMTPCredentialPassword = $SMTPCredential.Password
     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -2323,6 +2476,9 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialUsername -Value $SMTPCredentialUsername
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $SMTPCredentialPassword
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPServer -Value $SMTPServer
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPPort -Value $SMTPPort
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPUseSSL -Value $([bool]::Parse($SMTPUseSSL))
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name LogAsAttachment -Value $([bool]::Parse($LogAsAttachment))
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcName -Value $SvcName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name SvcDestination -Value $SvcDestination
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LbName -Value $LbName
@@ -2334,6 +2490,7 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSParams -Value $DNSParams
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSPlugin -Value $DNSPlugin
     if (($Parameters.certrequests.Count -eq 1) -and (-Not $AutoRun )) {
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name Enabled -Value $true
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
@@ -2356,6 +2513,7 @@ if ($AutoRun) {
     }
     $SaveConfig = $true
     Write-DisplayText -ForeGroundColor Green " Done"
+    $PreLogLines += "I;PARAMETERS;Finished."
 }
 
 if ($Parameters.settings.DisableLogging) {
@@ -2368,7 +2526,7 @@ if ($Parameters.settings.DisableLogging) {
     Write-Verbose "Log $($Parameters.settings.LogFile)"
     if (((Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue) -eq ".") -or ([String]::IsNullOrEmpty($(Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue)))) {
         $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $(Split-Path -Path $Parameters.settings.LogFile -Leaf )
-        Write-Verbose "Log $($Parameters.settings.LogFile)"
+        Write-Verbose "Log: $($Parameters.settings.LogFile)"
     }
     $Global:LogLevel = $Parameters.settings.LogLevel
     $Script:LogLevel = $Parameters.settings.LogLevel
@@ -2385,13 +2543,25 @@ $($PSBoundParameters | Out-String)
 "@
     Write-ToLogFile -I -C ScriptBasics -M "Starting a new log" -NewLog -ExtraHeaderInfo $ExtraHeaderInfo
     Write-DisplayText -Line "Log File"
-    Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.LogFile)"
+    Write-DisplayText -ForeGroundColor Cyan "$(if ($PSScriptRoot) {$Parameters.settings.LogFile.Replace("$PSScriptRoot\",$null)} else {$Parameters.settings.LogFile})"
     Write-DisplayText -Line "Log Level"
     if ($Parameters.settings.LogLevel -eq "Debug") {
         Write-DisplayText -ForeGroundColor Yellow "$($Parameters.settings.LogLevel) - WARNING: Passwords may be visible in the log!"
     } else {
         Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.LogLevel)"
     }
+}
+
+try {
+    Write-ToLogFile -I -C LOG-CATCH-UP -M "Filling log with previously gathered log entries"
+    Foreach ($line in $PreLogLines) {
+        $lLevel, $lComponent, $lMessage = $line -split ';'
+        $lExpression = 'Write-ToLogFile -{0} -C {1} -M "{2}"' -f $lLevel, $lComponent, $(($lMessage -Join ';').Replace('"','`"'))
+        Invoke-Expression $lExpression
+    }
+    Write-ToLogFile -I -C LOG-CATCH-UP -M "Finished catching-up"
+} catch {
+    Write-ToLogFile -E -C LOG-CATCH-UP -M "Caught an error! ERROR: $($_.Exception.Message)"
 }
 
 #endregion Logging
@@ -2470,6 +2640,7 @@ if ($CertificateActions) {
             } catch {
                 Write-DisplayText -ForeGroundColor Red " Failed"
                 Write-ToLogFile -E -C LoadModule -M "Error while loading and/or installing module. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 Write-Error "Error while loading and/or installing module"
                 Write-Warning "PackageManagement is not available please install this first or manually install Posh-ACME"
                 Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
@@ -2551,6 +2722,7 @@ try {
     }
 } catch {
     Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
+    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
 }
 Write-ToLogFile -I -C VersionInfo -M "Version check finished."
 #endregion VersionInfo
@@ -2565,6 +2737,7 @@ if ($ADCActionsRequired) {
         Write-DisplayText -ForegroundColor Green "Connected"
     } catch {
         Write-DisplayText -ForegroundColor Red "NOT Connected!"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         TerminateScript 1 "Could not connect, $($_.Exception.Message)"
     }
     Write-DisplayText -Line "URL"
@@ -2589,7 +2762,7 @@ if ($ADCActionsRequired) {
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the HA NOde info, $($_.Exception.message)"
-    }
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"    }
     Write-DisplayText -Line "Version"
     Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Version)"
     try {
@@ -2603,6 +2776,7 @@ if ($ADCActionsRequired) {
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 
     if ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -eq 0)) ) {
@@ -2674,6 +2848,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     } catch {
         Write-DisplayText -ForeGroundColor Red "Error"
         Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 }
 
@@ -2745,6 +2920,7 @@ if ($CreateApiUser) {
                     Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -Compress)"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
                 } catch {
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Write-ToLogFile -D -C ApiUser -M "Could not set API Command Line Interface only (Feature not supported on this version), $($_.Exception.Message)"
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine " API Interface setting not possible."
                 }
@@ -2753,7 +2929,8 @@ if ($CreateApiUser) {
                 Write-DisplayText -ForeGroundColor Green " Created"
             } catch {
                 Write-DisplayText -ForeGroundColor Red " Error"
-                Write-ToLogFile -E -C ApiUser -M "Caught an error while creating user. $($_Exception.Message)"
+                Write-ToLogFile -E -C ApiUser -M "Caught an error while creating user. $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
 
         }
@@ -2777,6 +2954,7 @@ if ($CreateApiUser) {
                 } catch {
                     Write-DisplayText -ForeGroundColor Red "Error"
                     Write-ToLogFile -D -C ApiUser -M "Error $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 }
             }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
@@ -2795,6 +2973,7 @@ if ($CreateApiUser) {
     } catch {
         Write-DisplayText -ForeGroundColor Red "Error"
         Write-ToLogFile -E -C ApiUser -M "Caught an error! Exception Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 }
 
@@ -2834,17 +3013,27 @@ if ($Parameters.settings.SendMail) {
         Write-DisplayText -ForeGroundColor Red "None"
         Write-ToLogFile -E -C EmailSettings -M "No Email (SMTP) Server specified (-SMTPServer)"
         $SMTPError += "No Email (SMTP) Server specified (-SMTPServer)"
+    } if (-Not [String]::IsNullOrEmpty($($Parameters.settings.SMTPPort))) {
+        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPServer):$($Parameters.settings.SMTPPort)"
+        Write-ToLogFile -I -C EmailSettings -M "Email Server: $($Parameters.settings.SMTPServer):$($Parameters.settings.SMTPPort)"
     } else {
         Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPServer)"
         Write-ToLogFile -I -C EmailSettings -M "Email Server: $($Parameters.settings.SMTPServer)"
+    }
+    Write-DisplayText -Line "Email Use SSL"
+    if ($Parameters.settings.SMTPUseSSL) {
+        Write-DisplayText -ForeGroundColor Green $($Parameters.settings.SMTPUseSSL)
+        Write-ToLogFile -I -C EmailSettings -M "Use SSL for sending mail"
+    } else {
+        Write-DisplayText -ForeGroundColor Cyan "False"
     }
     Write-DisplayText -Line "Email Credentials"
     if ($SMTPCredential -eq [PSCredential]::Empty) {
         Write-DisplayText -ForeGroundColor Cyan "(Optional) None"
         Write-ToLogFile -I -C EmailSettings -M "No Email Credential specified, this is optional"
     } else {
-        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPCredential.UserName) (Credential)"
-        Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($Parameters.settings.SMTPCredential.UserName)"
+        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPCredentialUserName) (Credential)"
+        Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($Parameters.settings.SMTPCredentialUserName)"
     }
     if (-Not [String]::IsNullOrEmpty($SMTPError)) {
         $Parameters.settings.SendMail = $false
@@ -2907,7 +3096,16 @@ if ($CertificateActions) {
         Write-DisplayText -Title " ============================"
         Write-DisplayText -Title "Request $($Round.ToString('000')) / $($TotalRounds.ToString('000'))"
         $SkipThisCertRequest = $false
-        if (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
+        if ($CertRequest.Enabled -eq $false) {
+            Write-DisplayText -Title "Current Certificate"
+            Write-DisplayText -Line "CN"
+            Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CN)"
+            Write-DisplayText -Line "Request"
+            Write-DisplayText -ForeGroundColor Yellow "Skipped"
+            Write-ToLogFile -I -C CheckCertRenewal -M "$($CertRequest.CN) skipped Enabled:False"
+            $Script:MailData += "$($CertRequest.CN) skipped Enabled:False"
+            $SkipThisCertRequest = $true
+        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
             try {
                 $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
                 if ((get-date) -lt $RenewAfterDate) {
@@ -2926,6 +3124,7 @@ if ($CertificateActions) {
                 }
             } catch {
                 Write-ToLogFile -E -C CheckCertRenewal -M "Caught an error while validating dates, $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
         }
         if ($SkipThisCertRequest) {
@@ -3098,6 +3297,7 @@ if ($CertificateActions) {
                     } catch {
                         $ExceptMessage = $_.Exception.Message
                         Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     } finally {
                         if (($response.errorcode -eq "0") -and `
                             ($response.csvserver.type -eq "CONTENT") -and `
@@ -3229,6 +3429,7 @@ if ($CertificateActions) {
                         Write-ToLogFile -I -C Registration -M "New registration successful."
                     } catch {
                         Write-ToLogFile -E -C Registration -M "Error New registration failed! Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -ForeGroundColor Red "`nError New registration failed!"
                     }
                 }
@@ -3238,6 +3439,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C Registration -M "Account $($PARegistration.id) set as default."
                 } catch {
                     Write-ToLogFile -E -C Registration -M "Could not set default account. Exception Message: $($_.Exception.Message)."
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
 
@@ -3293,6 +3495,7 @@ if ($CertificateActions) {
                     } catch {
                         Write-DisplayText -ForeGroundColor Red "Failed"
                         Write-ToLogFile -E -C Order -M "Caught an error, $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
                     
                 }
@@ -3351,6 +3554,7 @@ if ($CertificateActions) {
                         Write-DisplayText -ForeGroundColor Red "ERROR: Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
                         Invoke-RegisterError 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
                     }
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Continue
                 }
                 Write-DisplayText -ForeGroundColor Green " Ready"
@@ -3404,6 +3608,7 @@ if ($CertificateActions) {
                             } catch {
                                 $PublicIP = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not resolve the IP. $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }
                             $RecordType = $null
                             try {
@@ -3415,6 +3620,7 @@ if ($CertificateActions) {
                                 $RecordTypeID = $null
                                 $RecordType = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not determine the Record Type. $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }   
                             try {
                                 $DNSCNAMEDetails = $null
@@ -3429,6 +3635,7 @@ if ($CertificateActions) {
                             } catch {
                                 $DNSCNAMEDetails = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not retrieve CNAME details. $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }   
                             $DNSObject.DNSType = $RecordType
                             $DNSObject.DNSCNAMEDetails = $DNSCNAMEDetails
@@ -3458,6 +3665,7 @@ if ($CertificateActions) {
                         }
                     } catch {
                         Write-ToLogFile -E -C DNS-Validation -M "Error while retrieving IP Address. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -ForeGroundColor Red -NoNewLine "Error while retrieving IP Address,"
                         if ($DNSObject.SAN) {
                             Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
@@ -3575,22 +3783,28 @@ if ($CertificateActions) {
             }
     
             #endregion CheckOrderValidation
-    
             #region ConfigureADC
-    
             if (($ADCActionsRequired -and ($CertRequest.ValidationMethod -eq "http")) -and ($SessionRequestObject.ExitCode -eq 0)) {
-                Invoke-AddInitialADCConfig
+                try {
+                    Invoke-AddInitialADCConfig
+                } catch {
+                    Write-Error -Message "Cannot pre-configure the Citrix ADC, please validate your settings!"
+                    Invoke-RegisterError 1 "Cannot pre-configure the Citrix ADC, please validate your settings!"
+                }
             }
             #endregion ConfigureADC
     
             #region CheckDNS
             if (($ADCActionsRequired) -and ($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
-                Invoke-CheckDNS
+                try {
+                    Invoke-CheckDNS
+                } catch {
+                    Write-Error -Message "Cannot Check the DNS, please validate your settings!"
+                    Invoke-RegisterError 1 "Cannot Check the DNS, please validate your settings!"
+                }
             }
             #endregion CheckDNS
-    
             #region OrderValidation
-
 
             if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 Write-ToLogFile -I -C OrderValidation -M "Configuring the ADC Responder Policies/Actions required for the validation."
@@ -3639,6 +3853,7 @@ if ($CertificateActions) {
                                         Write-ToLogFile -I -C OrderValidation -M "Successfully send."
                                     } catch {
                                         Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
+                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                         Write-DisplayText -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
                                         Invoke-RegisterError 1 "Error while submitting the Challenge."
                                         Break
@@ -3646,6 +3861,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -ForeGroundColor Green " Ready"
                                 } catch {
                                     Write-ToLogFile -E -C OrderValidation -M "Failed to bind Responder Policy to Load Balance VIP. Exception Message: $($_.Exception.Message)"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                     Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
                                     Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                     Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
@@ -3653,6 +3869,7 @@ if ($CertificateActions) {
                                 }
                             } catch {
                                 Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
                                 Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                 Invoke-RegisterError 1 "Failed to add Responder Policy"
@@ -3660,6 +3877,7 @@ if ($CertificateActions) {
                             }
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
                             Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                             Invoke-RegisterError 1 "Failed to add Responder Action"
@@ -3801,9 +4019,11 @@ if ($CertificateActions) {
                         } catch {
                             try {
                                 Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
                             } catch {
                                 Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }
                         }    
 
@@ -3846,6 +4066,7 @@ if ($CertificateActions) {
                     }
                 } catch {
                     Write-ToLogFile -E -C DNSChallenge -M "Caught an error. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     $issues = $true
                 }
                 if ($issues) {
@@ -3884,6 +4105,7 @@ if ($CertificateActions) {
                         } catch {
                             Write-DisplayText -ForeGroundColor Red " ERROR"
                             Write-ToLogFile -E -C FinalizingOrder -M "Caught an error. Exception Message: $($_.Exception.Message)"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             Write-Error "Error while submitting the Challenge"
                             $DNSValidationError = $true
                             Invoke-RegisterError 1 "Error while submitting the Challenge"
@@ -3941,6 +4163,7 @@ if ($CertificateActions) {
                                 Write-ToLogFile -I -C FinalizingOrder -M "$($DNSObject.DNSName): $($PAOrderItem.DNS01Status)"
                             } catch {
                                 Write-ToLogFile -E -C FinalizingOrder -M "Error while Retrieving validation status. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 Write-Error "Error while Retrieving validation status"
                                 $ValidationError = $true
                                 Invoke-RegisterError 1 "Error while Retrieving validation status"
@@ -4031,6 +4254,7 @@ if ($CertificateActions) {
                         Continue
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
+                    Write-ToLogFile -D -C CertFinalization -M $($ChainFile | Select-Object DnsNameList, @{ Name = 'NotBefore'; Expression = { $_.NotBefore.ToString('yyyy-MM-dd HH:mm:ss') } }, @{ Name = 'NotAfter'; Expression = { $_.NotAfter.ToString('yyyy-MM-dd HH:mm:ss') } }, SerialNumber, Thumbprint, Subject, Issuer | ConvertTo-Json -Compress)
                     $IntermediateCACertKeyName = $ChainFile.DnsNameList.Unicode.Replace("'", $null).Replace("(", $null).Replace(")", $null)
                     if ($IntermediateCACertKeyName.length -gt 26) {
                         $IntermediateCACertKeyName = $IntermediateCACertKeyName -Replace '(?sm)\W', $null
@@ -4130,7 +4354,7 @@ if ($CertificateActions) {
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -D -C ADC-CertUpload -M "Details:"
-                    $ADCIntermediateCA.sslcertkey | Select-Object certkey, issuer, subject, serial, clientcertnotbefore, clientcertnotafter | ForEach-Object {
+                    $ADCIntermediateCA.sslcertkey | Select-Object certkey, serial, clientcertnotbefore, clientcertnotafter, issuer, subject, cert | ForEach-Object {
                         Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
                     }
                     Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists."
@@ -4153,7 +4377,7 @@ if ($CertificateActions) {
                         }
                     } else {
                         $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
-                        Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" for later use."
+                        Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" (Serial:$($ADCIntermediateCA.sslcertkey.serial)) for later use."
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     if ([String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
@@ -4172,9 +4396,26 @@ if ($CertificateActions) {
                         Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$CertificateCertKeyName`" found on the ADC, start updating."
                         try {
                             Write-ToLogFile -D -C ADC-CertUpload -M "Unlinking certificate."
+                            try {
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Linked details (before-unlink)"
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type "sslcertchain_binding" -Resource $CertificateCertKeyName
+                                $response.sslcertchain_binding.sslcertchain_sslcertkey_binding | ForEach-Object {
+                                    Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
+                                }
+                            } catch {
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
+                            }
                             $payload = @{"certkey" = "$CertificateCertKeyName"; }
                             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
-    
+                            try {
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Linked details (after-unlink)"
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type "sslcertchain_binding" -Resource $CertificateCertKeyName
+                                $response.sslcertchain_binding.sslcertchain_sslcertkey_binding | ForEach-Object {
+                                    Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
+                                }
+                            } catch {
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
+                            }
                         } catch {
                             Write-ToLogFile -D -C ADC-CertUpload -M "Certificate was not linked."
                         }
@@ -4251,6 +4492,7 @@ if ($CertificateActions) {
                                     }
                                 } catch {
                                     Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 }
                             } else {
                                 Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was NOT specified, not removing previous files."
@@ -4264,21 +4506,33 @@ if ($CertificateActions) {
                         Write-Warning "Caught an error, certificate not added to the ADC Config"
                         Write-Warning "Details: $($_.Exception.Message | Out-String)"
                         Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, certificate not added to the ADC Config. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -Line "Status"
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
                     try {
                         $payload = @{"certkey" = "$CertificateCertKeyName"; "linkcertkeyname" = "$IntermediateCACertKeyName"; }
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link -ErrorAction Stop
                         Write-ToLogFile -I -C ADC-CertUpload -M "Link successfully."
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Response: $($response | ConvertTo-Json -Compress)"
                     } catch {
                         Write-DisplayText -Blank
                         Write-Warning -Message "Could not link the certificate`"$CertificateCertKeyName`"`r`n         to Intermediate `"$IntermediateCACertKeyName`""
                         Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
-                        Write-ToLogFile -E -C ADC-CertUpload -M "Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -Blank
                         Write-DisplayText -Line "Status"
+                    }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    try {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Linked details (after-link)"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type "sslcertchain_binding" -Resource $CertificateCertKeyName
+                        $response.sslcertchain_binding.sslcertchain_sslcertkey_binding | ForEach-Object {
+                            Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -Compress)"
+                        }
+                    } catch {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
                     }
                     Write-DisplayText -ForeGroundColor Green " Ready"
 
@@ -4314,17 +4568,19 @@ if ($CertificateActions) {
                         $SaveConfig = $true
                     } catch {
                         Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving expiration details, $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
+                    $FinalCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
                     Write-DisplayText -Line "Certificate expires" 
                     Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
                     Write-DisplayText -Line "Renew after" 
                     Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
-                    Write-DisplayText -Line "Keysize"
-                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.KeyLength)"
-                    Write-DisplayText -Line "Certkey Name" 
+                    Write-DisplayText -Line "Public Key Size"
+                    Write-DisplayText -ForeGroundColor Cyan "$($FinalCertificate.PublicKey.key.KeySize)"
+                    Write-DisplayText -Line "ADC SSL Certkey Name" 
                     Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
                     Write-DisplayText -Line "Intermediate" 
-                    Write-DisplayText -ForeGroundColor Cyan "$($ChainFile.DnsNameList.Unicode) ($IntermediateCACertKeyName)"
+                    Write-DisplayText -ForeGroundColor Cyan "$($ChainFile.DnsNameList.Unicode)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $IntermediateCACertKeyName)"
                     Write-DisplayText -Line "Cert Dir" 
                     Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
                     Write-DisplayText -Line "CRT Filename"
@@ -4339,6 +4595,8 @@ if ($CertificateActions) {
                     Write-DisplayText -ForeGroundColor Green "Finished with the certificate for CN: $($CertRequest.CN)!"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Keysize: $($CertRequest.KeyLength)"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Certkey Name: $CertificateCertKeyName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Intermediate: $($ChainFile.DnsNameList.Unicode)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))]"
                     Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
@@ -4346,13 +4604,15 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificate for CN: $($CertRequest.CN)!"
                     $Script:MailData += "Certificates stored in: $CertificateDirectory"
                     try {
-                        $MailCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
                         $Script:MailData += "ADC CertkeyName: $($CertificateCertKeyName)"
                         $Script:MailData += "Valid until: $($CertRequest.CertExpires)"
                         $Script:MailData += "Renew after: $($CertRequest.RenewAfter)"
-                        $Script:MailData += "Issued by CA: $(try { ($MailCertificate.Issuer -Split ',')[0] -Replace ('CN=',$null) } catch {$MailCertificate.Issuer})"
-                        $Script:MailData += "Public Key Size: $($MailCertificate.PublicKey.key.KeySize)"
-                    } catch { }
+                        $Script:MailData += "Issued by CA: $($ChainFile.DnsNameList.Unicode)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $IntermediateCACertKeyName)"
+                        $Script:MailData += "Public Key Size: $($FinalCertificate.PublicKey.key.KeySize)"
+                    } catch {
+                        Write-ToLogFile -D -C ADC-CertUpload-Mail -M "Error while gathering data for mail, Error: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
 
                     ##Saving Config if required    
                     Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
@@ -4394,6 +4654,7 @@ if ($CertificateActions) {
                                     } catch {
                                         Write-DisplayText -ForeGroundColor Red "Failed"
                                         Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
+                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                     }
                                 }
                                 try {
@@ -4405,10 +4666,12 @@ if ($CertificateActions) {
                                 } catch {
                                     Write-DisplayText -ForeGroundColor Red "Could not bind"
                                     Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 }
                             } catch {
                                 Write-DisplayText -ForeGroundColor Red "Caught an error while updating"
                                 Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                             }
                         } else {
                             Write-DisplayText -Line "Module" 
@@ -4444,6 +4707,7 @@ if ($CertificateActions) {
                                     Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
                                 } catch {
                                     Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, $($_.Exception.Message)"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                 }
                             }
                         }
@@ -4456,6 +4720,7 @@ if ($CertificateActions) {
                     }
                 } catch {
                     Write-ToLogFile -E -C ADC-CertUpload -M "Certificate completion failed. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                     Invoke-RegisterError 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                     Continue
@@ -4485,6 +4750,7 @@ if ($CertificateActions) {
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Failed, $($_.Exception.Message)"
                 Write-ToLogFile -E -C RemoveExpiredCerts -M "Error while cleaning expired certificate files. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
         }
     } #END Loop
@@ -4529,6 +4795,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, Could not unlink `"$($LinkedCertificate.certkey)`""
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not unlink certkey `"$($LinkedCertificate.certkey)`". Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
     }
     $FakeCerts = $CertDetails.sslcertkey | Where-Object { $_.issuer -match $IntermediateCACertKeyName }
@@ -4547,6 +4814,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not remove certkey `"$($FakeCert.certkey)`""
             Write-ToLogFile -W -C RemoveTestCerts -M "Could not remove certkey `"$($FakeCert.certkey)`" from the ADC. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
         Write-ToLogFile -W -C RemoveTestCerts -M "Getting Certificate details"
         try {
@@ -4588,6 +4856,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`""
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`". Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
         if (-Not ($(Join-Path -Path $CertFilePath -ChildPath $CertFileName) -eq $(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName))) {
             Write-DisplayText -Line "SSL Key File"
@@ -4600,6 +4869,7 @@ if ($RemoveTestCertificates) {
             } catch {
                 Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file `"$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)`""
                 Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)`". Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
         }
     }
@@ -4619,6 +4889,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file [$(Join-Path -Path $CertFileToRemove.filelocation -ChildPath $CertFileToRemove.filename)]"
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file: `"$(Join-Path -Path $CertFileToRemove.filelocation -ChildPath $CertFileToRemove.filename)`". Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
     }
 }
@@ -4642,6 +4913,7 @@ if ($CleanAllExpiredCertsOnDisk) {
     } catch {
         Write-DisplayText -ForeGroundColor Red "Failed, $($_.Exception.Message)"
         Write-ToLogFile -E -C RemoveExpiredCerts -M "Error while cleaning expired certificate files. Exception Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 }
 
@@ -4653,6 +4925,7 @@ if ($SaveConfig -and (-Not [String]::IsNullOrEmpty($ConfigFile))) {
     } catch {
         Write-ToLogFile -E -C Final-Actions -M "Saving failed! Exception Message: $($_.Exception.Message)"
         Write-DisplayText -ForegroundColor Red "Could not write the Parameters to `"$ConfigFile`"`r`nException Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 } elseif ($SaveConfig -and ([String]::IsNullOrEmpty($ConfigFile))) {
     Write-ToLogFile -D -C Final-Actions -M "There were unsaved changes, but no ConfigFile was defined."
