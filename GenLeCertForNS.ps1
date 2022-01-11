@@ -111,6 +111,20 @@
 .PARAMETER IISSiteToUpdate
     Select a IIS Site you want to add the certificate to.
     Default value when not specifying this parameter is "Default Web Site".
+.PARAMETER PostPoSHScriptFilename
+    Configure this parameter with a full path name to a PowerShell script.
+    This script will be executed after a successful certificate request. The script needs three parameters:
+    1. [String]$Thumbprint => This will contain the thumbprint of the newly generated certificate
+    2. [String]$PFXfilename => This will contain the full path to the PFX certificate
+    3. [String]$PFXPassword => This will contain the PFX password
+    Return an exit code 0 for success or 1 if failed!
+    You can specify your own parameters (if needed) by specifying the "-PostPoSHScriptExtraParameters" parameter.
+    The GenLECertForNS script will continue even if the script failed! But it will generate an error message on the console or email.
+.PARAMETER PostPoSHScriptExtraParameters
+    To be used together with the "-PostPoSHScriptFilename" parameter.
+    With this parameter you can pass your own parameters needed for the script (e.g. api credentials or a IIS Site name)
+    Specify as a hashtable
+    E.g. -PostPoSHScriptExtraParameters @{ IISSiteName="Default Web Site" }
 .PARAMETER CleanExpiredCertsOnDisk
     Files older than the days specified in the CleanExpiredCertsOnDiskDays parameter will be deleted in the in the -CertDir specified directory.
     In an AutoRun configuration, you can specify a CertDir per request. This parameter will run per certificate request.
@@ -193,18 +207,18 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.11.0
+    Version   : v2.12.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.10.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.11.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
 #>
 
-[cmdletbinding(DefaultParameterSetName = "LECertificatesHTTP")]
+[CmdletBinding(DefaultParameterSetName = "LECertificatesHTTP")]
 [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingWriteHost", "")]
 [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingPlainTextForPassword", "")]
 param(
@@ -219,9 +233,9 @@ param(
     [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $true)]
     [Switch]$RemoveTestCertificates,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [Switch]$CleanPoshACMEStorage,
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
@@ -234,22 +248,22 @@ param(
     [alias("URL", "NSManagementURL")]
     [String]$ManagementURL,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [ValidateNotNullOrEmpty()]
     [alias("User", "NSUsername", "ADCUsername")]
     [String]$Username,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [ValidateNotNullOrEmpty()]
     [ValidateScript( {
             if ($_ -is [SecureString]) {
@@ -262,12 +276,12 @@ param(
         })][alias("NSPassword", "ADCPassword")]
     [object]$Password,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [alias("NSCredential", "ADCCredential")]
     [System.Management.Automation.PSCredential]
     [System.Management.Automation.Credential()]$Credential = [System.Management.Automation.PSCredential]::Empty,
@@ -277,33 +291,33 @@ param(
     [ValidateNotNullOrEmpty()]
     [String]$CN,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String[]]$SAN = @(),
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$FriendlyName,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [ValidateSet('http', 'dns', IgnoreCase = $true)]
     [String]$ValidationMethod = "http",
 
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$DNSPlugin = "Manual",
 
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Object]$DNSParams = @{ },
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [alias("NSCertNameToUpdate")]
     [ValidateLength(1, 31)]
     [String]$CertKeyNameToUpdate,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$RemovePrevious,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
@@ -312,8 +326,8 @@ param(
     [ValidateNotNullOrEmpty()]
     [String]$CertDir,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [ValidateScript( {
             if ($_ -is [SecureString]) {
                 return $true
@@ -328,8 +342,8 @@ param(
     [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [String]$EmailAddress,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [ValidateScript( {
             if ($_ -lt 2048 -Or $_ -gt 4096 -Or ($_ % 128) -ne 0) {
                 throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
@@ -338,160 +352,175 @@ param(
             }
         })][int32]$KeyLength = 2048,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "AutoRun", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "AutoRun")]
     [Switch]$Production,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [Switch]$DisableLogging,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [ValidateNotNullOrEmpty()]
     [alias("LogLocation")]
     [String]$LogFile = "<DEFAULT>",
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanTestCertificate", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [Parameter(ParameterSetName = "CleanTestCertificate")]
     [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
     [String]$LogLevel = "Info",
    
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("SaveNSConfig")]
     [Switch]$SaveADCConfig,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$SendMail,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String[]]$SMTPTo,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$SMTPFrom,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [System.Management.Automation.PSCredential]
     [System.Management.Automation.Credential()]$SMTPCredential = [System.Management.Automation.PSCredential]::Empty,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$SMTPServer,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Int]$SMTPPort,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$SMTPUseSSL,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$LogAsAttachment,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$DisableIPCheck,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$IPv6,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$UpdateIIS,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$IISSiteToUpdate = "Default Web Site",
     
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [String]$PostPoSHScriptFilename,
+    
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Hashtable]$PostPoSHScriptExtraParameters = @{},
+    
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
     [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanADC")]
     [ValidateNotNullOrEmpty()]
     [alias("NSCsVipName")]
     [String[]]$CsVipName,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSCspName")]
     [String]$CspName = "csp_letsencrypt",
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSCsVipBinding")]
     [String]$CsVipBinding = 11,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSSvcName")]
     [String]$SvcName = "svc_letsencrypt_cert_dummy",
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSSvcDestination")]
     [String]$SvcDestination = "1.2.3.4",
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSLbName")]
     [String]$LbName = "lb_letsencrypt_cert",
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSRspName")]
     [String]$RspName = "rsp_letsencrypt",
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CleanADC", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
     [alias("NSRsaName")]
     [String]$RsaName = "rsa_letsencrypt",
+
+    [Parameter(ParameterSetName = "CommandPolicy", DontShow)]
+    [Parameter(ParameterSetName = "CommandPolicyUser", DontShow)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP", DontShow)]
+    [Parameter(ParameterSetName = "LECertificatesDNS", DontShow)]
+    [Parameter(ParameterSetName = "CleanADC", DontShow)]
+    [String[]]$Partitions = @("default"),
 
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
     [Switch]$CreateUserPermissions,
 
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $false)]
-    [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
     [String]$NSCPName = "script-GenLeCertForNS",
 
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
@@ -514,30 +543,30 @@ param(
         })]
     [object]$ApiPassword,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $true)]
     [String]$ConfigFile = $null,
 
     [Parameter(ParameterSetName = "AutoRun", Mandatory = $true)]
     [Switch]$AutoRun = $false,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Parameter(ParameterSetName = "AutoRun")]
     [Alias('Force')]
     [Switch]$ForceCertRenew = $false,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$CleanExpiredCertsOnDisk,
 
     [Parameter(ParameterSetName = "CleanExpiredCerts", Mandatory = $true)]
     [Switch]$CleanAllExpiredCertsOnDisk,
 
-    [Parameter(ParameterSetName = "CleanExpiredCerts", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $false)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $false)]
+    [Parameter(ParameterSetName = "CleanExpiredCerts")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [int16]$CleanExpiredCertsOnDiskDays = 100,
 
     [Switch]$NoConsoleOutput
@@ -545,8 +574,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.11.0"
-$PoshACMEVersion = "4.10.0"
+$ScriptVersion = "2.12.0"
+$PoshACMEVersion = "4.11.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -732,10 +761,13 @@ function Write-ToLogFile {
     }
     #Check if a log file is defined in a Script. If defined, get value.
     try {
-        $LogFileVar = Get-Variable -Scope Script -Name LogFile -ValueOnly -ErrorAction Stop
+        $LogFileVar = Get-Variable -Scope Global -Name LogFile -ValueOnly -ErrorAction SilentlyContinue
         if (-Not [String]::IsNullOrWhiteSpace($LogFileVar)) {
             $LogFile = $LogFileVar
-            
+        }
+        $LogFileVar = Get-Variable -Scope Script -Name LogFile -ValueOnly -ErrorAction SilentlyContinue
+        if (-Not [String]::IsNullOrWhiteSpace($LogFileVar)) {
+            $LogFile = $LogFileVar
         }
     } catch {
         #Continue, no script variable found for LogFile
@@ -959,7 +991,7 @@ function Invoke-ADCRestApi {
     )
     # Based on https://github.com/devblackops/NetScaler
     if ([String]::IsNullOrEmpty($($Session.ManagementURL))) {
-        try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Probably not logged into the Citrix ADC!" } catch { }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Probably not logged into the Citrix ADC!" } 
         throw "ERROR. Probably not logged into the ADC"
     }
     if ($Stat) {
@@ -1008,10 +1040,10 @@ function Invoke-ADCRestApi {
             $uri += $filterList -join ','
         }
         if ($Query.Count -gt 0) {
-            $uri += $Query.GetEnumerator() | Foreach-Object { "?$($_.Name)=$([System.Uri]::EscapeDataString($_.Value))" }
+            $uri += $Query.GetEnumerator() | ForEach-Object { "?$($_.Name)=$([System.Uri]::EscapeDataString($_.Value))" }
         }
     }
-    try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "URI: `"$uri`", METHOD: `"$method`"" } catch { }
+    if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Invoke-ADCRestApi -M "URI: `"$uri`", METHOD: `"$method`"" } 
 
     $jsonPayload = $null
     if ($Method -ne 'GET') {
@@ -1020,7 +1052,7 @@ function Invoke-ADCRestApi {
         $hashtablePayload.'params' = @{'warning' = $warning; 'onerror' = $OnErrorAction; <#"action"=$Action#> }
         $hashtablePayload.$Type = $Payload
         $jsonPayload = ConvertTo-Json -InputObject $hashtablePayload -Depth 100 -Compress
-        try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "JSON Payload: $($jsonPayload | ConvertTo-Json -Compress)" } catch { }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Invoke-ADCRestApi -M "JSON Payload: $($jsonPayload | ConvertTo-Json -Compress)" } 
     }
 
     $response = $null
@@ -1044,10 +1076,10 @@ function Invoke-ADCRestApi {
 
         if ($response) {
             if ($response.severity -eq 'ERROR') {
-                try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Got an ERROR response: $($response| ConvertTo-Json -Compress)" } catch { }
+                if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Got an ERROR response: $($response| ConvertTo-Json -Compress)" } 
                 throw "Error. See log"
             } else {
-                try { Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
+                if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -Compress)" } 
                 if ($Method -eq "GET") { 
                     if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
                         return $response | Select-Object -ExpandProperty $Type -ErrorAction SilentlyContinue
@@ -1059,9 +1091,9 @@ function Invoke-ADCRestApi {
         }
     } catch [Exception] {
         if ($Type -eq 'reboot' -and $restError[0].Message -eq 'The underlying connection was closed: The connection was closed unexpectedly.') {
-            try { Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot." } catch { }
+            if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot." } 
         } else {
-            try { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { }
+            if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" } 
             throw $_
         }
     }
@@ -1085,7 +1117,7 @@ function Connect-ADC {
     [cmdletbinding()]
     param(
         [parameter(Mandatory)]
-        [String]$ManagementURL,
+        [uri]$ManagementURL,
 
         [parameter(Mandatory)]
         [PSCredential]$Credential,
@@ -1095,7 +1127,7 @@ function Connect-ADC {
         [Switch]$PassThru
     )
     # Based on https://github.com/devblackops/NetScaler
-    try { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+    if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." }
     if ($ManagementURL -like "https://*") {
         if (-Not ("TrustAllCertsPolicy" -as [type])) {
             Add-Type -TypeDefinition @"
@@ -1127,7 +1159,7 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
         $loginJson = ConvertTo-Json -InputObject $login -Compress
         $saveSession = @{ }
         $params = @{
-            Uri             = "$ManagementURL/nitro/v1/config/login"
+            Uri             = "$($ManagementURL)nitro/v1/config/login"
             Method          = 'POST'
             Body            = $loginJson
             SessionVariable = 'saveSession'
@@ -1138,25 +1170,25 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
         $response = Invoke-RestMethod @params
 
         if ($response.severity -eq 'ERROR') {
-            try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+            if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" }
             Write-Error "Error. See log"
             TerminateScript 1 "Error. See log"
         } else {
-            try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+            if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -Compress)" }
         }
     } catch [Exception] {
         throw $_
     }
     $session = [PSObject]@{
-        ManagementURL = [String]$ManagementURL;
+        ManagementURL = $ManagementURL.ToString().TrimEnd('/');
         WebSession    = [Microsoft.PowerShell.Commands.WebRequestSession]$saveSession;
         Username      = $Credential.Username;
         Version       = "UNKNOWN";
     }
     try {
-        try { Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Connect-ADC -M "Trying to retrieve the ADC version" }
         $params = @{
-            Uri           = "$ManagementURL/nitro/v1/config/nsversion"
+            Uri           = "$($ManagementURL)nitro/v1/config/nsversion"
             Method        = 'GET'
             WebSession    = $Session.WebSession
             ContentType   = 'application/json'
@@ -1164,22 +1196,21 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
             Verbose       = $false
         }
         $response = Invoke-RestMethod @params
-        try { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" }
         $version = $response.nsversion.version.Split(",")[0]
         if (-not ([String]::IsNullOrWhiteSpace($version))) {
             $session.version = $version
         }
-        try { Write-ToLogFile -I -C Connect-ADC -M "Connected" } catch { }
-        try { Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Connect-ADC -M "Connected" } 
+        if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Connect-ADC -M "Connected to Citrix ADC $ManagementURL, as user $($Credential.Username), ADC Version $($session.Version)" }
     } catch {
-        try { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)" } catch { <# Function can be used (while testing) without this Write-ToLogFile function#> }
-        try { Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } catch { }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Connect-ADC -M "Caught an error. Exception Message: $($_.Exception.Message)" }
+        if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Connect-ADC -M "Response: $($response | ConvertTo-Json -Compress)" } 
     }
     if ($PassThru) {
         return $session
     }
 }
-
 
 function Invoke-ADCGetHanode {
     <#
@@ -1464,8 +1495,22 @@ function Save-ADCConfig {
     Write-DisplayText -Line "Config Saved"
     if ($SaveADCConfig) {
         Write-ToLogFile -I -C SaveADCConfig -M "Saving ADC configuration.  (`"-SaveADCConfig`" Parameter set)"
-        Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save
-        Write-DisplayText -ForeGroundColor Green "Saved!"
+        $payload = @{"nsconfig" = "all" }
+        try {
+            try {
+                Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save -Payload $payload
+                Write-DisplayText -ForeGroundColor Green "All - Saved!"
+                Write-ToLogFile -I -C SaveADCConfig -M "Config saved!"
+            } catch {
+                Write-ToLogFile -I -C SaveADCConfig -M "Save-All not available, trying again with only save."
+                Invoke-ADCRestApi -Session $ADCSession -Method POST -Type nsconfig -Action save
+                Write-DisplayText -ForeGroundColor Green "Saved!"
+                Write-ToLogFile -I -C SaveADCConfig -M "Config saved!"
+            }
+        } catch {
+            Write-DisplayText -ForeGroundColor Red "ERROR, NOT Saved!"
+            Write-ToLogFile -E -C SaveADCConfig -M "ERROR, ADC configuration NOT Saved! $($_.Exception.Message)"
+        }
     } else {
         Write-DisplayText -ForeGroundColor Yellow "NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
         Write-ToLogFile -I -C SaveADCConfig -M "ADC configuration NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
@@ -1898,7 +1943,7 @@ function Invoke-CheckDNS {
             Write-ToLogFile -I -C Invoke-CheckDNS -M "Testing if the Citrix ADC (Content Switch) is configured successfully by accessing URL: `"$TestURL`" (via internal DNS)."
             try {
                 Write-ToLogFile -D -C Invoke-CheckDNS -M "Retrieving data"
-                $result = Invoke-WebRequest -URI $TestURL -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+                $result = Invoke-WebRequest -Uri $TestURL -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
                 Write-ToLogFile -I -C Invoke-CheckDNS -M "Retrieved successfully."
                 Write-ToLogFile -D -C Invoke-CheckDNS -M "output: $($result | Select-Object StatusCode,StatusDescription,RawContent | ConvertTo-Json -Compress)"
             } catch {
@@ -1924,7 +1969,7 @@ function Invoke-CheckDNS {
                     $TestURL = "http://$($DNSObject.IPAddress)/.well-known/acme-challenge/XXXX"
                     $Headers = @{"Host" = "$($DNSObject.DNSName)" }
                     Write-ToLogFile -D -C Invoke-CheckDNS -M "Retrieving data with the following headers: $($Headers | ConvertTo-Json -Compress)"
-                    $result = Invoke-WebRequest -URI $TestURL -Headers $Headers -TimeoutSec 10 -UseBasicParsing
+                    $result = Invoke-WebRequest -Uri $TestURL -Headers $Headers -TimeoutSec 10 -UseBasicParsing
                     Write-ToLogFile -I -C Invoke-CheckDNS -M "Success"
                     Write-ToLogFile -D -C Invoke-CheckDNS -M "Output: $($result | Select-Object StatusCode,StatusDescription,RawContent | ConvertTo-Json -Compress)"
                 } else {
@@ -2122,17 +2167,17 @@ function Write-DisplayText {
             Write-Host ""
         } elseif ($Title) {
             Write-Host ""
-            Write-Host -ForeGroundColor $ForeGroundColor "$Message"
+            Write-Host -ForegroundColor $ForeGroundColor "$Message"
         } elseif ($Line) {
             $NoNewLine = $true
             if ($Message.Length -ge $($Length - 5)) {
                 $Message = $Message.substring(0, $($Length - 5))
             }
-            Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine " -$($Message.PadRight($($Length -4), ".")): "
+            Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine " -$($Message.PadRight($($Length -4), ".")): "
         } elseif ([String]::IsNullOrEmpty($Message)) {
-            Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine "<none>"
+            Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine "<none>"
         } elseif (-Not [String]::IsNullOrEmpty($Message)) {
-            Write-Host -ForeGroundColor $ForeGroundColor -NoNewLine:$NoNewLine "$Message"
+            Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine "$Message"
         }
         if ($PostBlank) {
             Write-Host ""
@@ -2254,6 +2299,10 @@ if ($MyInvocation.Line -like "*-NSRsaName*" ) {
     $PreLogLines += "W;PARAMETERS;Parameter `"-NSRsaName`" is deprecated, please use `"-RsaName`" instead." 
 }
 
+if ("default" -notin $Partitions) {
+    $Partitions += "default"
+}
+
 $CertificateActions = $true
 $ADCActionsRequired = $true
 if ($CleanADC -or $RemoveTestCertificates -or $CreateApiUser -or $CreateUserPermissions -or $help) {
@@ -2322,7 +2371,7 @@ try {
             [PSCredential]$Credential = New-Object System.Management.Automation.PSCredential ($Username, $Password)
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
-            $Credential = Get-Credential -Username nsroot -Message "Citrix ADC Credentials"
+            $Credential = Get-Credential -UserName nsroot -Message "Citrix ADC Credentials"
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
             throw "No valid credential found, -Username & -Password or -Credential not specified!"
@@ -2503,11 +2552,14 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ValidationMethod -Value $ValidationMethod
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertExpires -Value $null
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RenewAfter -Value $null
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name Partitions -Value $Partitions
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ForceCertRenew -Value $([bool]::Parse($ForceCertRenew))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableIPCheck -Value $([bool]::Parse($DisableIPCheck))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PfxPassword -Value $PfxPassword
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UpdateIIS -Value $([bool]::Parse($UpdateIIS))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name IISSiteToUpdate -Value $IISSiteToUpdate
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PostPoSHScriptFilename -value $PostPoSHScriptFilename
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PostPoSHScriptExtraParameters -value $PostPoSHScriptExtraParameters
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CleanExpiredCertsOnDisk -Value $CleanExpiredCertsOnDisk
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CleanExpiredCertsOnDiskDays -Value $CleanExpiredCertsOnDiskDays
     }
@@ -2517,9 +2569,11 @@ if ($AutoRun) {
 }
 
 if ($Parameters.settings.DisableLogging) {
+    $Script:LoggingEnabled = $false
     $Global:LogLevel = "None"
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LogLevel -Value $Global:LogLevel
 } else {
+    $Script:LoggingEnabled = $true
     if ($Parameters.settings.LogFile -like "*<DEFAULT>*") {
         $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $($MyInvocation.MyCommand -Replace '.ps1', '.txt' )
     }
@@ -2556,7 +2610,7 @@ try {
     Write-ToLogFile -I -C LOG-CATCH-UP -M "Filling log with previously gathered log entries"
     Foreach ($line in $PreLogLines) {
         $lLevel, $lComponent, $lMessage = $line -split ';'
-        $lExpression = 'Write-ToLogFile -{0} -C {1} -M "{2}"' -f $lLevel, $lComponent, $(($lMessage -Join ';').Replace('"','`"'))
+        $lExpression = 'Write-ToLogFile -{0} -C {1} -M "{2}"' -f $lLevel, $lComponent, $(($lMessage -Join ';').Replace('"', '`"'))
         Invoke-Expression $lExpression
     }
     Write-ToLogFile -I -C LOG-CATCH-UP -M "Finished catching-up"
@@ -2762,7 +2816,8 @@ if ($ADCActionsRequired) {
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the HA NOde info, $($_.Exception.message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"    }
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+    }
     Write-DisplayText -Line "Version"
     Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Version)"
     try {
@@ -2798,6 +2853,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     ForEach ($VipName in $CsVipName) {
         $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)"
     }
+    
     Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
     Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
     Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$NSCPName`"!"
@@ -2821,6 +2877,13 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Line "Action"
 
     $CmdSpec = "(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
+
+    #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
+    #$otherPartitions = @( $Parameters.settings.Partitions | Where-Object { $_ -ne "default"} )
+    #if ($otherPartitions.Count -gt 0 ) {
+    #    
+    #}
+    
     try {
         $Filters = @{ policyname = "$NSCPName" }
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
@@ -3087,14 +3150,16 @@ if ($CertificateActions) {
     ForEach ($CertRequest in $Parameters.certrequests) {
         $Round++
         $PfxPasswordGenerated = $false
-        Write-ToLogFile -I -C "CertLoop-$($Round.ToString('000'))" -M "**************************************** $($Round.ToString('000'))  / $($TotalRounds.ToString('000')) ****************************************"
         if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
         }
         $Script:MailData += "******************************"
         $Script:MailData += "CN: $($CertRequest.CN)"
-        Write-DisplayText -Title " ============================"
-        Write-DisplayText -Title "Request $($Round.ToString('000')) / $($TotalRounds.ToString('000'))"
+        if ($TotalRounds -gt 1) {
+            Write-ToLogFile -I -C "CertLoop-$($Round.ToString('000'))" -M "**************************************** $($Round.ToString('000'))  / $($TotalRounds.ToString('000')) ****************************************" 
+            Write-DisplayText -Title " ============================"
+            Write-DisplayText -Title "Request $($Round.ToString('000')) / $($TotalRounds.ToString('000'))"
+        }
         $SkipThisCertRequest = $false
         if ($CertRequest.Enabled -eq $false) {
             Write-DisplayText -Title "Current Certificate"
@@ -3108,7 +3173,7 @@ if ($CertificateActions) {
         } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
             try {
                 $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
-                if ((get-date) -lt $RenewAfterDate) {
+                if ((Get-Date) -lt $RenewAfterDate) {
                     Write-DisplayText -Title "Current Certificate"
                     Write-DisplayText -Line "CN"
                     Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CN)"
@@ -3435,7 +3500,7 @@ if ($CertificateActions) {
                 }
                 try {
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    Set-PAAccount -ID $PARegistration.id -Force | out-null
+                    Set-PAAccount -ID $PARegistration.id -Force | Out-Null
                     Write-ToLogFile -I -C Registration -M "Account $($PARegistration.id) set as default."
                 } catch {
                     Write-ToLogFile -E -C Registration -M "Could not set default account. Exception Message: $($_.Exception.Message)."
@@ -4241,7 +4306,7 @@ if ($CertificateActions) {
                 $CertificateAlias = "LECRT-$SessionDateTime-$($CertRequest.CN.Replace('*.',''))"
                 $CertificateDirectory = Join-Path -Path $($CertRequest.CertDir) -ChildPath "$CertificateAlias"
                 Write-ToLogFile -I -C CertFinalization -M "Create directory `"$CertificateDirectory`" for storing the new certificates."
-                New-Item $CertificateDirectory -ItemType directory -force | Out-Null
+                New-Item $CertificateDirectory -ItemType directory -Force | Out-Null
                 $CertificateName = "$($ScriptDateTime.ToString("yyyyMMddHHmm"))-$($CertRequest.CN.Replace('*.',''))"
                 if (Test-Path $CertificateDirectory) {
                     Write-ToLogFile -I -C CertFinalization -M "Retrieving certificate info."
@@ -4324,7 +4389,7 @@ if ($CertificateActions) {
                     Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
                     Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
                     $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
-                    $NewCertificates = Export-PfxCertificate -PfxData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
+                    $NewCertificates = Export-PfxCertificate -PFXData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
                     Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
                     if ($CertRequest.ForceCertRenew) {
                         $CertRequest.ForceCertRenew = $false
@@ -4660,7 +4725,7 @@ if ($CertificateActions) {
                                 try {
                                     Write-ToLogFile -I -C IISActions -M "Binding new certificate, $($ImportedCertificate.Thumbprint)"
                                     Write-DisplayText -Line "Binding New Cert" 
-                                    New-Item -path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
+                                    New-Item -Path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
                                     Write-DisplayText -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
                                     $Script:MailData += "IIS Binding updated for site `"$($CertRequest.IISSiteToUpdate)`": $($ImportedCertificate.Thumbprint)"
                                 } catch {
@@ -4680,7 +4745,7 @@ if ($CertificateActions) {
                     }
     
                     #endregion IISActions
-    
+
                     if ($CertRequest.ValidationMethod -eq "dns") {
                         if ($PoshACMEPluginUsed -ne $true) {
                             Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
@@ -4734,6 +4799,75 @@ if ($CertificateActions) {
             }
     
             #endregion ADC-CertUpload
+
+            #region PostPoSHScriptFilename
+            Write-ToLogFile -I -C PostPoSHScript -M "Checking if parameter `"PostPoSHScriptFilename`" was defined."
+            $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
+            if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
+                Write-DisplayText -Title "Post PowerShell Script"
+                Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell Script defined, Filename: `"$($CertRequest.PostPoSHScriptFilename)`""
+                $pfxCertificateFilename = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
+                if (-Not [String]::IsNullOrEmpty($($FinalCertificate.Thumbprint)) -and (Test-Path $pfxCertificateFilename)) {
+                    Write-DisplayText -Line "Script Path" 
+                    Write-DisplayText -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
+                    Write-DisplayText -Line "Executing script" 
+                    try {
+                        Write-ToLogFile -I -C PostPoSHScript -M "Post Script Starting"
+                        $output = Invoke-Command -ScriptBlock {
+                            param (
+                                $poshScript,
+                                $Thumbprint,
+                                $PFXfilename,
+                                $PFXPassword,
+                                $extraParams
+                                )
+                                Write-ToLogFile -D -C PoSHScript -M "Post Script Starting"
+                                & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
+                                Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
+                            } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
+                        $postPoSHScriptResult = $LastExitCode
+                        Write-ToLogFile -D -C PostPoSHScript -M "Post Script Finished [ExitCode:$postPoSHScriptResult]"
+                        if ($null -ne $output) {
+                            Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
+                            Write-ToLogFile -D -B $output
+                            Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
+                        }
+                    } catch {
+                        $postPoSHScriptResult = 1
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
+                    switch ($postPoSHScriptResult) {
+                        0 {
+                            Write-DisplayText -ForeGroundColor Green "Success"
+                            Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell script executed successfully"
+                            $Script:MailData += "Post PowerShell script executed successfully"
+                        }
+                        1 {
+                            Write-DisplayText -ForeGroundColor Red "Failed!"
+                            Invoke-RegisterError 1 "Failed to execute Post PowerShell script"
+                        }
+                        Default {
+                            Write-DisplayText -ForeGroundColor Yellow "Unknown Result! [$postPoSHScriptResult]"
+                            Write-ToLogFile -W -C PostPoSHScript -M "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
+                            $Script:MailData += "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
+                        }
+                    }
+                } else {
+                    Write-DisplayText -ForeGroundColor Yellow "SKIPPED! Not a valid certificate found!"
+                    Write-ToLogFile -W -C PostPoSHScript -M "Not a valid certificate found! Skipped the execution."
+                }
+            } elseif ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (-Not (Test-Path -Path $($CertRequest.PostPoSHScriptFilename)))) {
+                Write-DisplayText -Title "Post PowerShell Script"
+                Write-DisplayText -Line "Script Path" 
+                Write-DisplayText -NoNewLine -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
+                Write-DisplayText -ForeGroundColor Red " NOT FOUND!"
+                Write-ToLogFile -E -C PostPoSHScript -M "PoSH Script `"$($CertRequest.PostPoSHScriptFilename)`" NOT found!"
+            } else {
+                Write-ToLogFile -I -C PostPoSHScript -M "No Post PowerShell Script defined"
+            }
+
+            #endregion PostPoSHScriptFilename
+
         }
         if ($CertRequest.CleanExpiredCertsOnDisk -eq $true) {
             Write-ToLogFile -i -C RemoveExpiredCerts -M "Removing expired certificates on disk (`"*.$($CertRequest.CN.Replace('*.',''))`")"
@@ -4743,7 +4877,7 @@ if ($CertificateActions) {
             Write-DisplayText -Line "Removing files"
             try {
                 $RegEx = '(?>CRT-SAN|LECRT)-[0-9]{8}-[0-9]{6}-' + $CertRequest.CN.Replace('*.', '')
-                $FoldersWithExpiredCertificates = Get-ChildItem -Path $CertRequest.CertDir | Where-Object { ($_.Name -match $RegEx) -and ($_.CreationTime -lt (get-Date).AddDays( - $($CertRequest.CleanExpiredCertsOnDiskDays))) }
+                $FoldersWithExpiredCertificates = Get-ChildItem -Path $CertRequest.CertDir | Where-Object { ($_.Name -match $RegEx) -and ($_.CreationTime -lt (Get-Date).AddDays( - $($CertRequest.CleanExpiredCertsOnDiskDays))) }
                 $FoldersWithExpiredCertificates | Remove-Item -Force -Recurse -ErrorAction Stop
                 Write-DisplayText -ForeGroundColor Green "$($FoldersWithExpiredCertificates.Count) file(s) removed!"
                 Write-ToLogFile -I -C RemoveExpiredCerts -M "$($FoldersWithExpiredCertificates.Count) file(s) removed!"
@@ -4818,7 +4952,7 @@ if ($RemoveTestCertificates) {
         }
         Write-ToLogFile -W -C RemoveTestCerts -M "Getting Certificate details"
         try {
-            $CertFilePath = (split-path $($FakeCert.cert) -Parent).Replace("\", "/")
+            $CertFilePath = (Split-Path $($FakeCert.cert) -Parent).Replace("\", "/")
             if ([String]::IsNullOrEmpty($CertFilePath)) {
                 $CertFilePath = "/nsconfig/ssl/"
             }
@@ -4826,14 +4960,14 @@ if ($RemoveTestCertificates) {
             $CertFilePath = "/nsconfig/ssl/"
         }
         try {
-            $CertFileName = split-path $($FakeCert.cert) -Leaf
+            $CertFileName = Split-Path $($FakeCert.cert) -Leaf
         } catch {
             $CertFileName = $null
         }
         Write-ToLogFile -W -C RemoveTestCerts -M "Certificate name: `"$($CertFileName)`" in path: `"$($CertFilePath)`""
         Write-ToLogFile -W -C RemoveTestCerts -M "Getting Certificate Key details"
         try {
-            $KeyFilePath = (split-path $($FakeCert.key) -Parent).Replace("\", "/")
+            $KeyFilePath = (Split-Path $($FakeCert.key) -Parent).Replace("\", "/")
             if ([String]::IsNullOrEmpty($KeyFilePath)) {
                 $KeyFilePath = "/nsconfig/ssl/"
             }
@@ -4841,7 +4975,7 @@ if ($RemoveTestCertificates) {
             $KeyFilePath = "/nsconfig/ssl/"
         }
         try {
-            $KeyFileName = split-path $($FakeCert.key) -Leaf
+            $KeyFileName = Split-Path $($FakeCert.key) -Leaf
         } catch {
             $KeyFileName = $null
         }
@@ -4906,7 +5040,7 @@ if ($CleanAllExpiredCertsOnDisk) {
     try {
         Write-DisplayText -Line "Removing files"
         $RegEx = '(?>CRT-SAN|LECRT)-[0-9]{8}-[0-9]{6}-\w+\.\w+'
-        $FoldersWithExpiredCertificates = Get-ChildItem -Path $CertDir | Where-Object { ($_.Name -match $RegEx) -and ($_.CreationTime -lt (get-Date).AddDays( - $($CleanExpiredCertsOnDiskDays))) }
+        $FoldersWithExpiredCertificates = Get-ChildItem -Path $CertDir | Where-Object { ($_.Name -match $RegEx) -and ($_.CreationTime -lt (Get-Date).AddDays( - $($CleanExpiredCertsOnDiskDays))) }
         $FoldersWithExpiredCertificates | Remove-Item -Force -Recurse -ErrorAction Stop
         Write-DisplayText -ForeGroundColor Green "$($FoldersWithExpiredCertificates.Count) file(s) removed!"
         Write-ToLogFile -I -C RemoveExpiredCerts -M "$($FoldersWithExpiredCertificates.Count) file(s) removed!"
@@ -4950,3 +5084,202 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 }
 
 TerminateScript 0
+
+# SIG # Begin signature block
+# MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDk5q4ehuIKs9Ol
+# WZT3oa2E4W/xURMO6nL2Qww6lGXHF6CCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
+# ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
+# D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
+# aW5nIENBMB4XDTIxMDUwNTAwMDAwMFoXDTI0MDUwNDIzNTk1OVowWzELMAkGA1UE
+# BhMCTkwxEjAQBgNVBAcMCVZlbGRob3ZlbjEbMBkGA1UECgwSSm9oYW5uZXMgQmls
+# bGVrZW5zMRswGQYDVQQDDBJKb2hhbm5lcyBCaWxsZWtlbnMwggEiMA0GCSqGSIb3
+# DQEBAQUAA4IBDwAwggEKAoIBAQCsfgRG81keOHalHfCUgxOa1Qy4VNOnGxB8SL8e
+# rjP9SfcF13McP7F1HGka5Be495pTZ+duGbaQMNozwg/5Dg9IRJEeBabeSSJJCbZo
+# SNpmUu7NNRRfidQxlPC81LxTVHxJ7In0MEfCVm7rWcri28MRCAuafqOfSE+hyb1Z
+# /tKyCyQ5RUq3kjs/CF+VfMHsJn6ZT63YqewRkwHuc7UogTTZKjhPJ9prGLTer8UX
+# UgvsGRbvhYZXIEuy+bmx/iJ1yRl1kX4nj6gUYzlhemOnlSDD66YOrkLDhXPMXLym
+# AN7h0/W5Bo//R5itgvdGBkXkWCKRASnq/9PTcoxW6mwtgU8xAgMBAAGjggGQMIIB
+# jDAfBgNVHSMEGDAWgBQO4TqoUzox1Yq+wbutZxoDha00DjAdBgNVHQ4EFgQUZWMy
+# gC0i1u2NZ1msk2Mm5nJm5AswDgYDVR0PAQH/BAQDAgeAMAwGA1UdEwEB/wQCMAAw
+# EwYDVR0lBAwwCgYIKwYBBQUHAwMwEQYJYIZIAYb4QgEBBAQDAgQQMEoGA1UdIARD
+# MEEwNQYMKwYBBAGyMQECAQMCMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8vc2VjdGln
+# by5jb20vQ1BTMAgGBmeBDAEEATBDBgNVHR8EPDA6MDigNqA0hjJodHRwOi8vY3Js
+# LnNlY3RpZ28uY29tL1NlY3RpZ29SU0FDb2RlU2lnbmluZ0NBLmNybDBzBggrBgEF
+# BQcBAQRnMGUwPgYIKwYBBQUHMAKGMmh0dHA6Ly9jcnQuc2VjdGlnby5jb20vU2Vj
+# dGlnb1JTQUNvZGVTaWduaW5nQ0EuY3J0MCMGCCsGAQUFBzABhhdodHRwOi8vb2Nz
+# cC5zZWN0aWdvLmNvbTANBgkqhkiG9w0BAQsFAAOCAQEARjv9ieRocb1DXRWm3XtY
+# jjuSRjlvkoPd9wS6DNfsGlSU42BFd9LCKSyRREZVu8FDq7dN0PhD4bBTT+k6AgrY
+# KG6f/8yUponOdxskv850SjN2S2FeVuR20pqActMrpd1+GCylG8mj8RGjdrLQ3QuX
+# qYKS68WJ39WWYdVB/8Ftajir5p6sAfwHErLhbJS6WwmYjGI/9SekossvU8mZjZwo
+# Gbu+fjZhPc4PhjbEh0ABSsPMfGjQQsg5zLFjg/P+cS6hgYI7qctToo0TexGe32DY
+# fFWHrHuBErW2qXEJvzSqM5OtLRD06a4lH5ZkhojhMOX9S8xDs/ArDKgX1j1Xm4Tu
+# DjCCBYEwggRpoAMCAQICEDlyRDr5IrdR19NsEN0xNZUwDQYJKoZIhvcNAQEMBQAw
+# ezELMAkGA1UEBhMCR0IxGzAZBgNVBAgMEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4G
+# A1UEBwwHU2FsZm9yZDEaMBgGA1UECgwRQ29tb2RvIENBIExpbWl0ZWQxITAfBgNV
+# BAMMGEFBQSBDZXJ0aWZpY2F0ZSBTZXJ2aWNlczAeFw0xOTAzMTIwMDAwMDBaFw0y
+# ODEyMzEyMzU5NTlaMIGIMQswCQYDVQQGEwJVUzETMBEGA1UECBMKTmV3IEplcnNl
+# eTEUMBIGA1UEBxMLSmVyc2V5IENpdHkxHjAcBgNVBAoTFVRoZSBVU0VSVFJVU1Qg
+# TmV0d29yazEuMCwGA1UEAxMlVVNFUlRydXN0IFJTQSBDZXJ0aWZpY2F0aW9uIEF1
+# dGhvcml0eTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAIASZRc2DsPb
+# CLPQrFcNdu3NJ9NMrVCDYeKqIE0JLWQJ3M6Jn8w9qez2z8Hc8dOx1ns3KBErR9o5
+# xrw6GbRfpr19naNjQrZ28qk7K5H44m/Q7BYgkAk+4uh0yRi0kdRiZNt/owbxiBhq
+# kCI8vP4T8IcUe/bkH47U5FHGEWdGCFHLhhRUP7wz/n5snP8WnRi9UY41pqdmyHJn
+# 2yFmsdSbeAPAUDrozPDcvJ5M/q8FljUfV1q3/875PbcstvZU3cjnEjpNrkyKt1ya
+# tLcgPcp/IjSufjtoZgFE5wFORlObM2D3lL5TN5BzQ/Myw1Pv26r+dE5px2uMYJPe
+# xMcM3+EyrsyTO1F4lWeL7j1W/gzQaQ8bD/MlJmszbfduR/pzQ+V+DqVmsSl8MoRj
+# VYnEDcGTVDAZE6zTfTen6106bDVc20HXEtqpSQvf2ICKCZNijrVmzyWIzYS4sT+k
+# OQ/ZAp7rEkyVfPNrBaleFoPMuGfi6BOdzFuC00yz7Vv/3uVzrCM7LQC/NVV0CUnY
+# SVgaf5I25lGSDvMmfRxNF7zJ7EMm0L9BX0CpRET0medXh55QH1dUqD79dGMvsVBl
+# CeZYQi5DGky08CVHWfoEHpPUJkZKUIGy3r54t/xnFeHJV4QeD2PW6WK61l9VLupc
+# xigIBCU5uA4rqfJMlxwHPw1S9e3vL4IPAgMBAAGjgfIwge8wHwYDVR0jBBgwFoAU
+# oBEKIz6W8Qfs4q8p74Klf9AwpLQwHQYDVR0OBBYEFFN5v1qqK0rPVIDh2JvAnfKy
+# A2bLMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MBEGA1UdIAQKMAgw
+# BgYEVR0gADBDBgNVHR8EPDA6MDigNqA0hjJodHRwOi8vY3JsLmNvbW9kb2NhLmNv
+# bS9BQUFDZXJ0aWZpY2F0ZVNlcnZpY2VzLmNybDA0BggrBgEFBQcBAQQoMCYwJAYI
+# KwYBBQUHMAGGGGh0dHA6Ly9vY3NwLmNvbW9kb2NhLmNvbTANBgkqhkiG9w0BAQwF
+# AAOCAQEAGIdR3HQhPZyK4Ce3M9AuzOzw5steEd4ib5t1jp5y/uTW/qofnJYt7wNK
+# fq70jW9yPEM7wD/ruN9cqqnGrvL82O6je0P2hjZ8FODN9Pc//t64tIrwkZb+/UNk
+# fv3M0gGhfX34GRnJQisTv1iLuqSiZgR2iJFODIkUzqJNyTKzuugUGrxx8VvwQQuY
+# AAoiAxDlDLH5zZI3Ge078eQ6tvlFEyZ1r7uq7z97dzvSxAKRPRkA0xdcOds/exgN
+# Rc2ThZYvXd9ZFk8/Ub3VRRg/7UqO6AZhdCMWtQ1QcydER38QXYkqa4UxFMToqWpM
+# gLxqeM+4f452cpkMnf7XkQgWoaNflTCCBfUwggPdoAMCAQICEB2iSDBvmyYY0ILg
+# ln0z02owDQYJKoZIhvcNAQEMBQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpO
+# ZXcgSmVyc2V5MRQwEgYDVQQHEwtKZXJzZXkgQ2l0eTEeMBwGA1UEChMVVGhlIFVT
+# RVJUUlVTVCBOZXR3b3JrMS4wLAYDVQQDEyVVU0VSVHJ1c3QgUlNBIENlcnRpZmlj
+# YXRpb24gQXV0aG9yaXR5MB4XDTE4MTEwMjAwMDAwMFoXDTMwMTIzMTIzNTk1OVow
+# fDELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4G
+# A1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQD
+# ExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUA
+# A4IBDwAwggEKAoIBAQCGIo0yhXoYn0nwli9jCB4t3HyfFM/jJrYlZilAhlRGdDFi
+# xRDtsocnppnLlTDAVvWkdcapDlBipVGREGrgS2Ku/fD4GKyn/+4uMyD6DBmJqGx7
+# rQDDYaHcaWVtH24nlteXUYam9CflfGqLlR5bYNV+1xaSnAAvaPeX7Wpyvjg7Y96P
+# v25MQV0SIAhZ6DnNj9LWzwa0VwW2TqE+V2sfmLzEYtYbC43HZhtKn52BxHJAteJf
+# 7wtF/6POF6YtVbC3sLxUap28jVZTxvC6eVBJLPcDuf4vZTXyIuosB69G2flGHNyM
+# fHEo8/6nxhTdVZFuihEN3wYklX0Pp6F8OtqGNWHTAgMBAAGjggFkMIIBYDAfBgNV
+# HSMEGDAWgBRTeb9aqitKz1SA4dibwJ3ysgNmyzAdBgNVHQ4EFgQUDuE6qFM6MdWK
+# vsG7rWcaA4WtNA4wDgYDVR0PAQH/BAQDAgGGMBIGA1UdEwEB/wQIMAYBAf8CAQAw
+# HQYDVR0lBBYwFAYIKwYBBQUHAwMGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAE1jUO1HNEphpNveaiqMm/EA
+# AB4dYns61zLC9rPgY7P7YQCImhttEAcET7646ol4IusPRuzzRl5ARokS9At3Wpwq
+# QTr81vTr5/cVlTPDoYMot94v5JT3hTODLUpASL+awk9KsY8k9LOBN9O3ZLCmI2pZ
+# aFJCX/8E6+F0ZXkI9amT3mtxQJmWunjxucjiwwgWsatjWsgVgG10Xkp1fqW4w2y1
+# z99KeYdcx0BNYzX2MNPPtQoOCwR/oEuuu6Ol0IQAkz5TXTSlADVpbL6fICUQDRn7
+# UJBhvjmPeo5N9p8OHv4HURJmgyYZSJXOSsnBf/M6BZv5b9+If8AjntIeQ3pFMcGc
+# TanwWbJZGehqjSkEAnd8S0vNcL46slVaeD68u28DECV3FTSK+TbMQ5Lkuk/xYpMo
+# JVcp+1EZx6ElQGqEV8aynbG8HArafGd+fS7pKEwYfsR7MUFxmksp7As9V1DSyt39
+# ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
+# mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
+# CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
+# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
+# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
+# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
+# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
+# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
+# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
+# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
+# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
+# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
+# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
+# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
+# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
+# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
+# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
+# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
+# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
+# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
+# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
+# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
+# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
+# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
+# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
+# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
+# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
+# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
+# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
+# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
+# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
+# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
+# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
+# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
+# 4/kKyVRd1LlqdJ69SK6YMIIHBzCCBO+gAwIBAgIRAIx3oACP9NGwxj2fOkiDjWsw
+# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
+# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
+# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
+# DTIwMTAyMzAwMDAwMFoXDTMyMDEyMjIzNTk1OVowgYQxCzAJBgNVBAYTAkdCMRsw
+# GQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAW
+# BgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoGA1UEAwwjU2VjdGlnbyBSU0EgVGlt
+# ZSBTdGFtcGluZyBTaWduZXIgIzIwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIK
+# AoICAQCRh0ssi8HxHqCe0wfGAcpSsL55eV0JZgYtLzV9u8D7J9pCalkbJUzq70DW
+# mn4yyGqBfbRcPlYQgTU6IjaM+/ggKYesdNAbYrw/ZIcCX+/FgO8GHNxeTpOHuJre
+# TAdOhcxwxQ177MPZ45fpyxnbVkVs7ksgbMk+bP3wm/Eo+JGZqvxawZqCIDq37+fW
+# uCVJwjkbh4E5y8O3Os2fUAQfGpmkgAJNHQWoVdNtUoCD5m5IpV/BiVhgiu/xrM2H
+# YxiOdMuEh0FpY4G89h+qfNfBQc6tq3aLIIDULZUHjcf1CxcemuXWmWlRx06mnSlv
+# 53mTDTJjU67MximKIMFgxvICLMT5yCLf+SeCoYNRwrzJghohhLKXvNSvRByWgiKV
+# KoVUrvH9Pkl0dPyOrj+lcvTDWgGqUKWLdpUbZuvv2t+ULtka60wnfUwF9/gjXcRX
+# yCYFevyBI19UCTgqYtWqyt/tz1OrH/ZEnNWZWcVWZFv3jlIPZvyYP0QGE2Ru6eEV
+# YFClsezPuOjJC77FhPfdCp3avClsPVbtv3hntlvIXhQcua+ELXei9zmVN29OfxzG
+# PATWMcV+7z3oUX5xrSR0Gyzc+Xyq78J2SWhi1Yv1A9++fY4PNnVGW5N2xIPugr4s
+# rjcS8bxWw+StQ8O3ZpZelDL6oPariVD6zqDzCIEa0USnzPe4MQIDAQABo4IBeDCC
+# AXQwHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0UojtE1XwYSBFUwHQYDVR0OBBYEFGl1
+# N3u7nTVCTr9X05rbnwHRrt7QMA4GA1UdDwEB/wQEAwIGwDAMBgNVHRMBAf8EAjAA
+# MBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEAGA1UdIAQ5MDcwNQYMKwYBBAGyMQEC
+# AQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8vc2VjdGlnby5jb20vQ1BTMEQGA1Ud
+# HwQ9MDswOaA3oDWGM2h0dHA6Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRp
+# bWVTdGFtcGluZ0NBLmNybDB0BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0
+# dHA6Ly9jcnQuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNy
+# dDAjBggrBgEFBQcwAYYXaHR0cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcN
+# AQEMBQADggIBAEoDeJBCM+x7GoMJNjOYVbudQAYwa0Vq8ZQOGVD/WyVeO+E5xFu6
+# 6ZWQNze93/tk7OWCt5XMV1VwS070qIfdIoWmV7u4ISfUoCoxlIoHIZ6Kvaca9QIV
+# y0RQmYzsProDd6aCApDCLpOpviE0dWO54C0PzwE3y42i+rhamq6hep4TkxlVjwmQ
+# Lt/qiBcW62nW4SW9RQiXgNdUIChPynuzs6XSALBgNGXE48XDpeS6hap6adt1pD55
+# aJo2i0OuNtRhcjwOhWINoF5w22QvAcfBoccklKOyPG6yXqLQ+qjRuCUcFubA1X9o
+# GsRlKTUqLYi86q501oLnwIi44U948FzKwEBcwp/VMhws2jysNvcGUpqjQDAXsCkW
+# mcmqt4hJ9+gLJTO1P22vn18KVt8SscPuzpF36CAT6Vwkx+pEC0rmE4QcTesNtbiG
+# oDCni6GftCzMwBYjyZHlQgNLgM7kTeYqAT7AXoWgJKEXQNXb2+eYEKTx6hkbgFT6
+# R4nomIGpdcAO39BolHmhoJ6OtrdCZsvZ2WsvTdjePjIeIOTsnE1CjZ3HM5mCN0TU
+# JikmQI54L7nu+i/x8Y/+ULh43RSW3hwOcLAqhWqxbGjpKuQQK24h/dN8nTfkKgbW
+# w/HXaONPB3mBCBP+smRe6bE85tB4I7IJLOImYr87qZdRzMdEMoGyr8/fMYIFkzCC
+# BY8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hl
+# c3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVk
+# MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
+# /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
+# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgRAj2L0Z3LC28s5cl4CytyEx6
+# D+Yhz90gUotovtQvMMYwDQYJKoZIhvcNAQEBBQAEggEAhg7v95V2FkkR3E3bdtek
+# mm8bftn/b1T+GXWrXzKFvOKh25ccKETvd9pkGX8yiBZ2fn2kum5i4hSN1OOksaWn
+# 5s5nJbmAxvgOCduBtl0VqH4picSPSlSA2vd5X9W2ybvLNF5Nu7T69M0nZUZ4u32n
+# JW8rOShHTWZTv3PaRYvkLhLRVg15cMsnLTHF7SneGkLhFZXQQToHTmvP40ZQgYVJ
+# qTOF042lqrajsQ7sIbq+1c0uB7VO472ASwGJVKeTgVGQqpxBnvJMukU31lbu48S/
+# IjpdRxHbfoP2YqejLBMm3Lkhpvizwmv9cgdUStEs5JcFgroaDL0tfDQpwKtVk42r
+# bKGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
+# QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
+# MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
+# IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
+# AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
+# MjIwMTExMDgwODMwWjA/BgkqhkiG9w0BCQQxMgQwfyehC2RxH1hHBAhnjeXwG9r0
+# 9vowRS5kE+35kzKRioNu4+djpCTwoq9+ArH75luoMA0GCSqGSIb3DQEBAQUABIIC
+# AEFWxMwtA5GwqGMOdD2cxZgIqwKR8uW6QWlmHxxSfuG+u/VRnxwBZQsruMY1L6Bv
+# 52E8//hMD85BBjS5af1JB8OGuNW+ac3wmd2ClWGwWg2KztqZx8SFGy+Lva0PyaxZ
+# pw/2EY11+qz5jdEAb3+ff4TK6J/4kCnHd2SS9FQcouWpThuxc2TbK9lfBVo6sh2N
+# 0u8buoQkAXR/E6CNTx7Q/CXofMAMSek8peaBw4mpBzqEZcaWEeGvJrEquFx6krTx
+# pHX7yOWOTxysV0hXbZqMc4h+ItoqSuhC/KmnwsEd2xPRrRxklEZpeIVcwwkDNYfi
+# MgOtqvs8u2zKr/SbtJUfGbT86KQpOZzxRWw7qx9VnKMVpR0ZTP1E+ROAbdXxHli9
+# eN0GSJrbxW1/Xt2RCXMA9PlEnDSyNAZpyLYNAD4T6A5HirGiVUxZq2By5EjAwWNQ
+# UvL9HL6pzXKf5/21zu/Z0T9bENLskcQXwIyn5F5LTqxlxdvacuTdUcu4dXAfyZ1U
+# Mxojftq9B2LOi9e8dYh5BldUJQ3J/IcNRQNyuECBPsYFqFwTRhuhTjgeWZOkVayG
+# MZf7/ZXcs4wHEOqzlDjWQ5DanYwWPgAPMDJIfQj1K2KETKscqKFxtrVi3bVcGrCV
+# EeYpkF9bYsKWCe2vW1opfZecyrUWne4/vr7zCdMqcH+f
+# SIG # End signature block
