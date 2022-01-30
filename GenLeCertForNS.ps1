@@ -574,8 +574,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.12.0"
-$PoshACMEVersion = "4.11.0"
+$ScriptVersion = "2.12.1"
+$PoshACMEVersion = "4.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -2562,6 +2562,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PostPoSHScriptExtraParameters -value $PostPoSHScriptExtraParameters
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CleanExpiredCertsOnDisk -Value $CleanExpiredCertsOnDisk
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CleanExpiredCertsOnDiskDays -Value $CleanExpiredCertsOnDiskDays
+        ##ToDo
+        #Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name Production -Value $([bool]::Parse($Production))
     }
     $SaveConfig = $true
     Write-DisplayText -ForeGroundColor Green " Done"
@@ -3214,7 +3216,8 @@ if ($CertificateActions) {
             $SessionRequestObject = $SessionRequestObjects | Where-Object { $_.SessionID -eq $SessionID }
 
             #region DNSPreCheck
-            [regex]$fqdnExpression = "^(?=^.{1,254}$)(^(?:(?!\d+\.|-)[a-zA-Z0-9_\-]{1,63}(?<!-)\.?)+(?:[a-zA-Z]{2,})$)+$"
+            #[regex]$fqdnExpression = "^(?=^.{1,254}$)(^(?:(?!\d+\.|-)[a-zA-Z0-9_\-]{1,63}(?<!-)\.?)+(?:[a-zA-Z]{2,})$)+$"
+            [regex]$fqdnExpression = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-).)+[A-Za-z]{2,63}$"
             if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
                 $SaveConfig = $false
                 Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
@@ -4820,11 +4823,11 @@ if ($CertificateActions) {
                                 $PFXfilename,
                                 $PFXPassword,
                                 $extraParams
-                                )
-                                Write-ToLogFile -D -C PoSHScript -M "Post Script Starting"
-                                & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
-                                Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
-                            } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
+                            )
+                            Write-ToLogFile -D -C PoSHScript -M "Post Script Starting"
+                            & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
+                            Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
+                        } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
                         $postPoSHScriptResult = $LastExitCode
                         Write-ToLogFile -D -C PostPoSHScript -M "Post Script Finished [ExitCode:$postPoSHScriptResult]"
                         if ($null -ne $output) {
@@ -5088,8 +5091,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDk5q4ehuIKs9Ol
-# WZT3oa2E4W/xURMO6nL2Qww6lGXHF6CCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBLNljE+HzApvt2
+# iKZ3SO8Ueks8ii7uug+s0Bjs8Ht3LaCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5257,29 +5260,29 @@ TerminateScript 0
 # MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
 # /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgRAj2L0Z3LC28s5cl4CytyEx6
-# D+Yhz90gUotovtQvMMYwDQYJKoZIhvcNAQEBBQAEggEAhg7v95V2FkkR3E3bdtek
-# mm8bftn/b1T+GXWrXzKFvOKh25ccKETvd9pkGX8yiBZ2fn2kum5i4hSN1OOksaWn
-# 5s5nJbmAxvgOCduBtl0VqH4picSPSlSA2vd5X9W2ybvLNF5Nu7T69M0nZUZ4u32n
-# JW8rOShHTWZTv3PaRYvkLhLRVg15cMsnLTHF7SneGkLhFZXQQToHTmvP40ZQgYVJ
-# qTOF042lqrajsQ7sIbq+1c0uB7VO472ASwGJVKeTgVGQqpxBnvJMukU31lbu48S/
-# IjpdRxHbfoP2YqejLBMm3Lkhpvizwmv9cgdUStEs5JcFgroaDL0tfDQpwKtVk42r
-# bKGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgTMPBWSbgQAX0mBjc4N3pyFOa
+# nyk0XzV79N3/L7UHqTswDQYJKoZIhvcNAQEBBQAEggEAp1+/fpshMqeECyckIT+w
+# apwQuBlVBthAfC/RytZKiTDqf//DYtezZO/yLnyhDoNEJTPNTBuwbD5+g8D3LMg0
+# dTyXObDl6BsU8VLvD1Ev+CERHCe4mYGFTRdo7GJtRwXQUrULa3F8I2FWiRfbhvN8
+# DM+6heHqFIN1pdKGm2VyZ67DnJhSZO4O4BCId3pHvn6Yas0dzTMy1IILovc4YvSD
+# vCGtbSmjEiRIJ91649CdtzKAPh/tPi97W3EjnHKMWdHQpXp+NPlXzy80HB6kBWw7
+# hM4rdeEXHLNYLmDsBJqD7+EI5oumyo+EqwcaIgkm7VWDp4oV8NqmaS2hBkjP+Hvs
+# 2aGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
 # QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
 # MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
 # IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
 # AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
-# MjIwMTExMDgwODMwWjA/BgkqhkiG9w0BCQQxMgQwfyehC2RxH1hHBAhnjeXwG9r0
-# 9vowRS5kE+35kzKRioNu4+djpCTwoq9+ArH75luoMA0GCSqGSIb3DQEBAQUABIIC
-# AEFWxMwtA5GwqGMOdD2cxZgIqwKR8uW6QWlmHxxSfuG+u/VRnxwBZQsruMY1L6Bv
-# 52E8//hMD85BBjS5af1JB8OGuNW+ac3wmd2ClWGwWg2KztqZx8SFGy+Lva0PyaxZ
-# pw/2EY11+qz5jdEAb3+ff4TK6J/4kCnHd2SS9FQcouWpThuxc2TbK9lfBVo6sh2N
-# 0u8buoQkAXR/E6CNTx7Q/CXofMAMSek8peaBw4mpBzqEZcaWEeGvJrEquFx6krTx
-# pHX7yOWOTxysV0hXbZqMc4h+ItoqSuhC/KmnwsEd2xPRrRxklEZpeIVcwwkDNYfi
-# MgOtqvs8u2zKr/SbtJUfGbT86KQpOZzxRWw7qx9VnKMVpR0ZTP1E+ROAbdXxHli9
-# eN0GSJrbxW1/Xt2RCXMA9PlEnDSyNAZpyLYNAD4T6A5HirGiVUxZq2By5EjAwWNQ
-# UvL9HL6pzXKf5/21zu/Z0T9bENLskcQXwIyn5F5LTqxlxdvacuTdUcu4dXAfyZ1U
-# Mxojftq9B2LOi9e8dYh5BldUJQ3J/IcNRQNyuECBPsYFqFwTRhuhTjgeWZOkVayG
-# MZf7/ZXcs4wHEOqzlDjWQ5DanYwWPgAPMDJIfQj1K2KETKscqKFxtrVi3bVcGrCV
-# EeYpkF9bYsKWCe2vW1opfZecyrUWne4/vr7zCdMqcH+f
+# MjIwMTMwMTY1ODQ5WjA/BgkqhkiG9w0BCQQxMgQwOz1fb35UyRiKKxw5n8IR5e62
+# 0UGXXBCb7B+O4ctZkbrWNvNijRCab37ehhbKBFkIMA0GCSqGSIb3DQEBAQUABIIC
+# AGb0mwgIji4Gg8nX+spu3mJnTG5TFWxKUR2KYB7J5cM88N0q15CH4rCaEU6JK/rk
+# cAuch+ahDCjhM4XxWoAbgha3DILOYg43yZURGu5xHHs0iwfGqPgWxVEHgJpPaHwV
+# ArRDFIAoDHf4CQZxf3Djq/Wyeo09yoW2k4vZsD/7bmSjO67lo1oZZasgXnRgGqsV
+# Ewu9UMQr00PJVGJhAUGo4jC5Xesdu22mnT/QiuQR8lMUNmQUkbVxVHJwyCc5bRo0
+# f5L/yI1A6wzH/8/CylqeXTon2670yMwLP3OiA9Go2LZlamelKGi8GVJF3mGjlyLi
+# uXIsWaq2xDHelIndHsDv/ch1+YNJQXmJX38rEyP2QLdsIxLuyokICkaJBkxBgo9q
+# aIK79plh7r53T2j/B+YjHCp77GnJ7RlAuq+2k8Y1k1A6OzIQATCwQV6fp8YbxwQ3
+# oMO52gGcgiF1oJfuEK+WMJ8gam8WbtX49SSybc5PLhRY9VOqviCysDV8prQrST4T
+# k9ulGyhRgDw3eb8PTdFH0qywBhpfa/8vz30rMglsZMWKUB6XblEoaGgnfmPoi7/P
+# GtzxxEOsaJ3iMppJhhUUOlqkPohby/KgW/eRhtHg4/KUm2zo7oXVT+2FhSVd3g94
+# tGCbrMYvivS3KROo6XUsVq7KmWAiB4Cl/O6AK3lI6Kzh
 # SIG # End signature block
