@@ -22,6 +22,12 @@
     Name of the HTTP ADC Content Switch used for the domain validation.
     Specify only one when requesting a certificate
     Specify all possible VIPs when creating a Command Policy (User group, -NSCPName), so they all can be used by the members
+.PARAMETER UseLbVip
+    Skip the use of a Content Switch vServer (for example when using a GateWay Edition)\
+    Don't forget to specify a HTTP LB Vip Name, with the -LbVip parameter!
+.PARAMETER LbName
+    ADC Load Balance VIP name
+    Default: "lb_letsencrypt_cert"
 .PARAMETER CsVipBinding
     ADC Content Switch binding used for the validation
     Default: 11
@@ -30,9 +36,6 @@
     Default "svc_letsencrypt_cert_dummy"
 .PARAMETER SvcDestination
     IP Address used for the ADC Service (leave default 1.2.3.4, only change when already used
-.PARAMETER LbName
-    ADC Load Balance VIP name
-    Default: "lb_letsencrypt_cert"
 .PARAMETER RspName
     ADC Responder Policy name
     Default: "rsp_letsencrypt"
@@ -207,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.12.1
+    Version   : v2.12.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -459,7 +462,7 @@ param(
     [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
-    [Switch]$GatewayEdition,
+    [Switch]$UseLbVip,
 
     [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
@@ -579,7 +582,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.12.1"
+$ScriptVersion = "2.12.2"
 $PoshACMEVersion = "4.12.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1294,7 +1297,7 @@ function Invoke-ADCGetHanode {
                 $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Resource $id -Filter $Filter -GetWarning
             } else {
                 Write-Verbose "Retrieving hanode configuration objects"
-                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Query $Query -Filter $Filter -GetWarning
+                $response = Invoke-ADCRestApi -ADCSession $ADCSession -Method GET -Type hanode -Filter $Filter -GetWarning
             }
         } catch {
             Write-Verbose "ERROR: $($_.Exception.Message)"
@@ -1555,98 +1558,99 @@ function Invoke-ADCCleanup {
         Write-DisplayText -Line "Cleanup"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
         $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
+        if (-not $CertRequest.UseLbVip) {
             try {
-                $Filters = @{"policyname" = "$($Parameters.settings.CspName)" }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($CertRequest.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
-            } catch { }
-            if ($response.csvserver_cspolicy_binding.policyname -eq $($Parameters.settings.CspName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch LoadBalance Binding."
-                $Arguments = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; }
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
+                try {
+                    $Filters = @{"policyname" = "$($Parameters.settings.CspName)" }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($CertRequest.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
+                } catch { }
+                if ($response.csvserver_cspolicy_binding.policyname -eq $($Parameters.settings.CspName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch LoadBalance Binding."
+                    $Arguments = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; }
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch LoadBalance Binding"
+                Write-DisplayText -Line "Cleanup"
             }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch LoadBalance Binding"
-            Write-DisplayText -Line "Cleanup"
-        }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Policy `"$($Parameters.settings.CspName)`" exists."
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource "$($Parameters.settings.CspName)"
-            } catch { }
-            if ($response.cspolicy.policyname -eq $($Parameters.settings.CspName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy exist, removing Content Switch Policy."
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type cspolicy -Resource "$($Parameters.settings.CspName)"
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Policy successfully."
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Policy `"$($Parameters.settings.CspName)`" exists."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource "$($Parameters.settings.CspName)"
+                } catch { }
+                if ($response.cspolicy.policyname -eq $($Parameters.settings.CspName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy exist, removing Content Switch Policy."
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type cspolicy -Resource "$($Parameters.settings.CspName)"
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Policy successfully."
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
+                Write-DisplayText -Line "Cleanup"
             }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
-            Write-DisplayText -Line "Cleanup"
-        }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-            } catch { }
-            if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                } catch { }
+                if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
+                Write-DisplayText -Line "Cleanup"
             }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
-            Write-DisplayText -Line "Cleanup"
-        }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
-            } catch { }
-            if ($response.service.name -eq $($Parameters.settings.SvcName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
+                } catch { }
+                if ($response.service.name -eq $($Parameters.settings.SvcName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
+                Write-DisplayText -Line "Cleanup"
             }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
-            Write-DisplayText -Line "Cleanup"
-        }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
-            } catch { }
-            if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
+                } catch { }
+                if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
+                Write-DisplayText -Line "Cleanup"
             }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
-            Write-DisplayText -Line "Cleanup"
         }
-
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         try {
@@ -1741,19 +1745,16 @@ function Invoke-AddInitialADCConfig {
             $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
             Write-DisplayText -Line "Prerequisites"
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type nslicense -ErrorAction SilentlyContinue
-            if ($CertRequest.GatewayEdition) {
-                $isGWEdition = $true
+            $license = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type nslicense -ErrorAction SilentlyContinue | Select-Object -ExpandProperty nslicense
+            if ($CertRequest.UseLbVip) {
                 $FeaturesRequired = @("RESPONDER", "SSL")
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Responder and SSL."
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "`"-GatewayEdition`" parameter was specified."
-            } elseif ((-not $response.nslicense.lb) -and (-not $response.nslicense.cs)) {
-                $isGWEdition = $true
-                $FeaturesRequired = @("RESPONDER", "SSL")
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Responder and SSL."
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Feature `"LB`" and `"CS`" are not available, probably a Gateway Edition."
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "`"-UseLbVip`" parameter was specified."
+            } elseif ((-not $license.lb) -and (-not $license.cs)) {
+                Write-DisplayText -ForeGroundColor Red -NoNewLine " Error - Feature `"LB`" and `"CS`" are not licensed"
+                Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Feature `"LB`" and `"CS`" are not licensed, probably a Gateway edition. If GW edition, specify the `"-UseLbVip`" and `"-LbVip LBVIPNAME`" parameter."
+                TerminateScript 1 "Feature `"LB`" and `"CS`" are not licensed, probably a Gateway edition. If GW edition, specify the `"-UseLbVip`" and `"-LbVip LBVIPNAME`" parameter."
             } else {
-                $isGWEdition = $false
                 $FeaturesRequired = @("LB", "RESPONDER", "CS", "SSL")
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Load Balancer, Responder, Content Switch and SSL."
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "License OK."
@@ -1778,19 +1779,14 @@ function Invoke-AddInitialADCConfig {
                     Write-DisplayText -ForeGroundColor Red " Error"
                 }
             }
-            #ToDo
-            if ($isGWEdition) {
-                Write-DisplayText -ForeGroundColor Red " Error - Feature `"LB`" and `"CS`" are not available (not licensed), probably a Gateway Edition this is NOT yet supported!"
-                TerminateScript 1 "Feature `"LB`" and `"CS`" are not available (not licensed), probably a Gateway Edition this is NOT yet supported!"
-            }
             try {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if (-not $isGWEdition) {
+                if (-not $CertRequest.UseLbVip) {
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch is OK, check if Load Balance Service exists."
                 } else {
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Skipped, due to Gateway edition."
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Skipped, UseLbVip was configured."
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Load Balance Service exists."
                 }
             } catch {
@@ -1829,18 +1825,26 @@ function Invoke-AddInitialADCConfig {
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Load Balance VIP exists."
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource $($Parameters.settings.LbName)
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP exists, continuing"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource $($Parameters.settings.LbName) -Filter @{'servicetype' = 'http'; 'port' = '80' }
+                if ($response.lbvserver.Count -gt 1) {
+                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "More than one LbVip's ($($response.lbvserver.Count)) found, cannot continue!"
+                    TerminateScript 1 "More than one LbVip's ($($response.lbvserver.Count)) found, cannot continue!"
+                } elseif ($response.lbvserver.Count -lt 1) {
+                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "No LbVip with the name `"$($Parameters.settings.LbName)`" found, cannot continue!"
+                    TerminateScript 1 "No LbVip with the name `"$($Parameters.settings.LbName)`" found, cannot continue!"
+                } else {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP exists, continuing"
+                }
             } catch {
-                if (-not $isGWEdition) {
+                if (-not $CertRequest.UseLbVip) {
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP does not exist, create Load Balance VIP `"$($Parameters.settings.LbName)`"."
                     $payload = @{"name" = "$($Parameters.settings.LbName)"; "servicetype" = "HTTP"; "ipv46" = "0.0.0.0"; "Port" = "0"; }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type lbvserver -Payload $payload -Action add
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP Created."
                 } else {
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Load Balance VIP does not exist, is required when using `"-GatewayEdition`" parameter!"
-                    Write-DisplayText -ForeGroundColor Red " Error - Load Balance VIP does not exist, is required when using `"-GatewayEdition`" parameter!"
-                    TerminateScript 1 "Load Balance VIP does not exist, is required when using `"-GatewayEdition`" parameter!"
+                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Load Balance VIP does not exist, is required when using `"-UseLbVip`" parameter!"
+                    Write-DisplayText -ForeGroundColor Red " Error - Load Balance VIP does not exist, is required when using `"-UseLbVip`" parameter!"
+                    TerminateScript 1 "Load Balance VIP does not exist, is required when using `"-UseLbVip`" parameter!"
                 }
             } finally {
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -1947,25 +1951,30 @@ function Invoke-AddInitialADCConfig {
             $payload = @{"name" = "$($Parameters.settings.LbName)"; "policyname" = "$($($Parameters.settings.RspName))_test"; "priority" = 5; }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $($Parameters.settings.LbName)
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            try {
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy bound successfully, check if Content Switch Policy exists."
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource $($Parameters.settings.CspName)
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy exists, continuing."
-                if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
-                    $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")"; }
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type cspolicy -Payload $payload
-                    Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -Compress)"
+            if (-not $CertRequest.UseLbVip) {
+                try {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy bound successfully, check if Content Switch Policy exists."
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource $($Parameters.settings.CspName)
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy exists, continuing."
+                    if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
+                        $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")"; }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type cspolicy -Payload $payload
+                        Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -Compress)"
+                    }
+                } catch {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Create Content Switch Policy."
+                    $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = 'HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")'; }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type cspolicy -Payload $payload -Action add
                 }
-            } catch {
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Create Content Switch Policy."
-                $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = 'HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")'; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type cspolicy -Payload $payload -Action add
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($CertRequest.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
+                $payload = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Binding created successfully!"
+            } else {
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "NO Content Switch Policy created, UseLbVip was configured"
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($CertRequest.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
-            $payload = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
-            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Binding created successfully! Finished configuring the ADC"
+            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Finished configuring the ADC"
         } catch {
             Write-DisplayText -ForeGroundColor Red " Error"
             Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not configure the ADC. Exception Message: $($_.Exception.Message)"
@@ -2284,8 +2293,8 @@ if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
 
 #region ScriptBasics
 
-if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $GatewayEdition.ToBool()) -and [String]::IsNullOrEmpty($CsVipName)) {
-    Throw "The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-GatewayEdition`" parameter."
+if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $UseLbVip.ToBool()) -and [String]::IsNullOrEmpty($CsVipName)) {
+    Throw "The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-UseLbVip`" parameter."
 }
 
 $PreLogLines = @()
@@ -2606,7 +2615,7 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value $CsVipName
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name GatewayEdition -Value $([bool]::Parse($GatewayEdition))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseLbVip -Value $([bool]::Parse($UseLbVip))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
@@ -3338,7 +3347,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
             } else {
                 $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.GatewayEdition)) {
+                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.UseLbVip)) {
                     Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
                     Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
                     Invoke-RegisterError 1 "The `"-CsVipName`" cannot be empty!"
@@ -3452,7 +3461,19 @@ if ($CertificateActions) {
                 Write-DisplayText -Line "Connection"
                 Write-DisplayText -ForeGroundColor Yellow "Skipped"
             } elseif ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
-                if (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
+                if ($CertRequest.UseLbVip) {
+                    Write-DisplayText -Line "Content Switch"
+                    Write-DisplayText -ForeGroundColor Yellow "Skipped, -UseLbVip specified!"
+                    Write-DisplayText -Line "Connection"
+                    if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
+                        Write-DisplayText -ForeGroundColor Green "OK"
+                        Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
+                    } else {
+                        Write-Warning "Could not verify the Citrix ADC Connection!"
+                        Write-Warning "Script will continue but uploading of certificates will probably Fail"
+                        Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
+                    }
+                } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
                     $CsVipError = $false
                     try {
                         Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
@@ -5205,8 +5226,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCkg3RjDGPeGnnC
-# NfqfHl+7bKwNc9GvN0hrwRqDbMID26CCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDAPaOJtR1g9Xab
+# YuJV1A7PBFLNfcWUvE2VdlCZmPN+9aCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5300,11 +5321,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgbtgxpbmcNrtoyM1M6SQPxYY3EGxbij5JpJXL5saaMb8wDQYJKoZIhvcNAQEB
-# BQAEggEAlvobB2S2XnwmFv63677BUvLqds0F+rVOtpMvmf1PfAter1+Uxv0mTEYC
-# 97Nexe82ob8d472VFNxpRqxv0RYshQ+msnhdgObogGz63EA8QZgmCLUC9FL5FkLe
-# g4jpIeQ+zmKLaBrxncyO8EKa4tNnOiKrYaf0U0OcaCBYjwDHyZKwMRmdQUM+HqrK
-# 68pVixYLr6JecaYQxsrLsIW/+6aKpVQjM/Mu/b3/s1+O52UXpF4DZiOcQGqyDezN
-# /60yQpbFc01B2CgDZnE0wiMB7DsF3/KSwhINGwgckh4xeujDx+sr1mhbqyc0xSsx
-# g5aGVTSlr6NJ8tR2SKbutNF0qAY8MA==
+# IgQgKloBM27IT9lnng8ptFtdhqRTw5sV0JlW6QH9kaFavNQwDQYJKoZIhvcNAQEB
+# BQAEggEAn+0ELp/b8Ec1VTKjr+0A93k2rJkG4C3udHb61X0NGZDIp9rXGKfXqpzb
+# B/KMU3oPXjf1vOibkC8W5K5+NqB2qQrZfbEaIm3dpS47RbPfARttwZIK4Jtxon0k
+# jHYgvD8/W8/VQNYmQX74XLhTnki88aixx/qfjjZYLVX4PwDLp4O2ytrbPtv7kH5G
+# qDc2a1bhX2efgG+CZh8jrG0Bz+/ZhIssGXa2Oa44X16dvI6NuhVsYIzceiYK3xMZ
+# lggQj5LYC24t3RMCpOorkv60DM1eMafYsOMcYVrAvAj2BAW2DRgQdGnzPrf3uQLl
+# bHemxE6+tpHiHIR11PF+P9ah9qSnXQ==
 # SIG # End signature block
