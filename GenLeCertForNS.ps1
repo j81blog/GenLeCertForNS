@@ -207,12 +207,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.12.0
+    Version   : v2.12.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.11.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.12.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -413,7 +413,7 @@ param(
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
-    [Int]$SMTPPort,
+    [Int]$SMTPPort = 25,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
@@ -447,14 +447,19 @@ param(
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Hashtable]$PostPoSHScriptExtraParameters = @{},
     
-    [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
+    [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Parameter(ParameterSetName = "CleanADC")]
-    [ValidateNotNullOrEmpty()]
     [alias("NSCsVipName")]
     [String[]]$CsVipName,
+
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$GatewayEdition,
 
     [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
@@ -1369,7 +1374,7 @@ function Invoke-RegisterError {
         $Script:SessionRequestObject.ExitCode = $ExitCode
         if (-Not [String]::IsNullOrEmpty($ErrorMessage)) {
             $Script:SessionRequestObject.Messages += $ErrorMessage
-            $Script:MailData += "ERROR: $ErrorMessage"
+            $mailDataItem.Text += "ERROR: $ErrorMessage"
         }
         $Script:CleanADC = $true
     } else {
@@ -1393,24 +1398,39 @@ function TerminateScript {
     }
     if ($Parameters.settings.SendMail) {
         Write-ToLogFile -I -C Final -M "Script Terminated, Sending mail. ExitCode: $ExitCode"
-        $Script:MailData += "******************************"
+        $MailResultData = $MailData | Sort-Object -Property Code, CertExpiresDays | ForEach-Object {
+            "------------------------------"
+            "Status: $($_.Code)"
+            "CN: $($_.CN)"
+            if ("" -ne $_.SAN) { "SANs: $($_.SAN)" }
+            if ("" -ne $_.Location) { "Path: $($_.Location)" }
+            if ("" -ne $_.CertKeyName) { "CertKeyName: $($_.CertKeyName)" }
+            "$($_.Text)"
+        }
+        
+        $Script:MailLog += "`r`n=============================="
         if (-Not ($ExitCode -eq 0)) {
             $SMTPSubject = "GenLeCertForNS Finished with one or more Error(s) $((Get-Date).ToString('yyyy-MM-dd HH:mm'))"
             $SMTPBody = @"
-GenLeCertForNS Finished with an Error!
+GenLeCertForNS Finished with at least one Error!
 $ExitMessage
 
 Check log for errors and more details.
 Other info:
-
-$($Script:MailData | Out-String)
+$($Script:MailLog | Out-String)
+Log details:
+$($MailResultData | Out-String)
+==============================
 "@
         } else {
             $SMTPSubject = "GenLeCertForNS Results $((Get-Date).ToString('yyyy-MM-dd HH:mm'))"
             $SMTPBody = @"
-GenLeCertForNS Executed:
+GenLeCertForNS Executed successfully!
 
-$($Script:MailData | Out-String)
+$($Script:MailLog | Out-String)
+Log details:
+$($MailResultData | Out-String)
+==============================
 "@
         }
         try {
@@ -1420,7 +1440,7 @@ $($Script:MailData | Out-String)
             $message = New-Object System.Net.Mail.MailMessage
             $message.From = $($Script:Parameters.settings.SMTPFrom)
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            foreach ($to in $Script:Parameters.settings.SMTPTo.Split(",")) {
+            foreach ($to in $Script:Parameters.settings.SMTPTo) {
                 $message.To.Add($to)
             }
             $message.Subject = $SMTPSubject
@@ -1514,7 +1534,7 @@ function Save-ADCConfig {
     } else {
         Write-DisplayText -ForeGroundColor Yellow "NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
         Write-ToLogFile -I -C SaveADCConfig -M "ADC configuration NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
-        $Script:MailData += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
+        $Script:MailLog += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
     }
 }
 
@@ -1719,10 +1739,25 @@ function Invoke-AddInitialADCConfig {
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to login into the Citrix ADC."
             Write-DisplayText -Title "ADC - Configure Prerequisites"
             $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling required ADC Features: Load Balancer, Responder, Content Switch and SSL."
             Write-DisplayText -Line "Prerequisites"
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            $FeaturesRequired = @("LB", "RESPONDER", "CS", "SSL")
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type nslicense -ErrorAction SilentlyContinue
+            if ($CertRequest.GatewayEdition) {
+                $isGWEdition = $true
+                $FeaturesRequired = @("RESPONDER", "SSL")
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Responder and SSL."
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "`"-GatewayEdition`" parameter was specified."
+            } elseif ((-not $response.nslicense.lb) -and (-not $response.nslicense.cs)) {
+                $isGWEdition = $true
+                $FeaturesRequired = @("RESPONDER", "SSL")
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Responder and SSL."
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Feature `"LB`" and `"CS`" are not available, probably a Gateway Edition."
+            } else {
+                $isGWEdition = $false
+                $FeaturesRequired = @("LB", "RESPONDER", "CS", "SSL")
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Enabling (if disabled) required ADC Features: Load Balancer, Responder, Content Switch and SSL."
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "License OK."
+            }
             $response = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type nsfeature -ErrorAction SilentlyContinue } catch { $null }
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $FeaturesToBeEnabled = @()
@@ -1742,6 +1777,11 @@ function Invoke-AddInitialADCConfig {
                 } catch {
                     Write-DisplayText -ForeGroundColor Red " Error"
                 }
+            }
+            #ToDo
+            if ($isGWEdition) {
+                Write-DisplayText -ForeGroundColor Red " Error - Feature `"LB`" and `"CS`" are not available (not licensed), probably a Gateway Edition this is NOT yet supported!"
+                TerminateScript 1 "Feature `"LB`" and `"CS`" are not available (not licensed), probably a Gateway Edition this is NOT yet supported!"
             }
             try {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
@@ -2232,6 +2272,10 @@ if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
 
 #region ScriptBasics
 
+if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $GatewayEdition.ToBool()) -and [String]::IsNullOrEmpty($CsVipName)) {
+    Throw "The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-GatewayEdition`" parameter."
+}
+
 $PreLogLines = @()
 
 if ($MyInvocation.Line -like "*-CleanNS*" ) { 
@@ -2313,7 +2357,7 @@ if ($CleanADC -or $RemoveTestCertificates -or $CreateApiUser -or $CreateUserPerm
     $CertDir = $CertDir.TrimEnd("\")
 }
 
-##ToDo - Cab be deleted after successful replacement
+##ToDo - Can be deleted after successful replacement
 if ($IPv6 -and $CertificateActions) {
     Write-DisplayText -Title "IPv6"
     Write-DisplayText -Line "IPv6 checks"
@@ -2331,6 +2375,7 @@ if (-Not [String]::IsNullOrEmpty($ManagementURL)) {
 
 $SessionRequestObjects = @()
 $Script:MailData = @()
+$Script:MailLog = @()
 
 if (-Not [String]::IsNullOrEmpty($SAN)) {
     if ($SAN -is [Array]) {
@@ -2345,6 +2390,7 @@ $ScriptRoot = $(if ($psISE) { Split-Path -Path $psISE.CurrentFile.FullPath } els
 if ($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') {
     $ValidationMethod = "dns"
 }
+
 if (-Not [String]::IsNullOrEmpty($DNSParams)) { 
     if ($DNSParams -is [Array]) {
         [String]$DNSParams = $DNSParams -Join "`r`n"
@@ -2427,6 +2473,7 @@ try {
                 try { if (-Not ($Parameters.settings.GetType().Name -eq "PSCustomObject")) { $Parameters.settings = $(New-Object -TypeName PSCustomObject) } } Catch { $Parameters.settings = $(New-Object -TypeName PSCustomObject) }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if (-Not ($Parameters.certrequests -is [Array])) { $Parameters.certrequests = @() }
+                try { $Parameters.ScriptVersion = $ScriptVersion } catch {}
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
             }
@@ -2511,6 +2558,9 @@ if ($AutoRun) {
     $PreLogLines += "I;PARAMETERS;AutoRun NOT active, parsing/updating the parameters."
     $SMTPCredentialUsername = $SMTPCredential.Username
     $SMTPCredentialPassword = $SMTPCredential.Password
+    if ($SMTPTo -like "*,*") {
+        [String[]]$SMTPTo = $SMTPTo.Split(",") | ForEach-Object { $_.Trim() }
+    }
     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ManagementURL -Value $ManagementURL
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ADCCredentialUsername -Value $ADCCredentialUsername
@@ -2544,6 +2594,7 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value $CsVipName
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name GatewayEdition -Value $([bool]::Parse($GatewayEdition))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
@@ -2733,6 +2784,8 @@ if ($CertificateActions) {
 Write-DisplayText -Line "Script Version"
 Write-DisplayText -ForeGroundColor Cyan "v$ScriptVersion"
 Write-ToLogFile -I -C VersionInfo -M "Current script version: v$ScriptVersion, checking if a new version is available."
+$Script:MailLog += "Script version: v$ScriptVersion"
+$Script:MailLog += "PoshACME version: v$PoshACMEVersion"
 try {
     $AvailableVersions = Invoke-CheckScriptVersions -URI $VersionURI
     if ([version]$AvailableVersions.master -gt [version]$ScriptVersion) {
@@ -2745,15 +2798,15 @@ try {
         Write-DisplayText -Line "New Production URL"
         Write-DisplayText -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
-        $Script:MailData += "New version available: v$($AvailableVersions.master), $($AvailableVersions.masterurl)"
+        $Script:MailLog += "New version available: v$($AvailableVersions.master), $($AvailableVersions.masterurl)"
         if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
             Write-DisplayText -Blank
             Write-DisplayText -Line "IMPORTANT Note"
             Write-DisplayText -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
             Write-ToLogFile -I -C VersionInfo -M "IMPORTANT Note: $($AvailableVersions.masterimportant)"
-            $Script:MailData += "IMPORTANT Note: $($AvailableVersions.masterimportant)"
+            $Script:MailLog += "IMPORTANT Note: $($AvailableVersions.masterimportant)"
         }
-        $Script:MailData += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
+        $Script:MailLog += "$($AvailableVersions.masternote)`r`nVersion: v$($AvailableVersions.master)`r`nURL:$($AvailableVersions.masterurl)"
     } else {
         Write-ToLogFile -I -C VersionInfo -M "No new Master version available"
     }
@@ -3056,13 +3109,16 @@ if ($Parameters.settings.SendMail) {
     $SMTPError = @()
     Write-DisplayText -Title "Email Details"
     Write-DisplayText -Line "Email To Address"
-    if ([String]::IsNullOrEmpty($($Parameters.settings.SMTPTo))) {
+    if ($Parameters.settings.SMTPTo -like "*,*") {
+        [String[]]$Parameters.settings.SMTPTo = $Parameters.settings.SMTPTo.Split(",") | ForEach-Object { $_.Trim() }
+    }
+    if ([String]::IsNullOrEmpty($($Parameters.settings.SMTPTo)) -or ($Parameters.settings.SMTPTo.Count -eq 0)) {
         Write-DisplayText -ForeGroundColor Red "None"
         Write-ToLogFile -E -C EmailSettings -M "No To Address specified (-SMTPTo)"
         $SMTPError += "No To Address specified (-SMTPTo)"
     } else {
-        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPTo)"
-        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $($Parameters.settings.SMTPTo))"
+        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPTo -Join ", ")"
+        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $($Parameters.settings.SMTPTo -Join ", "))"
     }
     Write-DisplayText -Line "Email From Address"
     if ([String]::IsNullOrEmpty($($Parameters.settings.SMTPFrom))) {
@@ -3118,7 +3174,7 @@ if ($CertificateActions) {
     } else {
         $BaseService = "LE_STAGE"
         $LEText = "Test Certificates (Staging)"
-        $Script:MailData += "IMPORTANT: This is a test certificate!`r`n"
+        $Script:MailLog += "IMPORTANT: This is a test certificate!`r`n"
     }
     Posh-ACME\Set-PAServer $BaseService 6>$null
     $PAServer = Posh-ACME\Get-PAServer -Refresh
@@ -3146,23 +3202,49 @@ if ($CertificateActions) {
         Write-DisplayText -ForeGroundColor Cyan "$($Parameters.certrequests.Count)"
     }
     
-    $Round = 0
+    $round = 0
     $TotalRounds = $Parameters.certrequests.Count
     Write-ToLogFile -I -C CertLoop -M "$TotalRounds required for all requests."
     ForEach ($CertRequest in $Parameters.certrequests) {
-        $Round++
+        $round++
         $PfxPasswordGenerated = $false
         if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
         }
-        $Script:MailData += "******************************"
-        $Script:MailData += "CN: $($CertRequest.CN)"
+        if (-Not ($CertRequest | Get-Member -Name "Enabled" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+            $CertRequest | Add-Member -Name "Enabled" -MemberType NoteProperty -Value $true
+            $SaveConfig = $True
+        }
+        if (-Not ($CertRequest | Get-Member -Name "ForceCertRenew" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+            $CertRequest | Add-Member -Name "ForceCertRenew" -MemberType NoteProperty -Value $false
+            $SaveConfig = $True
+        }
+        $Script:MailData += [PSCustomObject]@{ID = $round; Code = "FAILED"; Result = ""; CN = ""; Text = ""; SAN = ""; Location = ""; CertKeyName = ""; CertExpiresDays="NA" }
+        $mailDataItem = $Script:MailData | Where-Object ID -EQ $round
+        $mailDataItem.CN = $($CertRequest.CN)
         if ($TotalRounds -gt 1) {
-            Write-ToLogFile -I -C "CertLoop-$($Round.ToString('000'))" -M "**************************************** $($Round.ToString('000'))  / $($TotalRounds.ToString('000')) ****************************************" 
+            Write-ToLogFile -I -C "CertLoop-$($round.ToString('000'))" -M "**************************************** $($round.ToString('000'))  / $($TotalRounds.ToString('000')) ****************************************" 
             Write-DisplayText -Title " ============================"
-            Write-DisplayText -Title "Request $($Round.ToString('000')) / $($TotalRounds.ToString('000'))"
+            Write-DisplayText -Title "Request $($round.ToString('000')) / $($TotalRounds.ToString('000'))"
         }
         $SkipThisCertRequest = $false
+        try {
+            $renewAfterDays = 0
+            if ($CertRequest.CertExpires -match '[0-9-]{8,10}T[0-9:]{6,8}Z') {
+                $renewAfterDays = [Int]([datetime]$CertRequest.RenewAfter - (Get-Date)).TotalDays
+            }
+        } catch {
+            $renewAfterDays = 0
+        }
+        try {
+            $expireDays = 0
+            if ($CertRequest.CertExpires -match '[0-9-]{8,10}T[0-9:]{6,8}Z') {
+                $expireDays = [Int]([datetime]$CertRequest.CertExpires - (Get-Date)).TotalDays
+                $mailDataItem.CertExpiresDays = $expireDays
+            }
+        } catch {
+            $expireDays = 0
+        }
         if ($CertRequest.Enabled -eq $false) {
             Write-DisplayText -Title "Current Certificate"
             Write-DisplayText -Line "CN"
@@ -3170,7 +3252,8 @@ if ($CertificateActions) {
             Write-DisplayText -Line "Request"
             Write-DisplayText -ForeGroundColor Yellow "Skipped"
             Write-ToLogFile -I -C CheckCertRenewal -M "$($CertRequest.CN) skipped Enabled:False"
-            $Script:MailData += "$($CertRequest.CN) skipped Enabled:False"
+            $mailDataItem.Text = "$($CertRequest.CN) skipped, Enabled:False"
+            $mailDataItem.Code = "Skipped"
             $SkipThisCertRequest = $true
         } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
             try {
@@ -3180,13 +3263,14 @@ if ($CertificateActions) {
                     Write-DisplayText -Line "CN"
                     Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CN)"
                     Write-DisplayText -Line "Valid until"
-                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires) [$expireDays days]"
                     Write-DisplayText -Line "Renew after"
-                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
+                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter) [$renewAfterDays days]"
                     Write-DisplayText -Line "Status"
                     Write-DisplayText -ForeGroundColor Cyan "Still valid, request will be skipped"
-                    Write-ToLogFile -I -C CheckCertRenewal -M "$($CertRequest.CN) is still valid until $($CertRequest.CertExpires), will be replaced after $($CertRequest.RenewAfter)"
-                    $Script:MailData += "Still valid until $($CertRequest.CertExpires), will be replaced after $($CertRequest.RenewAfter)"
+                    Write-ToLogFile -I -C CheckCertRenewal -M "$($CertRequest.CN) is still valid for $expireDays days ($($CertRequest.CertExpires)). Can be replaced after $renewAfterDays days (after $($CertRequest.RenewAfter))"
+                    $mailDataItem.Text = "Still valid for $expireDays days ($($CertRequest.CertExpires)).`r`nCan be replaced after $renewAfterDays days (after $($CertRequest.RenewAfter))"
+                    $mailDataItem.Code = "Still Valid"
                     $SkipThisCertRequest = $true
                 }
             } catch {
@@ -3216,7 +3300,6 @@ if ($CertificateActions) {
             $SessionRequestObject = $SessionRequestObjects | Where-Object { $_.SessionID -eq $SessionID }
 
             #region DNSPreCheck
-            #[regex]$fqdnExpression = "^(?=^.{1,254}$)(^(?:(?!\d+\.|-)[a-zA-Z0-9_\-]{1,63}(?<!-)\.?)+(?:[a-zA-Z]{2,})$)+$"
             [regex]$fqdnExpression = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-).)+[A-Za-z]{2,63}$"
             if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
                 $SaveConfig = $false
@@ -3243,7 +3326,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -Compress)"
             } else {
                 $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http")) {
+                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.GatewayEdition)) {
                     Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
                     Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
                     Invoke-RegisterError 1 "The `"-CsVipName`" cannot be empty!"
@@ -3284,7 +3367,7 @@ if ($CertificateActions) {
                 }
                 Write-DisplayText -Blank
                 $CertRequest.SANs = $CheckedSANs -Join ","
-                $Script:MailData += "SANs: $($CheckedSANs -Join ", ")"
+                $mailDataItem.SAN = "$($CheckedSANs -Join ", ")"
             }
 
             Write-ToLogFile -D -C DNSPreCheck -M "ValidationMethod is set to: `"$($CertRequest.ValidationMethod)`"."
@@ -3614,13 +3697,14 @@ if ($CertificateActions) {
                     if ($_.Exception.Message -like "*rate*limit*") {
                         Write-DisplayText -PreBlank -Line -ForeGroundColor Yellow "Rate-Limit WARNING"
                         Write-DisplayText -ForeGroundColor Yellow "$($_.Exception.Message)"
-                        $Script:MailData += "$($_.Exception.Message)"
+                        $mailDataItem.Text = "Rate-Limit WARNING, ERROR: $($_.Exception.Message)"
                         Invoke-RegisterError 1 "Could not create the order. $($_.Exception.Message)"
                     } else {
                         Write-ToLogFile -E -C Order -M "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter. "
                         Write-ToLogFile -E -C Order -M "Exception Message: $($_.Exception.Message)"
                         Write-DisplayText -ForeGroundColor Red "ERROR: Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
                         Invoke-RegisterError 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
+                        $mailDataItem.Text = "Could not create the order, ERROR: $($_.Exception.Message)"
                     }
                     Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Continue
@@ -4000,11 +4084,9 @@ if ($CertificateActions) {
                             Write-DisplayText -ForeGroundColor Red "ERROR [$($Item.status)]"
                             Write-DisplayText -ForeGroundColor Red -Line "Error Status | Type"
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status) | $($Item.challenges.error.type)"
-                            $Script:MailData += "$($Item.challenges.error.type)"
-                            $Script:MailData += "$($Item.challenges.error.status)"
                             Write-DisplayText -ForeGroundColor Red -Line "Details"
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.detail)"
-                            $Script:MailData += "$($Item.challenges.error.detail)"
+                            $mailDataItem.Text = "Status: $($Item.challenges.error.status) | Type: $($Item.challenges.error.type)`r`nDetail: $($Item.challenges.error.detail)"
                             Write-DisplayText -ForeGroundColor Red -Line "Hostname | Port"
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.validationRecord.hostname) | $($Item.challenges.validationRecord.port)"
                             Write-DisplayText -ForeGroundColor Red -Line "IPAddress Used | Resolved"
@@ -4037,10 +4119,6 @@ if ($CertificateActions) {
     
             if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                #ToDo Remove
-                #$TXTRecords = $PAOrderItems | Select-Object fqdn, `
-                #@{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
-                #@{L = 'TXTValue'; E = { ConvertTo-TxtValue (Get-KeyAuthorization $_.DNS01Token) } }
                 $TXTRecords = $PAOrderItems | Select-Object fqdn, `
                 @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
                 @{L = 'TXTValue'; E = { (Get-KeyAuthorization $_.DNS01Token -ForDNS) } }, `
@@ -4639,10 +4717,28 @@ if ($CertificateActions) {
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
                     $FinalCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
-                    Write-DisplayText -Line "Certificate expires" 
-                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CertExpires)"
+                    try {
+                        $renewAfterDays = 0
+                        if ($CertRequest.CertExpires -match '[0-9-]{8,10}T[0-9:]{6,8}Z') {
+                            $renewAfterDays = [Int]([datetime]$CertRequest.RenewAfter - (Get-Date)).TotalDays
+                        }
+                    } catch {
+                        $renewAfterDays = 0
+                    }
+                    try {
+                        $expireDays = 0
+                        if ($CertRequest.CertExpires -match '[0-9-]{8,10}T[0-9:]{6,8}Z') {
+                            $expireDays = [Int]([datetime]$CertRequest.CertExpires - (Get-Date)).TotalDays
+                            $mailDataItem.CertExpiresDays = $expireDays
+                        }
+                    } catch {
+                        $expireDays = 0
+                    }
+            
+                    Write-DisplayText -Line "Certificate expires in" 
+                    Write-DisplayText -ForeGroundColor Cyan "$expireDays days ($($CertRequest.CertExpires))"
                     Write-DisplayText -Line "Renew after" 
-                    Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.RenewAfter)"
+                    Write-DisplayText -ForeGroundColor Cyan "$renewAfterDays days ($($CertRequest.RenewAfter))"
                     Write-DisplayText -Line "Public Key Size"
                     Write-DisplayText -ForeGroundColor Cyan "$($FinalCertificate.PublicKey.key.KeySize)"
                     Write-DisplayText -Line "ADC SSL Certkey Name" 
@@ -4670,16 +4766,19 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "PFX (with Chain): $CertificatePfxWithChainFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Finished with the certificate for CN: $($CertRequest.CN)!"
-                    $Script:MailData += "Certificates stored in: $CertificateDirectory"
+                    $mailDataItem.Location = $CertificateDirectory
+                    $mailDataItem.CertKeyName = $CertificateCertKeyName
+
                     try {
-                        $Script:MailData += "ADC CertkeyName: $($CertificateCertKeyName)"
-                        $Script:MailData += "Valid until: $($CertRequest.CertExpires)"
-                        $Script:MailData += "Renew after: $($CertRequest.RenewAfter)"
-                        $Script:MailData += "Issued by CA: $($ChainFile.DnsNameList.Unicode)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $IntermediateCACertKeyName)"
-                        $Script:MailData += "Public Key Size: $($FinalCertificate.PublicKey.key.KeySize)"
+                        $mailDataItem.Text += "Valid for: $expireDays days ($($CertRequest.CertExpires))`r`n"
+                        $mailDataItem.Text += "Renew after: $renewAfterDays days ($($CertRequest.RenewAfter))`r`n"
+                        $mailDataItem.Text += "Public Key Size: $($FinalCertificate.PublicKey.key.KeySize)`r`n"
+                        $mailDataItem.Text += "Issued by CA: $($ChainFile.DnsNameList.Unicode)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $IntermediateCACertKeyName)"
+                        $mailDataItem.Code = "OK"
                     } catch {
                         Write-ToLogFile -D -C ADC-CertUpload-Mail -M "Error while gathering data for mail, Error: $($_.Exception.Message)"
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        $mailDataItem.Text += "`r`nError while gathering data for mail, Error: $($_.Exception.Message)"
                     }
 
                     ##Saving Config if required    
@@ -4730,7 +4829,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -Line "Binding New Cert" 
                                     New-Item -Path IIS:\SSLBindings\0.0.0.0!443 -Value $ImportedCertificate -ErrorAction Stop | Out-Null
                                     Write-DisplayText -ForeGroundColor Green "Bound [$($ImportedCertificate.Thumbprint)]"
-                                    $Script:MailData += "IIS Binding updated for site `"$($CertRequest.IISSiteToUpdate)`": $($ImportedCertificate.Thumbprint)"
+                                    $mailDataItem.Text += "IIS Binding updated for site `"$($CertRequest.IISSiteToUpdate)`": $($ImportedCertificate.Thumbprint)"
                                 } catch {
                                     Write-DisplayText -ForeGroundColor Red "Could not bind"
                                     Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
@@ -4796,7 +4895,7 @@ if ($CertificateActions) {
                 if ($SessionRequestObject.ErrorOccurred -gt 0 ) {
                     Write-DisplayText -Blank
                     Write-Warning "There were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!"
-                    $Script:MailData += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
+                    $mailDataItem.Text += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
                 }
 
             }
@@ -4805,70 +4904,73 @@ if ($CertificateActions) {
 
             #region PostPoSHScriptFilename
             Write-ToLogFile -I -C PostPoSHScript -M "Checking if parameter `"PostPoSHScriptFilename`" was defined."
-            $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
-            if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
-                Write-DisplayText -Title "Post PowerShell Script"
-                Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell Script defined, Filename: `"$($CertRequest.PostPoSHScriptFilename)`""
-                $pfxCertificateFilename = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
-                if (-Not [String]::IsNullOrEmpty($($FinalCertificate.Thumbprint)) -and (Test-Path $pfxCertificateFilename)) {
-                    Write-DisplayText -Line "Script Path" 
-                    Write-DisplayText -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
-                    Write-DisplayText -Line "Executing script" 
-                    try {
-                        Write-ToLogFile -I -C PostPoSHScript -M "Post Script Starting"
-                        $output = Invoke-Command -ScriptBlock {
-                            param (
-                                $poshScript,
-                                $Thumbprint,
-                                $PFXfilename,
-                                $PFXPassword,
-                                $extraParams
-                            )
-                            Write-ToLogFile -D -C PoSHScript -M "Post Script Starting"
-                            & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
-                            Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
-                        } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
-                        $postPoSHScriptResult = $LastExitCode
-                        Write-ToLogFile -D -C PostPoSHScript -M "Post Script Finished [ExitCode:$postPoSHScriptResult]"
-                        if ($null -ne $output) {
-                            Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
-                            Write-ToLogFile -D -B $output
-                            Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
-                        }
-                    } catch {
-                        $postPoSHScriptResult = 1
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                    }
-                    switch ($postPoSHScriptResult) {
-                        0 {
-                            Write-DisplayText -ForeGroundColor Green "Success"
-                            Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell script executed successfully"
-                            $Script:MailData += "Post PowerShell script executed successfully"
-                        }
-                        1 {
-                            Write-DisplayText -ForeGroundColor Red "Failed!"
-                            Invoke-RegisterError 1 "Failed to execute Post PowerShell script"
-                        }
-                        Default {
-                            Write-DisplayText -ForeGroundColor Yellow "Unknown Result! [$postPoSHScriptResult]"
-                            Write-ToLogFile -W -C PostPoSHScript -M "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
-                            $Script:MailData += "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
-                        }
-                    }
-                } else {
-                    Write-DisplayText -ForeGroundColor Yellow "SKIPPED! Not a valid certificate found!"
-                    Write-ToLogFile -W -C PostPoSHScript -M "Not a valid certificate found! Skipped the execution."
-                }
-            } elseif ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (-Not (Test-Path -Path $($CertRequest.PostPoSHScriptFilename)))) {
-                Write-DisplayText -Title "Post PowerShell Script"
-                Write-DisplayText -Line "Script Path" 
-                Write-DisplayText -NoNewLine -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
-                Write-DisplayText -ForeGroundColor Red " NOT FOUND!"
-                Write-ToLogFile -E -C PostPoSHScript -M "PoSH Script `"$($CertRequest.PostPoSHScriptFilename)`" NOT found!"
-            } else {
-                Write-ToLogFile -I -C PostPoSHScript -M "No Post PowerShell Script defined"
-            }
+            
+            if ($CertRequest | Get-Member -Name  PostPoSHScriptFilename -ErrorAction SilentlyContinue) {
+                $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
 
+                if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
+                    Write-DisplayText -Title "Post PowerShell Script"
+                    Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell Script defined, Filename: `"$($CertRequest.PostPoSHScriptFilename)`""
+                    $pfxCertificateFilename = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
+                    if (-Not [String]::IsNullOrEmpty($($FinalCertificate.Thumbprint)) -and (Test-Path $pfxCertificateFilename)) {
+                        Write-DisplayText -Line "Script Path" 
+                        Write-DisplayText -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
+                        Write-DisplayText -Line "Executing script" 
+                        try {
+                            Write-ToLogFile -I -C PostPoSHScript -M "Post Script Starting"
+                            $output = Invoke-Command -ScriptBlock {
+                                param (
+                                    $poshScript,
+                                    $Thumbprint,
+                                    $PFXfilename,
+                                    $PFXPassword,
+                                    $extraParams
+                                )
+                                Write-ToLogFile -D -C PoSHScript -M "Post Script Starting"
+                                & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
+                                Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
+                            } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
+                            $postPoSHScriptResult = $LastExitCode
+                            Write-ToLogFile -D -C PostPoSHScript -M "Post Script Finished [ExitCode:$postPoSHScriptResult]"
+                            if ($null -ne $output) {
+                                Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
+                                Write-ToLogFile -D -B $output
+                                Write-ToLogFile -D -C PostPoSHScript -M "======== Script output ======== "
+                            }
+                        } catch {
+                            $postPoSHScriptResult = 1
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        }
+                        switch ($postPoSHScriptResult) {
+                            0 {
+                                Write-DisplayText -ForeGroundColor Green "Success"
+                                Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell script executed successfully"
+                                $mailDataItem.Text += "Post PowerShell script executed successfully"
+                            }
+                            1 {
+                                Write-DisplayText -ForeGroundColor Red "Failed!"
+                                Invoke-RegisterError 1 "Failed to execute Post PowerShell script"
+                            }
+                            Default {
+                                Write-DisplayText -ForeGroundColor Yellow "Unknown Result! [$postPoSHScriptResult]"
+                                Write-ToLogFile -W -C PostPoSHScript -M "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
+                                $mailDataItem.Text += "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
+                            }
+                        }
+                    } else {
+                        Write-DisplayText -ForeGroundColor Yellow "SKIPPED! Not a valid certificate found!"
+                        Write-ToLogFile -W -C PostPoSHScript -M "Not a valid certificate found! Skipped the execution."
+                    }
+                } elseif ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (-Not (Test-Path -Path $($CertRequest.PostPoSHScriptFilename)))) {
+                    Write-DisplayText -Title "Post PowerShell Script"
+                    Write-DisplayText -Line "Script Path" 
+                    Write-DisplayText -NoNewLine -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
+                    Write-DisplayText -ForeGroundColor Red " NOT FOUND!"
+                    Write-ToLogFile -E -C PostPoSHScript -M "PoSH Script `"$($CertRequest.PostPoSHScriptFilename)`" NOT found!"
+                } else {
+                    Write-ToLogFile -I -C PostPoSHScript -M "No Post PowerShell Script defined"
+                }
+            }
             #endregion PostPoSHScriptFilename
 
         }
@@ -5089,10 +5191,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBLNljE+HzApvt2
-# iKZ3SO8Ueks8ii7uug+s0Bjs8Ht3LaCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCq507Zsh99/H7l
+# ocHp9OVlcLXtXh0A0MyLqM1R+zVxraCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5180,109 +5282,17 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
-# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
-# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
-# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
-# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
-# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
-# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
-# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
-# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
-# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
-# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
-# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
-# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
-# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
-# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
-# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
-# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
-# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
-# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
-# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
-# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
-# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
-# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
-# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
-# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
-# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
-# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
-# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
-# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
-# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
-# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
-# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
-# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
-# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
-# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
-# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
-# 4/kKyVRd1LlqdJ69SK6YMIIHBzCCBO+gAwIBAgIRAIx3oACP9NGwxj2fOkiDjWsw
-# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
-# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
-# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
-# DTIwMTAyMzAwMDAwMFoXDTMyMDEyMjIzNTk1OVowgYQxCzAJBgNVBAYTAkdCMRsw
-# GQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAW
-# BgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoGA1UEAwwjU2VjdGlnbyBSU0EgVGlt
-# ZSBTdGFtcGluZyBTaWduZXIgIzIwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIK
-# AoICAQCRh0ssi8HxHqCe0wfGAcpSsL55eV0JZgYtLzV9u8D7J9pCalkbJUzq70DW
-# mn4yyGqBfbRcPlYQgTU6IjaM+/ggKYesdNAbYrw/ZIcCX+/FgO8GHNxeTpOHuJre
-# TAdOhcxwxQ177MPZ45fpyxnbVkVs7ksgbMk+bP3wm/Eo+JGZqvxawZqCIDq37+fW
-# uCVJwjkbh4E5y8O3Os2fUAQfGpmkgAJNHQWoVdNtUoCD5m5IpV/BiVhgiu/xrM2H
-# YxiOdMuEh0FpY4G89h+qfNfBQc6tq3aLIIDULZUHjcf1CxcemuXWmWlRx06mnSlv
-# 53mTDTJjU67MximKIMFgxvICLMT5yCLf+SeCoYNRwrzJghohhLKXvNSvRByWgiKV
-# KoVUrvH9Pkl0dPyOrj+lcvTDWgGqUKWLdpUbZuvv2t+ULtka60wnfUwF9/gjXcRX
-# yCYFevyBI19UCTgqYtWqyt/tz1OrH/ZEnNWZWcVWZFv3jlIPZvyYP0QGE2Ru6eEV
-# YFClsezPuOjJC77FhPfdCp3avClsPVbtv3hntlvIXhQcua+ELXei9zmVN29OfxzG
-# PATWMcV+7z3oUX5xrSR0Gyzc+Xyq78J2SWhi1Yv1A9++fY4PNnVGW5N2xIPugr4s
-# rjcS8bxWw+StQ8O3ZpZelDL6oPariVD6zqDzCIEa0USnzPe4MQIDAQABo4IBeDCC
-# AXQwHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0UojtE1XwYSBFUwHQYDVR0OBBYEFGl1
-# N3u7nTVCTr9X05rbnwHRrt7QMA4GA1UdDwEB/wQEAwIGwDAMBgNVHRMBAf8EAjAA
-# MBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEAGA1UdIAQ5MDcwNQYMKwYBBAGyMQEC
-# AQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8vc2VjdGlnby5jb20vQ1BTMEQGA1Ud
-# HwQ9MDswOaA3oDWGM2h0dHA6Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRp
-# bWVTdGFtcGluZ0NBLmNybDB0BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0
-# dHA6Ly9jcnQuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNy
-# dDAjBggrBgEFBQcwAYYXaHR0cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcN
-# AQEMBQADggIBAEoDeJBCM+x7GoMJNjOYVbudQAYwa0Vq8ZQOGVD/WyVeO+E5xFu6
-# 6ZWQNze93/tk7OWCt5XMV1VwS070qIfdIoWmV7u4ISfUoCoxlIoHIZ6Kvaca9QIV
-# y0RQmYzsProDd6aCApDCLpOpviE0dWO54C0PzwE3y42i+rhamq6hep4TkxlVjwmQ
-# Lt/qiBcW62nW4SW9RQiXgNdUIChPynuzs6XSALBgNGXE48XDpeS6hap6adt1pD55
-# aJo2i0OuNtRhcjwOhWINoF5w22QvAcfBoccklKOyPG6yXqLQ+qjRuCUcFubA1X9o
-# GsRlKTUqLYi86q501oLnwIi44U948FzKwEBcwp/VMhws2jysNvcGUpqjQDAXsCkW
-# mcmqt4hJ9+gLJTO1P22vn18KVt8SscPuzpF36CAT6Vwkx+pEC0rmE4QcTesNtbiG
-# oDCni6GftCzMwBYjyZHlQgNLgM7kTeYqAT7AXoWgJKEXQNXb2+eYEKTx6hkbgFT6
-# R4nomIGpdcAO39BolHmhoJ6OtrdCZsvZ2WsvTdjePjIeIOTsnE1CjZ3HM5mCN0TU
-# JikmQI54L7nu+i/x8Y/+ULh43RSW3hwOcLAqhWqxbGjpKuQQK24h/dN8nTfkKgbW
-# w/HXaONPB3mBCBP+smRe6bE85tB4I7IJLOImYr87qZdRzMdEMoGyr8/fMYIFkzCC
-# BY8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hl
-# c3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVk
-# MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
-# /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
-# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgTMPBWSbgQAX0mBjc4N3pyFOa
-# nyk0XzV79N3/L7UHqTswDQYJKoZIhvcNAQEBBQAEggEAp1+/fpshMqeECyckIT+w
-# apwQuBlVBthAfC/RytZKiTDqf//DYtezZO/yLnyhDoNEJTPNTBuwbD5+g8D3LMg0
-# dTyXObDl6BsU8VLvD1Ev+CERHCe4mYGFTRdo7GJtRwXQUrULa3F8I2FWiRfbhvN8
-# DM+6heHqFIN1pdKGm2VyZ67DnJhSZO4O4BCId3pHvn6Yas0dzTMy1IILovc4YvSD
-# vCGtbSmjEiRIJ91649CdtzKAPh/tPi97W3EjnHKMWdHQpXp+NPlXzy80HB6kBWw7
-# hM4rdeEXHLNYLmDsBJqD7+EI5oumyo+EqwcaIgkm7VWDp4oV8NqmaS2hBkjP+Hvs
-# 2aGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
-# QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
-# MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
-# IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
-# AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
-# MjIwMTMwMTY1ODQ5WjA/BgkqhkiG9w0BCQQxMgQwOz1fb35UyRiKKxw5n8IR5e62
-# 0UGXXBCb7B+O4ctZkbrWNvNijRCab37ehhbKBFkIMA0GCSqGSIb3DQEBAQUABIIC
-# AGb0mwgIji4Gg8nX+spu3mJnTG5TFWxKUR2KYB7J5cM88N0q15CH4rCaEU6JK/rk
-# cAuch+ahDCjhM4XxWoAbgha3DILOYg43yZURGu5xHHs0iwfGqPgWxVEHgJpPaHwV
-# ArRDFIAoDHf4CQZxf3Djq/Wyeo09yoW2k4vZsD/7bmSjO67lo1oZZasgXnRgGqsV
-# Ewu9UMQr00PJVGJhAUGo4jC5Xesdu22mnT/QiuQR8lMUNmQUkbVxVHJwyCc5bRo0
-# f5L/yI1A6wzH/8/CylqeXTon2670yMwLP3OiA9Go2LZlamelKGi8GVJF3mGjlyLi
-# uXIsWaq2xDHelIndHsDv/ch1+YNJQXmJX38rEyP2QLdsIxLuyokICkaJBkxBgo9q
-# aIK79plh7r53T2j/B+YjHCp77GnJ7RlAuq+2k8Y1k1A6OzIQATCwQV6fp8YbxwQ3
-# oMO52gGcgiF1oJfuEK+WMJ8gam8WbtX49SSybc5PLhRY9VOqviCysDV8prQrST4T
-# k9ulGyhRgDw3eb8PTdFH0qywBhpfa/8vz30rMglsZMWKUB6XblEoaGgnfmPoi7/P
-# GtzxxEOsaJ3iMppJhhUUOlqkPohby/KgW/eRhtHg4/KUm2zo7oXVT+2FhSVd3g94
-# tGCbrMYvivS3KROo6XUsVq7KmWAiB4Cl/O6AK3lI6Kzh
+# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
+# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
+# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
+# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
+# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
+# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
+# IgQg6JZjOaZRmolMGOtD0WBvsGq7WZlF+jR8DDhvxijmbH4wDQYJKoZIhvcNAQEB
+# BQAEggEAaCJdz3/uHLyIN19V/skGC/h9EzDvrChGD0Gr06dOYpz6bbbuf3WRZY6L
+# JRmz/bHk84+b36AVhLCT4D7STA1FmHiXWK+G5oxkKGesGFoHQJKAvR1pInnZ0ptN
+# Sl8KSCzT4DWwr8/JDTF3ttD5Psh10RsE/kt50llHTUJju5H2Xfy7i/m/EvpVi41e
+# WMKeXGff6QEheUGsR/DlN4Df7DhXnpnwLcy/VkXtWYb/F2wMEDaE4f0ydmymdzVb
+# NwCj2eYptM5eYqHBH+qY8GgO9hjovjCDdjKmhsEPKIEFsp35zgILFiYQ76KLM26i
+# biAVNpBkuY7MJqBqXrOo3GbuP3R8Xg==
 # SIG # End signature block
