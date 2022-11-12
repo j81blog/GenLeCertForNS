@@ -172,7 +172,7 @@
     When Specified, no output will be written to the console.
     Exception: Warning, Verbose and Error messages.
 .EXAMPLE
-    .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -CsVipName "CSVIPNAME" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -CPName "MinLePermissionGroup" -Username nsroot -Password "nsroot" -ManagementURL https://citrixadc.domain.local
+    .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -CsVipName "CSVIPNAME" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -NSCPName "MinLePermissionGroup" -Username nsroot -Password "nsroot" -ManagementURL https://citrixadc.domain.local
     This command will create a Command Policy with the minimum set of permissions, you need to run this once to create (or when you want to change something).
     Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -LbName (Default: "lb_letsencrypt_cert"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_NSCertCsp")
     Next time you want to generate certificates you can specify the new user  -Username le-user -Password "LEP@ssw0rd"
@@ -210,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.12.5
+    Version   : v2.13.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -500,6 +500,12 @@ param(
     [alias("NSLbName")]
     [String]$LbName = "lb_letsencrypt_cert",
 
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [alias("TD")]
+    [Int]$TrafficDomain = 0,
+
     [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -582,8 +588,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.12.5"
-$PoshACMEVersion = "4.13.1"
+$ScriptVersion = "2.13.0"
+$PoshACMEVersion = "4.14.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -918,8 +924,12 @@ LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
                         Write-Verbose -Message "Could not remove old log file, trying to append"
                     }
                 }
-                [System.IO.File]::AppendAllText($LogFile, $LogString, [System.Text.Encoding]::Unicode)
-                Write-Verbose -Message "Data written to LogFile:`r`n         `"$LogFile`""
+                try {
+                    [System.IO.File]::AppendAllText($LogFile, $LogString, [System.Text.Encoding]::Unicode)
+                    Write-Verbose -Message "Data written to LogFile:`r`n         `"$LogFile`""
+                } catch {
+                    Write-Verbose -Message "Error while writing to log"
+                }
             } catch {
                 #If file cannot be written, give an error
                 Write-Error -Category WriteError -Message "Could not write to file `"$LogFile`""
@@ -1910,6 +1920,9 @@ function Invoke-AddInitialADCConfig {
             } catch {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balancer Service does not exist, create Load Balance Service `"$($Parameters.settings.SvcName)`"."
                 $payload = @{"name" = "$($Parameters.settings.SvcName)"; "ip" = "$($Parameters.settings.SvcDestination)"; "servicetype" = "HTTP"; "port" = "80"; "healthmonitor" = "NO"; }
+                if ($Parameters.settings.TrafficDomain -gt 0) {
+                    $payload.td = $Parameters.settings.TrafficDomain
+                }
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type service -Payload $payload -Action add
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance Service created."
             }
@@ -1930,6 +1943,9 @@ function Invoke-AddInitialADCConfig {
                 if (-not $CertRequest.UseLbVip) {
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP does not exist, create Load Balance VIP `"$($Parameters.settings.LbName)`"."
                     $payload = @{"name" = "$($Parameters.settings.LbName)"; "servicetype" = "HTTP"; "ipv46" = "0.0.0.0"; "Port" = "0"; }
+                    if ($Parameters.settings.TrafficDomain -gt 0) {
+                        $payload.td = $Parameters.settings.TrafficDomain
+                    }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type lbvserver -Payload $payload -Action add
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Load Balance VIP Created."
                 } else {
@@ -2101,7 +2117,6 @@ function Invoke-CheckDNS {
             } catch {
                 $result = $null
                 Write-ToLogFile -E -C Invoke-CheckDNS -M "Internal check failed. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             Write-DisplayText -Line "Internal DNS Test"
             if ($result.RawContent -eq "HTTP/1.0 200 OK`r`n`r`nXXXX") {
@@ -2696,6 +2711,7 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RspName -Value $RspName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RsaName -Value $RsaName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CspName -Value $CspName
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name TrafficDomain -Value $TrafficDomain
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsVipBinding -Value $CsVipBinding
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ScriptVersion -Value $ScriptVersion
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSParams -Value $DNSParams
@@ -2752,7 +2768,7 @@ if ($Parameters.settings.DisableLogging) {
     $Global:LogFile = $Parameters.settings.LogFile
     $Script:LogFile = $Parameters.settings.LogFile
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LogFile -Value $LogFile
-
+    
     $ExtraHeaderInfo = @"
 ScriptBase: $ScriptRoot
 Script Version: $ScriptVersion
@@ -3035,6 +3051,8 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.LbName)
     Write-DisplayText -Line "Service Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.SvcName)
+    Write-DisplayText -Line "Traffic Domain"
+    Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.TrafficDomain)
     Write-DisplayText -Line "Responder Action Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RsaName)
     Write-DisplayText -Line "Responder Policy Name"
@@ -3043,8 +3061,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.CspName)
     Write-DisplayText -Line "Action"
 
-    $CmdSpec = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
-
+    $CmdSpec = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
     #$otherPartitions = @( $Parameters.settings.Partitions | Where-Object { $_ -ne "default"} )
     #if ($otherPartitions.Count -gt 0 ) {
@@ -3229,8 +3246,8 @@ if ($Parameters.settings.SendMail) {
         Write-ToLogFile -E -C EmailSettings -M "No To Address specified (-SMTPTo)"
         $SMTPError += "No To Address specified (-SMTPTo)"
     } else {
-        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPTo -Join ", ")"
-        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $($Parameters.settings.SMTPTo -Join ", "))"
+        Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPTo -Join "; ")"
+        Write-ToLogFile -I -C EmailSettings -M "Email To Address: $($Parameters.settings.SMTPTo -Join "; "))"
     }
     Write-DisplayText -Line "Email From Address"
     if ([String]::IsNullOrEmpty($($Parameters.settings.SMTPFrom))) {
@@ -3391,7 +3408,7 @@ if ($CertificateActions) {
             Write-DisplayText -Line "Status"
             Write-DisplayText -ForeGroundColor Cyan "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
             $mailDataItem.Text = "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
-        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and (-Not $CertRequest.ForceCertRenew)) {
+        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and ($CertRequest.ForceCertRenew -eq $false) -and  ($ForceCertRenew -eq $false)) {
             try {
                 $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
                 if ((Get-Date) -lt $RenewAfterDate) {
@@ -3643,6 +3660,15 @@ if ($CertificateActions) {
                             Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
                             $CsVipError = $true
                             Invoke-RegisterError 1 "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                        } elseif ($response.csvserver.td -ne $Parameters.settings.TrafficDomain) {
+                            Write-DisplayText -Line "Content Switch"
+                            Write-DisplayText -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
+                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter." -PreBlank -PostBlank
+                            Write-DisplayText -Line "Connection"
+                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)! Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter."
+                            $CsVipError = $true
+                            Invoke-RegisterError 1 "Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
                         } else {
                             Write-DisplayText -Line "Content Switch"
                             Write-DisplayText -ForeGroundColor Green "Found"
@@ -4549,7 +4575,7 @@ if ($CertificateActions) {
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
                     Write-ToLogFile -D -C CertFinalization -M $($ChainFile | Select-Object DnsNameList, Subject, @{ Name = 'NotBefore'; Expression = { $_.NotBefore.ToString('yyyy-MM-dd HH:mm:ss') } }, @{ Name = 'NotAfter'; Expression = { $_.NotAfter.ToString('yyyy-MM-dd HH:mm:ss') } }, SerialNumber, Thumbprint, Issuer | ConvertTo-Json -WarningAction SilentlyContinue -Compress -Depth 8)
-                    $IntermediateCACertName = $ChainFile.Subject.Split(",")[0].Replace('CN=',$null).Replace("'", $null).Replace('(', $null).Replace(')', $null)
+                    $IntermediateCACertName = $ChainFile.Subject.Split(",")[0].Replace('CN=', $null).Replace("'", $null).Replace('(', $null).Replace(')', $null)
                     $IntermediateCACertKeyName = $IntermediateCACertName
                     if ($IntermediateCACertKeyName.length -gt 26) {
                         $IntermediateCACertKeyName = $IntermediateCACertKeyName -Replace '(?sm)\W', $null
@@ -4765,8 +4791,21 @@ if ($CertificateActions) {
                         if ($ADCCertKeyUpdating) {
                             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                             Write-ToLogFile -I -C ADC-CertUpload -M "Update the certificate and key to the ADC config."
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Updated successfully."
+                            try {
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
+                                Write-ToLogFile -I -C ADC-CertUpload -M "Certificate updated successfully."
+                            } catch {
+                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not update certificate at first atempt, $($_.Exception.Message)"
+                                try {
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "Certificate update second atempt (nodomaincheck=true)"
+                                    $payload.nodomaincheck = $true
+                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "Certificate updated successfully!"
+                                } catch {
+                                    Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
+                                    Throw "Certificate update failed!"
+                                }
+                            }
                             if ($CertRequest.RemovePrevious) {
                                 try {
                                     Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was specified, retrieving files."
@@ -5351,10 +5390,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIIkrQYJKoZIhvcNAQcCoIIknjCCJJoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAEsNkX9k28RUoS
-# 4+kF2mt1542RfGd+WHe4mVudt2c+PqCCHnAwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAHYCRtdeTsV77q
+# IC3oQgtGo3u4hsQ3Ktsx8GVe8nNnUqCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5442,109 +5481,17 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
-# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
-# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
-# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
-# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
-# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
-# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
-# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
-# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
-# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
-# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
-# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
-# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
-# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
-# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
-# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
-# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
-# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
-# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
-# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
-# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
-# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
-# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
-# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
-# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
-# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
-# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
-# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
-# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
-# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
-# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
-# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
-# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
-# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
-# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
-# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
-# 4/kKyVRd1LlqdJ69SK6YMIIHBzCCBO+gAwIBAgIRAIx3oACP9NGwxj2fOkiDjWsw
-# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
-# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
-# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
-# DTIwMTAyMzAwMDAwMFoXDTMyMDEyMjIzNTk1OVowgYQxCzAJBgNVBAYTAkdCMRsw
-# GQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAW
-# BgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoGA1UEAwwjU2VjdGlnbyBSU0EgVGlt
-# ZSBTdGFtcGluZyBTaWduZXIgIzIwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIK
-# AoICAQCRh0ssi8HxHqCe0wfGAcpSsL55eV0JZgYtLzV9u8D7J9pCalkbJUzq70DW
-# mn4yyGqBfbRcPlYQgTU6IjaM+/ggKYesdNAbYrw/ZIcCX+/FgO8GHNxeTpOHuJre
-# TAdOhcxwxQ177MPZ45fpyxnbVkVs7ksgbMk+bP3wm/Eo+JGZqvxawZqCIDq37+fW
-# uCVJwjkbh4E5y8O3Os2fUAQfGpmkgAJNHQWoVdNtUoCD5m5IpV/BiVhgiu/xrM2H
-# YxiOdMuEh0FpY4G89h+qfNfBQc6tq3aLIIDULZUHjcf1CxcemuXWmWlRx06mnSlv
-# 53mTDTJjU67MximKIMFgxvICLMT5yCLf+SeCoYNRwrzJghohhLKXvNSvRByWgiKV
-# KoVUrvH9Pkl0dPyOrj+lcvTDWgGqUKWLdpUbZuvv2t+ULtka60wnfUwF9/gjXcRX
-# yCYFevyBI19UCTgqYtWqyt/tz1OrH/ZEnNWZWcVWZFv3jlIPZvyYP0QGE2Ru6eEV
-# YFClsezPuOjJC77FhPfdCp3avClsPVbtv3hntlvIXhQcua+ELXei9zmVN29OfxzG
-# PATWMcV+7z3oUX5xrSR0Gyzc+Xyq78J2SWhi1Yv1A9++fY4PNnVGW5N2xIPugr4s
-# rjcS8bxWw+StQ8O3ZpZelDL6oPariVD6zqDzCIEa0USnzPe4MQIDAQABo4IBeDCC
-# AXQwHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0UojtE1XwYSBFUwHQYDVR0OBBYEFGl1
-# N3u7nTVCTr9X05rbnwHRrt7QMA4GA1UdDwEB/wQEAwIGwDAMBgNVHRMBAf8EAjAA
-# MBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEAGA1UdIAQ5MDcwNQYMKwYBBAGyMQEC
-# AQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8vc2VjdGlnby5jb20vQ1BTMEQGA1Ud
-# HwQ9MDswOaA3oDWGM2h0dHA6Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRp
-# bWVTdGFtcGluZ0NBLmNybDB0BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0
-# dHA6Ly9jcnQuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNy
-# dDAjBggrBgEFBQcwAYYXaHR0cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcN
-# AQEMBQADggIBAEoDeJBCM+x7GoMJNjOYVbudQAYwa0Vq8ZQOGVD/WyVeO+E5xFu6
-# 6ZWQNze93/tk7OWCt5XMV1VwS070qIfdIoWmV7u4ISfUoCoxlIoHIZ6Kvaca9QIV
-# y0RQmYzsProDd6aCApDCLpOpviE0dWO54C0PzwE3y42i+rhamq6hep4TkxlVjwmQ
-# Lt/qiBcW62nW4SW9RQiXgNdUIChPynuzs6XSALBgNGXE48XDpeS6hap6adt1pD55
-# aJo2i0OuNtRhcjwOhWINoF5w22QvAcfBoccklKOyPG6yXqLQ+qjRuCUcFubA1X9o
-# GsRlKTUqLYi86q501oLnwIi44U948FzKwEBcwp/VMhws2jysNvcGUpqjQDAXsCkW
-# mcmqt4hJ9+gLJTO1P22vn18KVt8SscPuzpF36CAT6Vwkx+pEC0rmE4QcTesNtbiG
-# oDCni6GftCzMwBYjyZHlQgNLgM7kTeYqAT7AXoWgJKEXQNXb2+eYEKTx6hkbgFT6
-# R4nomIGpdcAO39BolHmhoJ6OtrdCZsvZ2WsvTdjePjIeIOTsnE1CjZ3HM5mCN0TU
-# JikmQI54L7nu+i/x8Y/+ULh43RSW3hwOcLAqhWqxbGjpKuQQK24h/dN8nTfkKgbW
-# w/HXaONPB3mBCBP+smRe6bE85tB4I7IJLOImYr87qZdRzMdEMoGyr8/fMYIFkzCC
-# BY8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hl
-# c3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVk
-# MSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL
-# /bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
-# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgZKTek61iHWkjfDlC1l1FYbnO
-# FsgvNpBJIBXz321M/KkwDQYJKoZIhvcNAQEBBQAEggEAA1SVTSdbEYCk5mOwJ6UP
-# Et41pLSTJYA2HFokD8Y7D2ZssX2upQ3bITo4rxGt8aq2D2Bp2qjm355j+2KU07MM
-# DpzfyJHfY0aLi3dTQHvg/uemJrMQXp32pf+4ltO5tYMKvaXeJ7/8WV07uMybchxQ
-# 6c2i+fdfM1KwnbTxGWjEZNHPkWPu831MGo0myFh62bJh8njazypS/muSQVJlhHVc
-# JQdt2u5wEG4sHDLzvWXi2G5ntq3jpvoK9ejpgkFZ9hqIr9+nOQaRdygfyWogmRTZ
-# vzILtt6oa54xl0VefoS5uszQWGFT/sXhhJUJPryYCcNpdLYAGOtXItfeSfsjovht
-# YaGCA0wwggNIBgkqhkiG9w0BCQYxggM5MIIDNQIBATCBkjB9MQswCQYDVQQGEwJH
-# QjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3Jk
-# MRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNB
-# IFRpbWUgU3RhbXBpbmcgQ0ECEQCMd6AAj/TRsMY9nzpIg41rMA0GCWCGSAFlAwQC
-# AgUAoHkwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcN
-# MjIwNDExMTk1NTMyWjA/BgkqhkiG9w0BCQQxMgQwVx7Cs+0hpYyvUBa2URyZ0xjV
-# B+ffQAKOLuYKmxeWvDZNygv4gHBuzxXWX4VHVec8MA0GCSqGSIb3DQEBAQUABIIC
-# AE+O3DlHz/blPjrerAyVqMeusksr/BchDRv/WJzYDBsiycnxYQlNpzTv+g1waVQ1
-# PkkacyMtp1birTS7GPa9FQcWKy9Y3UiN8uhJHEn/RtE+GvWq2MaWczxcNFna5+ti
-# 4mnmqPKyOPePG4tXfFo5z2qrl0b3cGectCAkleE1rPLQ0lLsR7VMBIbZLvsXNKwF
-# viOp1xZXB23RUYB5KQViuNaASuBbxip78Nv6d0ErCk451QQyf4TLM5Z2i3uqOuFA
-# Dly4wj8VpLKbTVgEgIYdfpgSt8Uzw+XLrNmjgPnShxGPv5IZxjUzaHjzJJhF+U+4
-# 613N2h/KsP7Sed4IeYADdsccmwHVLrSgxKp3Us0jEl6V2oj4R+zJvcPWZsgLOEVk
-# REjSb6U3V5jkdXlYDW9NO5SaS7JUTbgWjrQZBOxuGJKhatKMr2bFb88y3wwctyE2
-# I+EKRCibrPw2Y2nsyVG74YTj8oPXRb8NaF8s7d+vxnfRzDY6/SkIPjsGtKzAC9+P
-# IaVg5/8HTRQgy3ITXWvciWI2yjBNKQWzjedF1dkvFcQiXMWSB4nLM8kbVSj0LzGG
-# feuiYMY+FSPANYymm0npaywRn9hBkX4kPuCZS27bf8AMKJHEdq3/NAap/tyicEYq
-# OSeOE8fNXofPflyB5db5LuHT5Y8MpMiqjsJuQl1teeH9
+# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
+# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
+# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
+# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
+# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
+# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
+# IgQg+0tXSDWhEivaIMPfDrkPV9iLm0vLhFCYDU622iuSYRIwDQYJKoZIhvcNAQEB
+# BQAEggEAog7Islc/SwEYwTThVk+MxxfbY2SBQ1ZwRHTJmEgHQ5QF/OeEdYsblfv3
+# tKykj/ddWY+tr8JEaQ6RN0n2CE2W17V2zYW5B1QUsxXWC2Dv3ienD9lHmWWl519/
+# VtVPRolFjctM0zaYqbrm/xd5NW5RKNwheHYbE1odLi8gVoHuDlSXfDTTT58MIzth
+# 77K7Qb7cElIcurZCFwpeG9sYDe+SYZLjAZJaHGTaJk7aJFU7bvp6uIWzuWRKJeZx
+# nIOmLe215TzPFacEDA2xtdQREZz/UCWx9DIGESt+zz76p/jcZx+wiEyMbU5LQgZR
+# ca9d0e/ePO6TCkWnFBdBSFzbXx1/DQ==
 # SIG # End signature block
