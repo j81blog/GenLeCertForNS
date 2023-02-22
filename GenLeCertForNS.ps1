@@ -210,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.14.0
+    Version   : v2.14.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -588,7 +588,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.14.0"
+$ScriptVersion = "2.14.1"
 $PoshACMEVersion = "4.17.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1696,23 +1696,43 @@ function Invoke-ADCCleanup {
                 Write-DisplayText -Line "Cleanup"
             }
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        }
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-            } catch { }
-            if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                } catch { }
+                if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
+                }
+                Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip$([Char]8730)"
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
+                Write-DisplayText -Line "Cleanup"
             }
-            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip$([Char]8730)"
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
-            Write-DisplayText -Line "Cleanup"
+        } else {
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            try {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if service `"$($Parameters.settings.SvcName)`" is bound to Load Balance VIP `"$($Parameters.settings.LbName)`"."
+                try {
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)"
+                } catch { }
+                if ($response.lbvserver_service_binding.servicename -eq $($Parameters.settings.SvcName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP binding with Service exists, removing the Load Balance VIP-Service binding."
+                    $Arguments = @{"servicename" = "$($Parameters.settings.SvcName)" }
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)" -Arguments $arguments
+                    Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip-Svc-Binding$([Char]8730)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP - Service binding not found."
+                }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP - Service binding. Exception Message: $($_.Exception.Message)"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP - Service binding"
+                Write-DisplayText -Line "Cleanup"
+            }
         }
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         try {
