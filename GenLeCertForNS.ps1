@@ -210,12 +210,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.13.0
+    Version   : v2.14.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.13.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.17.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -588,8 +588,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.13.0"
-$PoshACMEVersion = "4.14.0"
+$ScriptVersion = "2.14.0"
+$PoshACMEVersion = "4.17.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -1645,6 +1645,7 @@ function Invoke-ADCCleanup {
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Cleaning the Citrix ADC Configuration."
         Write-DisplayText -Title "ADC - Cleanup"
         Write-DisplayText -Line "Cleanup type"
+        #ToDo - Create two options, for now only Full
         if ($Full) {
             Write-DisplayText -ForegroundColor Cyan "Full"
         } else {
@@ -1653,7 +1654,7 @@ function Invoke-ADCCleanup {
         Write-DisplayText -Line "Cleanup"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
         $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-        if (-not $CertRequest.UseLbVip) {
+        if (-Not $CertRequest.UseLbVip) {
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
                 try {
@@ -1667,6 +1668,7 @@ function Invoke-ADCCleanup {
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
                 }
+                Write-DisplayText -ForeGroundColor Green -NoNewLine "CS-Vip$([Char]8730)"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
@@ -1686,6 +1688,7 @@ function Invoke-ADCCleanup {
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
                 }
+                Write-DisplayText -ForeGroundColor Green -NoNewLine "CS-Pol$([Char]8730)"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
@@ -1693,58 +1696,61 @@ function Invoke-ADCCleanup {
                 Write-DisplayText -Line "Cleanup"
             }
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        }
+        try {
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
             try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
-                try {
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-                } catch { }
-                if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
-                }
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
-                Write-DisplayText -Line "Cleanup"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+            } catch { }
+            if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
+                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+            } else {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip$([Char]8730)"
+        } catch {
+            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
+            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
+            Write-DisplayText -Line "Cleanup"
+        }
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        try {
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
             try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
-                try {
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
-                } catch { }
-                if ($response.service.name -eq $($Parameters.settings.SvcName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
-                }
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
-                Write-DisplayText -Line "Cleanup"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
+            } catch { }
+            if ($response.service.name -eq $($Parameters.settings.SvcName)) {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
+                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
+            } else {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Svc$([Char]8730)"
+        } catch {
+            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
+            Write-DisplayText -Line "Cleanup"
+        }
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        try {
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
             try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
-                try {
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
-                } catch { }
-                if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
-                }
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
-                Write-DisplayText -Line "Cleanup"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
+            } catch { }
+            if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
+                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
+            } else {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
             }
+            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Srv$([Char]8730)"
+        } catch {
+            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
+            Write-DisplayText -Line "Cleanup"
         }
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -1796,6 +1802,7 @@ function Invoke-ADCCleanup {
         } else {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Policies found."
         }
+        Write-DisplayText -ForeGroundColor Green -NoNewLine "RS-Pol$([Char]8730)"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Actions starting with the name `"$($Parameters.settings.RsaName)`"."
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         try {
@@ -1822,6 +1829,7 @@ function Invoke-ADCCleanup {
         } else {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Actions found."
         }
+        Write-DisplayText -ForeGroundColor Green -NoNewLine "RS-Act$([Char]8730)"
         Write-DisplayText -ForeGroundColor Green " Completed"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Finished cleaning up."        
     }
@@ -3408,7 +3416,7 @@ if ($CertificateActions) {
             Write-DisplayText -Line "Status"
             Write-DisplayText -ForeGroundColor Cyan "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
             $mailDataItem.Text = "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
-        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and ($CertRequest.ForceCertRenew -eq $false) -and  ($ForceCertRenew -eq $false)) {
+        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and ($CertRequest.ForceCertRenew -eq $false) -and ($ForceCertRenew -eq $false)) {
             try {
                 $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
                 if ((Get-Date) -lt $RenewAfterDate) {
