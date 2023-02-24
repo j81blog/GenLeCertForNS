@@ -210,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.14.1
+    Version   : v2.14.2
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -588,7 +588,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.14.1"
+$ScriptVersion = "2.14.2"
 $PoshACMEVersion = "4.17.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -3061,10 +3061,6 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
         $CsVipName = $CsVipName.Split(",")
     }
     $CSVipString = ""
-    ForEach ($VipName in $CsVipName) {
-        $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)"
-    }
-    
     Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
     Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
     Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$NSCPName`"!"
@@ -3074,7 +3070,14 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Line "Command Policy Name"
     Write-DisplayText -ForeGroundColor Cyan "$NSCPName "
     Write-DisplayText -Line "CS VIP Name"
-    Write-DisplayText -ForeGroundColor Cyan $($CsVipName -Join ", ")
+    if (-Not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
+        ForEach ($VipName in $CsVipName) {
+            $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)"
+        }
+        Write-DisplayText -ForeGroundColor Cyan $($CsVipName -Join ", ")
+    } else {
+        Write-DisplayText -ForeGroundColor Cyan "none"
+    }
     Write-DisplayText -Line "LB VIP Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.LbName)
     Write-DisplayText -Line "Service Name"
@@ -5420,8 +5423,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAD9F8v4UoX+Mut
-# o3VCg2nN/P39iBsgFbCk343sTfwBM6CCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAG5SQXobo25NCg
+# 4/k9AMtjf7CW7F3lQYObsFoI+O/tFaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5515,11 +5518,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgHQH5pWeJvx6zL7vDTO/PPFSVGxuLglR+SZdp9SSWTf8wDQYJKoZIhvcNAQEB
-# BQAEggEAPG74e9ZBK/GXXUOlgV5c3hnRRbuilq9Hd8QWAqoJiRsde1XeECfPVMFV
-# YgLWsFENJz7AOqk5Z7NlMevV8DXthOrQjxjBPxzS2wFmeEAc/NZwG0DSzWiFVI7P
-# jhKHFgxTao75/dtO8dO7zEkwI1UQjQIy1GO0wS824gHY7g9LWnpktMlPobI/ZBtp
-# JfTzNqW0UiG9zxvLWcPC/QWQYK7JMhzlcR68ywZQeSXtN2GzLHZy6/34HHMI85Kl
-# j5EpJUXjZODmJb8+MDPB479ImDK9mbSSWVyKNVVvr50lh/PlXOjFeA6AWevGyppH
-# Xrwq2GqT9RpAtYd14oVuffxzwh2fWQ==
+# IgQgneRABV3MEaf5HcOctg/SFv4Uw5iRRRuh2e2RWFDf/BUwDQYJKoZIhvcNAQEB
+# BQAEggEAq3svA4imke46ZIWOrZlGH1Vw++6etLYrtpLtS5brr9pDwN84NqQA8PlM
+# SPS/MnXZNWit+bnwVX0KKCmTx5P7YrtTwRByvgDeHD5UepUj/WKKZf2QXTXxQlXj
+# LmPh8El61bmNJav/qtLyBs1Z40zTra6qByjFUV9mElXK5SHHeb84RhJVwNy1tenJ
+# Bh0OAYr+XfYxyEXTXukgblKHP48ytIRMbjmBDvwL9oatUSQMV6/6uMAAMUkSQAhj
+# IpKWo+wjh9JKn9JvnnlH7RPRUVD04hsfN0pSOqeX7X3XyIbmawKPKAzevRtHA5xq
+# rm4MHRZ1dI+XrVgMHEGivv8VEfJ5Wg==
 # SIG # End signature block
