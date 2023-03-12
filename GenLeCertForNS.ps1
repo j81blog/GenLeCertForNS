@@ -210,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.14.2
+    Version   : v2.15.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -588,7 +588,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.14.2"
+$ScriptVersion = "2.15.0"
 $PoshACMEVersion = "4.17.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -4064,7 +4064,7 @@ if ($CertificateActions) {
                 $SessionRequestObject.DNSObjects | Select-Object DNSName, IPAddress, DNSType, Status, Match | ForEach-Object {
                     Write-ToLogFile -D -C DNS-Validation -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                Write-DisplayText -ForeGroundColor Green "Ready"
+                Write-DisplayText -ForeGroundColor Green " Ready"
             }
             if (($CertRequest.ValidationMethod -eq "http") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 Write-DisplayText -Line "Checking for errors"
@@ -4287,8 +4287,10 @@ if ($CertificateActions) {
                             Write-DisplayText -ForeGroundColor Cyan "$($Item.fqdn)"
                             Write-DisplayText -Line "Status"
                             Write-DisplayText -ForeGroundColor Red "ERROR [$($Item.status)]"
-                            Write-DisplayText -ForeGroundColor Red -Line "Error Status | Type"
-                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status) | $($Item.challenges.error.type)"
+                            Write-DisplayText -ForeGroundColor Red -Line "Error Status"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.status)"
+                            Write-DisplayText -ForeGroundColor Red -Line "Type"
+                            Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.type)"
                             Write-DisplayText -ForeGroundColor Red -Line "Details"
                             Write-DisplayText -ForeGroundColor Red "$($Item.challenges.error.detail)"
                             $mailDataItem.Text = "Status: $($Item.challenges.error.status) | Type: $($Item.challenges.error.type)`r`nDetail: $($Item.challenges.error.detail)"
@@ -4502,6 +4504,19 @@ if ($CertificateActions) {
                                     "invalid" {
                                         $DNSObject.Done = $true
                                         Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.DNS01Status)"
+                                        Write-DisplayText -Line "DNS Hostname"
+                                        Write-DisplayText -ForeGroundColor Cyan "$($PAOrderItem.fqdn)"
+                                        Write-DisplayText -Line "Status"
+                                        Write-DisplayText -ForeGroundColor Red "ERROR [$($PAOrderItem.status)]"
+                                        Write-DisplayText -ForeGroundColor Red -Line "Error Status"
+                                        Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.challenges.error.status)"
+                                        Write-DisplayText -ForeGroundColor Red -Line "Type"
+                                        Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.challenges.error.type)"
+                                        Write-DisplayText -ForeGroundColor Red -Line "Details"
+                                        Write-DisplayText -ForeGroundColor Red "$($PAOrderItem.challenges.error.detail)"
+                                        $mailDataItem.Text = "Status: $($PAOrderItem.challenges.error.status) | Type: $($PAOrderItem.challenges.error.type)`r`nDetail: $($PAOrderItem.challenges.error.detail)"
+                                        Write-ToLogFile -E -C OrderValidation -M "Error: $($PAOrderItem.challenges.error | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress -ErrorAction SilentlyContinue)"
+                                        Write-ToLogFile -E -C OrderValidation -M "ValidationRecord: $($PAOrderItem.challenges.validationRecord | ForEach-Object {$_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress -ErrorAction SilentlyContinue})"
                                     }
                                     "valid" {
                                         $DNSObject.Done = $true
@@ -5421,10 +5436,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIknAYJKoZIhvcNAQcCoIIkjTCCJIkCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAG5SQXobo25NCg
-# 4/k9AMtjf7CW7F3lQYObsFoI+O/tFaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAcD9V0pOxVw1eI
+# Nm0NVTEQC9sjqri/Ya5idkZioZWSA6CCHl8wggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5512,17 +5527,109 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
-# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
-# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
-# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
-# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
-# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgneRABV3MEaf5HcOctg/SFv4Uw5iRRRuh2e2RWFDf/BUwDQYJKoZIhvcNAQEB
-# BQAEggEAq3svA4imke46ZIWOrZlGH1Vw++6etLYrtpLtS5brr9pDwN84NqQA8PlM
-# SPS/MnXZNWit+bnwVX0KKCmTx5P7YrtTwRByvgDeHD5UepUj/WKKZf2QXTXxQlXj
-# LmPh8El61bmNJav/qtLyBs1Z40zTra6qByjFUV9mElXK5SHHeb84RhJVwNy1tenJ
-# Bh0OAYr+XfYxyEXTXukgblKHP48ytIRMbjmBDvwL9oatUSQMV6/6uMAAMUkSQAhj
-# IpKWo+wjh9JKn9JvnnlH7RPRUVD04hsfN0pSOqeX7X3XyIbmawKPKAzevRtHA5xq
-# rm4MHRZ1dI+XrVgMHEGivv8VEfJ5Wg==
+# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
+# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
+# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
+# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
+# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
+# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
+# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
+# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
+# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
+# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
+# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
+# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
+# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
+# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
+# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
+# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
+# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
+# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
+# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
+# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
+# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
+# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
+# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
+# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
+# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
+# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
+# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
+# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
+# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
+# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
+# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
+# 4/kKyVRd1LlqdJ69SK6YMIIG9jCCBN6gAwIBAgIRAJA5f5rSSjoT8r2RXwg4qUMw
+# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
+# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
+# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
+# DTIyMDUxMTAwMDAwMFoXDTMzMDgxMDIzNTk1OVowajELMAkGA1UEBhMCR0IxEzAR
+# BgNVBAgTCk1hbmNoZXN0ZXIxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoG
+# A1UEAwwjU2VjdGlnbyBSU0EgVGltZSBTdGFtcGluZyBTaWduZXIgIzMwggIiMA0G
+# CSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCQsnE/eeHUuYoXzMOXwpCUcu1aOm8B
+# Q39zWiifJHygNUAG+pSvCqGDthPkSxUGXmqKIDRxe7slrT9bCqQfL2x9LmFR0IxZ
+# Nz6mXfEeXYC22B9g480Saogfxv4Yy5NDVnrHzgPWAGQoViKxSxnS8JbJRB85XZyw
+# lu1aSY1+cuRDa3/JoD9sSq3VAE+9CriDxb2YLAd2AXBF3sPwQmnq/ybMA0QfFijh
+# anS2nEX6tjrOlNEfvYxlqv38wzzoDZw4ZtX8fR6bWYyRWkJXVVAWDUt0cu6gKjH8
+# JgI0+WQbWf3jOtTouEEpdAE/DeATdysRPPs9zdDn4ZdbVfcqA23VzWLazpwe/Opw
+# feZ9S2jOWilh06BcJbOlJ2ijWP31LWvKX2THaygM2qx4Qd6S7w/F7KvfLW8aVFFs
+# M7ONWWDn3+gXIqN5QWLP/Hvzktqu4DxPD1rMbt8fvCKvtzgQmjSnC//+HV6k8+4W
+# OCs/rHaUQZ1kHfqA/QDh/vg61MNeu2lNcpnl8TItUfphrU3qJo5t/KlImD7yRg1p
+# sbdu9AXbQQXGGMBQ5Pit/qxjYUeRvEa1RlNsxfThhieThDlsdeAdDHpZiy7L9GQs
+# Qkf0VFiFN+XHaafSJYuWv8at4L2xN/cf30J7qusc6es9Wt340pDVSZo6HYMaV38c
+# AcLOHH3M+5YVxQIDAQABo4IBgjCCAX4wHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0Uo
+# jtE1XwYSBFUwHQYDVR0OBBYEFCUuaDxrmiskFKkfot8mOs8UpvHgMA4GA1UdDwEB
+# /wQEAwIGwDAMBgNVHRMBAf8EAjAAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEoG
+# A1UdIARDMEEwNQYMKwYBBAGyMQECAQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8v
+# c2VjdGlnby5jb20vQ1BTMAgGBmeBDAEEAjBEBgNVHR8EPTA7MDmgN6A1hjNodHRw
+# Oi8vY3JsLnNlY3RpZ28uY29tL1NlY3RpZ29SU0FUaW1lU3RhbXBpbmdDQS5jcmww
+# dAYIKwYBBQUHAQEEaDBmMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnNlY3RpZ28u
+# Y29tL1NlY3RpZ29SU0FUaW1lU3RhbXBpbmdDQS5jcnQwIwYIKwYBBQUHMAGGF2h0
+# dHA6Ly9vY3NwLnNlY3RpZ28uY29tMA0GCSqGSIb3DQEBDAUAA4ICAQBz2u1ocsvC
+# uUChMbu0A6MtFHsk57RbFX2o6f2t0ZINfD02oGnZ85ow2qxp1nRXJD9+DzzZ9cN5
+# JWwm6I1ok87xd4k5f6gEBdo0wxTqnwhUq//EfpZsK9OU67Rs4EVNLLL3OztatcH7
+# 14l1bZhycvb3Byjz07LQ6xm+FSx4781FoADk+AR2u1fFkL53VJB0ngtPTcSqE4+X
+# rwE1K8ubEXjp8vmJBDxO44ISYuu0RAx1QcIPNLiIncgi8RNq2xgvbnitxAW06IQI
+# kwf5fYP+aJg05Hflsc6MlGzbA20oBUd+my7wZPvbpAMxEHwa+zwZgNELcLlVX0e+
+# OWTOt9ojVDLjRrIy2NIphskVXYCVrwL7tNEunTh8NeAPHO0bR0icImpVgtnyughl
+# A+XxKfNIigkBTKZ58qK2GpmU65co4b59G6F87VaApvQiM5DkhFP8KvrAp5eo6rWN
+# es7k4EuhM6sLdqDVaRa3jma/X/ofxKh/p6FIFJENgvy9TZntyeZsNv53Q5m4aS18
+# YS/to7BJ/lu+aSSR/5P8V2mSS9kFP22GctOi0MBk0jpCwRoD+9DtmiG4P6+mslFU
+# 1UzFyh8SjVfGOe1c/+yfJnatZGZn6Kow4NKtt32xakEnbgOKo3TgigmCbr/j9re8
+# ngspGGiBoZw/bhZZSxQJCZrmrr9gFd2G9TGCBZMwggWPAgEBMIGQMHwxCzAJBgNV
+# BAYTAkdCMRswGQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1Nh
+# bGZvcmQxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGln
+# byBSU0EgQ29kZSBTaWduaW5nIENBAhAsJ03zZBC0i/247uUvWN5TMA0GCWCGSAFl
+# AwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKAAKECgAAwGQYJKoZIhvcNAQkD
+# MQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJ
+# KoZIhvcNAQkEMSIEIBYIC94TEbiUAs7fgePyvVp853E6xrtVULoxje4Zoso8MA0G
+# CSqGSIb3DQEBAQUABIIBAFE7OcOX5w47GYG6ILP7MnWQpxRptDRX3LLmfbwibguQ
+# ShXrEXhpqXJt8ahh/qaXQz0ltaYN7aFTc+kVrATeJNG6EeoQxw5qybwhQWlBTdVC
+# ieTVhrdgVRdGdhUkuIP2eP0nVhEBVDTiQRrIvh2zDeYnA6hcNwauSft+FAqihKza
+# HcUlVZmd0rvZlb1X6skaZFo+Npx/hAq9Ernxeh+Y1ap8qU08IZdFRZskn998E37g
+# tfbM1LYEoC9VSb/iyB+iNKzDdCcx5s36aNehEkDMddYfpNlihXyyXjgU9aI1aGaV
+# fqXV7TGggRFoTT1fRP5fjhg8e8L0LCCWF+J2tTMTd2uhggNMMIIDSAYJKoZIhvcN
+# AQkGMYIDOTCCAzUCAQEwgZIwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0
+# ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGln
+# byBMaW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENB
+# AhEAkDl/mtJKOhPyvZFfCDipQzANBglghkgBZQMEAgIFAKB5MBgGCSqGSIb3DQEJ
+# AzELBgkqhkiG9w0BBwEwHAYJKoZIhvcNAQkFMQ8XDTIzMDMxMjIwMTYxNFowPwYJ
+# KoZIhvcNAQkEMTIEMGtALXZ/BVVC17KZ/x0OIzjNm2EsaqkviRbIYFzWWs5Zb8pM
+# xhpjQEh+IBrtlBn4JDANBgkqhkiG9w0BAQEFAASCAgBt7b1PIrJUKWkVxFFQP3e+
+# OwMQKZK18d0X7gPLh59QNdSC+Ul8ht6JcfY6LeBdYZT6LQAWOiHK3D6gjEBIbw1g
+# NF/rp6CRdoFpZs1culrzIKpY3TJenJUCtv+yGlbkHIET5Kf/k+QxqV6b0elnI2L2
+# V9Iv32WkbSw7c19NnCVgoHjBoewlj3NNIrL/AWjrYgf+EP8G388qKGLMtm4PzbcF
+# bCor50HBxu6deIYA0iqBTNx5De+DGj4lKojt7BtVajZNJERKHEOob0HVrzYbM0Yy
+# I0Ec1VqVTqnkFLOShm5+J2bxVWrmWk0neFe1Mahnvb3PsefLqpiD+i3KoMAR2r2D
+# RBK0iWTwxwUE/geMS/lBxnpPDeKyKu0ZtpfHKsvz/au0Svk0Sv1COsC4gxArLqya
+# Aty0bjfwmhMBWPTZEdfo69Q+Iej7Q6v8VFodv1hBb4hbzKtG4vDbrJIydXr1iA5E
+# HzszWyeIYbYOtQFjaPx0F/2q0ds9vq8wyDjTPkT9XKgTxow1rPkTZySGlh2ugHu0
+# uKUQIXQwy+GHLZkE85uaMz9QW6O2iHoHgQO8HAZMrraog12PSuFI9TvN+hL69saN
+# Nco3OjKhrvB/3Us3lA0c8IyXqvswRbb6oMLKnGiiNKJz5s06j3udOATUDE6nMm2I
+# DBmchZuk2xQSTo4w7wPhlA==
 # SIG # End signature block
