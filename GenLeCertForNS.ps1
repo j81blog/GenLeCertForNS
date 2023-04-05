@@ -24,7 +24,7 @@
     Specify all possible VIPs when creating a Command Policy (User group, -NSCPName), so they all can be used by the members
 .PARAMETER UseLbVip
     Skip the use of a Content Switch vServer (for example when using a GateWay Edition)\
-    Don't forget to specify a HTTP LB Vip Name, with the -LbName parameter!
+    Don't forget to specify a HTTP LB Vip Name, with the -LbVip parameter!
 .PARAMETER LbName
     ADC Load Balance VIP name
     Default: "lb_letsencrypt_cert"
@@ -87,7 +87,7 @@
 .PARAMETER CreateUserPermissions
     When this parameter is configured, a User Group (Command Policy) will be created with a limited set of permissions required to run this script.
     Also specify all VIP, LB svc names if you want other than default values.
-    Mandatory parameter is the CsVipName.
+    Mandatory parameter is the CsVipName (Except when -UseLbVip parameter is used).
 .PARAMETER NSCPName
     You can change the name of the Command Policy that will be created when you configure the -CreateUserPermissions parameter
     Default: `"script-GenLeCertForNS`"
@@ -210,7 +210,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.15.1
+    Version   : v2.16.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -384,7 +384,7 @@ param(
     [Parameter(ParameterSetName = "CleanTestCertificate")]
     [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
     [String]$LogLevel = "Info",
-   
+
     [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -588,8 +588,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.15.1"
-$PoshACMEVersion = "4.17.0"
+$ScriptVersion = "2.16.0"
+$PoshACMEVersion = "4.17.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -1657,6 +1657,7 @@ function Invoke-ADCCleanup {
         if (-Not $CertRequest.UseLbVip) {
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
+                #ToDo CSVIP Array
                 try {
                     $Filters = @{"policyname" = "$($Parameters.settings.CspName)" }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($CertRequest.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
@@ -1912,6 +1913,7 @@ function Invoke-AddInitialADCConfig {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if (-not $CertRequest.UseLbVip) {
+                    #ToDo CSVIP Array
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch is OK, check if Load Balance Service exists."
                 } else {
@@ -1921,6 +1923,7 @@ function Invoke-AddInitialADCConfig {
             } catch {
                 $ExceptMessage = $_.Exception.Message
                 Write-DisplayText -ForeGroundColor Red " Error"
+                #ToDo CSVIP Array
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available? Exception Message: $ExceptMessage"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 Write-Error "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
@@ -2102,6 +2105,7 @@ function Invoke-AddInitialADCConfig {
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type cspolicy -Payload $payload -Action add
                 }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                #ToDo CSVIP Array
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($CertRequest.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
                 $payload = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
@@ -2421,12 +2425,12 @@ function Get-ExceptionDetails {
 
 if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
     Get-Help $MyInvocation.InvocationName -Detailed
-    
+    exit 0
 }
 #endregion Help
 
 #region ScriptBasics
-
+#ToDo CSVIP Array
 if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $UseLbVip.ToBool()) -and [String]::IsNullOrEmpty($CsVipName)) {
     Throw "The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-UseLbVip`" parameter."
 }
@@ -2667,6 +2671,7 @@ try {
     }
 }
 
+#ToDo CSVIP Array
 if (-Not ($CreateUserPermissions) -and ($CsVipName -is [Array])) {
     [String]$CsVipName = $CsVipName[0]
 }
@@ -2749,6 +2754,7 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
+        #ToDo CSVIP Array
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value $CsVipName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseLbVip -Value $([bool]::Parse($UseLbVip))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
@@ -3045,7 +3051,9 @@ if ($ADCActionsRequired) {
         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 
-    if ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -eq 0)) ) {
+    if ($CreateUserPermissions -and $UseLbVip) {
+        #Do Nothing, skip for CsVipName when using the -UseLbVip parameter
+    } elseif ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -eq 0)) ) {
         Write-DisplayText -Line "Content Switch"
         Write-DisplayText -ForeGroundColor Red "NOT Found! This is required for Command Policy creation!"
         TerminateScript 1 "No Content Switch VIP name defined, this is required for Command Policy creation!"
@@ -3510,6 +3518,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
             } else {
                 $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
+                #ToDo CSVIP Array
                 if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.UseLbVip)) {
                     Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
                     Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
@@ -3636,7 +3645,7 @@ if ($CertificateActions) {
                         Write-Warning "Script will continue but uploading of certificates will probably Fail"
                         Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
                     }
-                } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) {
+                } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) { #ToDo CSVIP Array
                     $CsVipError = $false
                     try {
                         Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
@@ -5438,8 +5447,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDfyN6cprJJzoZT
-# 2a0+DJBIVHVvSBagtEDqjuk3ngjdNaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCr08lZrDrvghdS
+# l3LCOmt8rQUy7IREE6E15oP9XkmCvqCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5533,11 +5542,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQg73AzCFzJKIESaCZrKOfxpgKvg+Mt7hbtItWU5RmsonowDQYJKoZIhvcNAQEB
-# BQAEggEAqsrsU7V0yvpuYsJOhIqdWkLoH8A3xEsJn81lTa96ZY+1PYbAxlkqCa3/
-# RKy+AO0mESlCU5EcxzzH6no+EYaKQD2e35fhrVZYF3zvRmgWyHiullJBcervgVkK
-# 9Pl58uQsYb3Q/wq1/IdEdm4m+39iT5r75lqBtb9HevOlPDs6cA1z+SajC/wFrj8G
-# /vXUA4ItBge86aUqFSeBK1EWKwiJnWrTrWgES7IsPNP4wp7Ra0Z40WSAarlpHm2W
-# jAEUbf/5PnPDKHOVwrccXHZm7oPryno3/wMi2Y1aTuIkyU2FQWNHJ6yYRTQPCVha
-# KF8kJmrixNg0KIt/9FuxKWlBC9sr+w==
+# IgQguk17h/hELx7Un+S6vToX2/ZJBYU7vb7F1Sh5gVCSGEowDQYJKoZIhvcNAQEB
+# BQAEggEAX5bm1mkbS8XqMfs+m+zJHQJinT8bdW620OUpxsn3QXGsqAS4So6eAZNy
+# yn7eChCOAdigswREOvhase7aFchUrs40xxaKi4xFSM5uSBkmacnN3QdAosmbFh7U
+# K8X9FbBUpbiYW2z/LDPo7+H3aohPsJwGrMmrGF+88t+9fo/E4/UgESfQjUvjqD1Q
+# P8lq4LaH0Alexa/oLBAOMO4o/BJLf+1zn+wZo3dsXeampC+IMMoZvhKsfEeiUJI8
+# PzE0LZOlVefwlnET8Q0xcRYDxtFVZkBceaOlvKKm7Goyc6aBTIet8gY6wZTaLOEB
+# RaQ/JocOyfu7ON8UMacLSpRzPghXIw==
 # SIG # End signature block
