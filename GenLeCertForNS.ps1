@@ -24,7 +24,7 @@
     Specify all possible VIPs when creating a Command Policy (User group, -NSCPName), so they all can be used by the members
 .PARAMETER UseLbVip
     Skip the use of a Content Switch vServer (for example when using a GateWay Edition)\
-    Don't forget to specify a HTTP LB Vip Name, with the -LbVip parameter!
+    Don't forget to specify a HTTP LB Vip Name, with the -LbName parameter!
 .PARAMETER LbName
     ADC Load Balance VIP name
     Default: "lb_letsencrypt_cert"
