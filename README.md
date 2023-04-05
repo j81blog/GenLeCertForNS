@@ -64,7 +64,7 @@ Next time you want to generate certificates you can specify the new user *-Usern
 CsVipName = 'cs_domain.com_http','cs_domain2.com_http','cs_domain3.com_http'
 
 ```PowerShell
-$params @{
+$params = @{
     CreateUserPermissions = $true
     CreateApiUser = $true
     CsVipName = 'cs_domain.com_http'
@@ -91,7 +91,7 @@ Generate a (Production) certificate for hostname 'domain.com' with alternate nam
 > ***NOTE:*** Always test without the ***-Production*** parameter, as you have limited reties. Make sure after every change that you test it first without the ***-Production*** parameter!
 
 ```PowerShell
-$params @{
+$params = @{
     CN = 'domain.com'
     EmailAddress = 'hostmaster@domain.com'
     SAN = 'sts.domain.com','www.domain.com','vpn.domain.com'
@@ -123,7 +123,7 @@ If you don't configure any further parameters (see next example) you must comple
 > ***NOTE:*** Always test without the ***-Production*** parameter, as you have limited reties. Make sure after every change that you test it first without the ***-Production*** parameter!
 
 ```PowerShell
-$params @{
+$params = @{
     CN = 'domain.com'
     SAN = '*.domain.com','*.test.domain.com'
     EmailAddress = 'hostmaster@domain.com'
@@ -176,7 +176,7 @@ To generate a JSON config file you just run your command you would use to create
 > ***NOTE:*** Always test without the ***-Production*** parameter, as you have limited reties. Make sure after every change that you test it first without the ***-Production*** parameter!
 
 ```PowerShell
-$params @{
+$params = @{
     CN = 'domain.com'
     EmailAddress = 'hostmaster@domain.com'
     SAN = 'sts.domain.com','www.domain.com','vpn.domain.com'
@@ -255,7 +255,7 @@ This file will contain all the parameters you specified (and the ones you didn't
 > ***NOTE:*** Always test without the ***-Production*** parameter, as you have limited reties. Make sure after every change that you test it first without the ***-Production*** parameter!
 
 ```PowerShell
-$params @{
+$params = @{
     AutoRun = $true
     ConfigFile = '.\GenLe-Config.json'
 }
