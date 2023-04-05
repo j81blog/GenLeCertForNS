@@ -177,6 +177,12 @@
     Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -LbName (Default: "lb_letsencrypt_cert"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_NSCertCsp")
     Next time you want to generate certificates you can specify the new user  -Username le-user -Password "LEP@ssw0rd"
 .EXAMPLE
+    .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -UseLbVip -LbName "HTTP-LBVIPName" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -NSCPName "MinLePermissionGroup" -Username nsroot -Password "nsroot" -ManagementURL https://citrixadc.domain.local
+    This command will create a Command Policy with the minimum set of permissions, you need to run this once to create (or when you want to change something).
+    Specify a LoadBalance VIP Name for the -LbName parameter when using the "-UseLbVip" parameter if you don't have a CSVip (E.G. when using a Gateway Edition license).
+    Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_NSCertCsp")
+    Next time you want to generate certificates you can specify the new user  -Username le-user -Password "LEP@ssw0rd"
+.EXAMPLE
     .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -CsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "san_domain_com" -LogLevel Debug -Production
     Generate a (Production) certificate for hostname "domain.com" with alternate names : "sts.domain.com, www.domain.com, vpn.domain.com". Using the email address "hostmaster@domain.com". At the end storing the certificates  in "C:\Certificates" and uploading them to the ADC. The Content Switch "cs_domain.com_http" will be used to validate the certificates.
 .EXAMPLE
@@ -5447,8 +5453,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCr08lZrDrvghdS
-# l3LCOmt8rQUy7IREE6E15oP9XkmCvqCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCq02oMG/wrUHHf
+# ie/5+9uIdnhR88g3+s0ROeQ9wuMuFKCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5542,11 +5548,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQguk17h/hELx7Un+S6vToX2/ZJBYU7vb7F1Sh5gVCSGEowDQYJKoZIhvcNAQEB
-# BQAEggEAX5bm1mkbS8XqMfs+m+zJHQJinT8bdW620OUpxsn3QXGsqAS4So6eAZNy
-# yn7eChCOAdigswREOvhase7aFchUrs40xxaKi4xFSM5uSBkmacnN3QdAosmbFh7U
-# K8X9FbBUpbiYW2z/LDPo7+H3aohPsJwGrMmrGF+88t+9fo/E4/UgESfQjUvjqD1Q
-# P8lq4LaH0Alexa/oLBAOMO4o/BJLf+1zn+wZo3dsXeampC+IMMoZvhKsfEeiUJI8
-# PzE0LZOlVefwlnET8Q0xcRYDxtFVZkBceaOlvKKm7Goyc6aBTIet8gY6wZTaLOEB
-# RaQ/JocOyfu7ON8UMacLSpRzPghXIw==
+# IgQgKy/hHohnoXvVZj9BejKZ4A4qmSp7vsCxIT/MVUPDn3kwDQYJKoZIhvcNAQEB
+# BQAEggEAJM8xuYl+0WUpz951acW6R7uRObJMLJu8BfMzMD8hwoV7APABmojGDiTZ
+# oLQCpp/+Te0k5GA5ypc3fIqtcK3oE1693VEhW5C6wQh/ir4BGBffQd8ySNbAVHkj
+# xX0THf435Yf48eJo4p+6T9HeXL3avQIG13XTyTQN12vToxFjb9ze16xnCAqhe9Bs
+# KeCp9wLcNUZ6IGHwO+TjVzMjalaym5aFQV6N8axed3DGliVZ8+mnAy6lCMKaPx/j
+# YQSBeaYUFzYnnw6wFlaU5hFmByJVDzmmqrmxsw6eg9AOs4Xm9BmBhvXDT8zq0b8L
+# oHbo6miinefv+5ud//p0rK8S0Jm7zQ==
 # SIG # End signature block
