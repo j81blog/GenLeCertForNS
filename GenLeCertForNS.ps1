@@ -158,7 +158,7 @@
     If you specify this parameter, the log will be attached as attachment when sending the mail.
 .PARAMETER DisableLogging
     Turn off logging to logfile. Default ON
-.PARAMETER LogLocation
+.PARAMETER LogFile
     Specify the log file name, default ".\GenLeCertForNS.txt"
 .PARAMETER LogLevel
     The Log level you want to have specified.
