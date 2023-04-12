@@ -42,9 +42,12 @@
 .PARAMETER RsaName
     ADC Responder Action name
     Default: "rsa_letsencrypt"
+.PARAMETER CsaName
+    ADC Content Switch Action name
+    Default: "csa_letsencrypt"
 .PARAMETER CspName
     ADC Content Switch Policy name
-    Default: "csp_NSCertCsp"
+    Default: "csp_letsencrypt"
 .PARAMETER CertKeyNameToUpdate
     ADC SSL Certkey name currently in use, that needs to be renewed
 .PARAMETER RemovePrevious
@@ -174,13 +177,13 @@
 .EXAMPLE
     .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -CsVipName "CSVIPNAME" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -NSCPName "MinLePermissionGroup" -Username nsroot -Password "nsroot" -ManagementURL https://citrixadc.domain.local
     This command will create a Command Policy with the minimum set of permissions, you need to run this once to create (or when you want to change something).
-    Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -LbName (Default: "lb_letsencrypt_cert"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_NSCertCsp")
+    Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -LbName (Default: "lb_letsencrypt_cert"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_letsencrypt")
     Next time you want to generate certificates you can specify the new user  -Username le-user -Password "LEP@ssw0rd"
 .EXAMPLE
     .\GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -UseLbVip -LbName "HTTP-LBVIPName" -ApiUsername "le-user" -ApiPassword "LEP@ssw0rd" -NSCPName "MinLePermissionGroup" -Username nsroot -Password "nsroot" -ManagementURL https://citrixadc.domain.local
     This command will create a Command Policy with the minimum set of permissions, you need to run this once to create (or when you want to change something).
     Specify a LoadBalance VIP Name for the -LbName parameter when using the "-UseLbVip" parameter if you don't have a CSVip (E.G. when using a Gateway Edition license).
-    Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_NSCertCsp")
+    Be sure to run the script next with the same parameters as specified when running this command, the same for -SvcName (Default "svc_letsencrypt_cert_dummy"), -RspName (Default: "rsp_letsencrypt"), -RsaName (Default: "rsa_letsencrypt"), -CspName (Default: "csp_letsencrypt")
     Next time you want to generate certificates you can specify the new user  -Username le-user -Password "LEP@ssw0rd"
 .EXAMPLE
     .\GenLeCertForNS.ps1 -CN "domain.com" -EmailAddress "hostmaster@domain.com" -SAN "sts.domain.com","www.domain.com","vpn.domain.com" -PfxPassword "P@ssw0rd" -CertDir "C:\Certificates" -ManagementURL "http://192.168.100.1" -CsVipName "cs_domain.com_http" -Password "P@ssw0rd" -Username "nsroot" -CertKeyNameToUpdate "san_domain_com" -LogLevel Debug -Production
@@ -221,7 +224,7 @@
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.17.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.17.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -478,6 +481,13 @@ param(
     [alias("NSCspName")]
     [String]$CspName = "csp_letsencrypt",
 
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Parameter(ParameterSetName = "CleanADC")]
+    [String]$CsaName = "csa_letsencrypt",
+
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Parameter(ParameterSetName = "CleanADC")]
@@ -594,7 +604,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.16.0"
+$ScriptVersion = "2.20.0"
 $PoshACMEVersion = "4.17.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1657,132 +1667,166 @@ function Invoke-ADCCleanup {
         } else {
             Write-DisplayText -ForegroundColor Cyan "Full"
         }
-        Write-DisplayText -Line "Cleanup"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
         $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
         if (-Not $CertRequest.UseLbVip) {
+            Write-DisplayText -Line "Cleanup CS Vip"
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
-                #ToDo CSVIP Array
                 try {
-                    $Filters = @{"policyname" = "$($Parameters.settings.CspName)" }
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver_cspolicy_binding -Resource "$($CertRequest.CsVipName)" -Filters $Filters -ErrorAction SilentlyContinue
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy_csvserver_binding -Resource $($Parameters.settings.CspName) -ErrorAction SilentlyContinue
                 } catch { }
-                if ($response.csvserver_cspolicy_binding.policyname -eq $($Parameters.settings.CspName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch LoadBalance Binding."
-                    $Arguments = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; }
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
+                if ($response.cspolicy_csvserver_binding.Count -gt 0) {
+                    ForEach ($item in $response.cspolicy_csvserver_binding) {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
+                        $Arguments = @{"name" = "$($item.domain)"; "policyname" = "$($item.policyname)"; "priority" = "$($item.priority)"; }
+                        try {
+                            $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        } catch {
+                            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
+                        }
+                    }
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
                 }
-                Write-DisplayText -ForeGroundColor Green -NoNewLine "CS-Vip$([Char]8730)"
+                Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch LoadBalance Binding. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch LoadBalance Binding"
-                Write-DisplayText -Line "Cleanup"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding"
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-DisplayText -Line "Cleanup CS Policy"
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Policy `"$($Parameters.settings.CspName)`" exists."
                 try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource "$($Parameters.settings.CspName)"
                 } catch { }
                 if ($response.cspolicy.policyname -eq $($Parameters.settings.CspName)) {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy exist, removing Content Switch Policy."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type cspolicy -Resource "$($Parameters.settings.CspName)"
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Policy successfully."
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
                 }
-                Write-DisplayText -ForeGroundColor Green -NoNewLine "CS-Pol$([Char]8730)"
+                Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
-                Write-DisplayText -Line "Cleanup"
             }
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-DisplayText -Line "Cleanup CS Action"
+            try {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Action `"$($Parameters.settings.CsaName)`" exists."
+                try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csaction -Resource "$($Parameters.settings.CsaName)"
+                } catch { }
+                if ($response.csaction.name -eq $($Parameters.settings.CsaName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action exist, removing Content Switch Action."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csaction -Resource "$($Parameters.settings.CsaName)"
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Action successfully."
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action not found."
+                }
+                Write-DisplayText -ForeGroundColor Green " OK"
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Action. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Action"
+            }
+            Write-DisplayText -Line "Cleanup LB Vip"
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
                 try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
                 } catch { }
                 if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
                 }
-                Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip$([Char]8730)"
+                Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
-                Write-DisplayText -Line "Cleanup"
             }
         } else {
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-DisplayText -Line "Cleanup LB Svc Binding"
             try {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if service `"$($Parameters.settings.SvcName)`" is bound to Load Balance VIP `"$($Parameters.settings.LbName)`"."
                 try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)"
                 } catch { }
                 if ($response.lbvserver_service_binding.servicename -eq $($Parameters.settings.SvcName)) {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP binding with Service exists, removing the Load Balance VIP-Service binding."
                     $Arguments = @{"servicename" = "$($Parameters.settings.SvcName)" }
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)" -Arguments $arguments
-                    Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Vip-Svc-Binding$([Char]8730)"
+                    Write-DisplayText -ForeGroundColor Green " OK"
                 } else {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP - Service binding not found."
                 }
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP - Service binding. Exception Message: $($_.Exception.Message)"
                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP - Service binding"
-                Write-DisplayText -Line "Cleanup"
             }
         }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        Write-DisplayText -Line "Cleanup LB Service"
         try {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
             try {
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
             } catch { }
             if ($response.service.name -eq $($Parameters.settings.SvcName)) {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
             } else {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
             }
-            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Svc$([Char]8730)"
+            Write-DisplayText -ForeGroundColor Green " OK"
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
-            Write-DisplayText -Line "Cleanup"
         }
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        Write-DisplayText -Line "Cleanup LB Server"
         try {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
             try {
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
             } catch { }
             if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
             } else {
                 Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
             }
-            Write-DisplayText -ForeGroundColor Green -NoNewLine "LB-Srv$([Char]8730)"
+            Write-DisplayText -ForeGroundColor Green " OK"
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
-            Write-DisplayText -Line "Cleanup"
         }
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        Write-DisplayText -Line "Cleanup Responder Policy"
         try {
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
@@ -1829,10 +1873,11 @@ function Invoke-ADCCleanup {
         } else {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Policies found."
         }
-        Write-DisplayText -ForeGroundColor Green -NoNewLine "RS-Pol$([Char]8730)"
+        Write-DisplayText -ForeGroundColor Green " OK"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Actions starting with the name `"$($Parameters.settings.RsaName)`"."
-        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        Write-DisplayText -Line "Cleanup Responder Action"
         try {
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
         } catch {
             Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
@@ -1844,6 +1889,7 @@ function Invoke-ADCCleanup {
                 Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
             }
             ForEach ($ResponderAction in $response.responderaction) {
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 try {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
@@ -1856,7 +1902,8 @@ function Invoke-ADCCleanup {
         } else {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Actions found."
         }
-        Write-DisplayText -ForeGroundColor Green -NoNewLine "RS-Act$([Char]8730)"
+        Write-DisplayText -ForeGroundColor Green " OK"
+        Write-DisplayText -Line "Cleanup"
         Write-DisplayText -ForeGroundColor Green " Completed"
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Finished cleaning up."        
     }
@@ -1915,40 +1962,40 @@ function Invoke-AddInitialADCConfig {
                     Write-DisplayText -ForeGroundColor Red " Error"
                 }
             }
-            try {
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if (-not $CertRequest.UseLbVip) {
-                    #ToDo CSVIP Array
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch is OK, check if Load Balance Service exists."
-                } else {
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Skipped, UseLbVip was configured."
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Load Balance Service exists."
+            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
+            if (-not $CertRequest.UseLbVip) {
+                ForEach ($csVip in $CertRequest.CsVipName) {
+                    try {
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
+                        Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch is OK, check if Load Balance Service exists."
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    } catch {
+                        $ExceptMessage = $_.Exception.Message
+                        Write-DisplayText -ForeGroundColor Red " Error"
+                        Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$csVip`" not available? Exception Message: $ExceptMessage"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-Error "Could not find/read out the content switch `"$csVip`" not available?"
+                        TerminateScript 1 "Could not find/read out the content switch `"$csVip`" not available?"
+                        if ($ExceptMessage -like "*(404) Not Found*") {
+                            Write-DisplayText -ForeGroundColor Red "The Content Switch `"$csVip`" does NOT exist!"
+                            Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "The Content Switch `"$csVip`" does NOT exist!"
+                            TerminateScript 1 "The Content Switch `"$csVip`" does NOT exist!"
+                        } elseif ($ExceptMessage -like "*The remote server returned an error*") {
+                            Write-DisplayText -ForeGroundColor Red "Unknown error found while checking the Content Switch: `"$csVip`"."
+                            Write-DisplayText -ForeGroundColor Red "Error message: `"$ExceptMessage`""
+                            Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Unknown error found while checking the Content Switch: `"$csVip`". Exception Message: $ExceptMessage"
+                            TerminateScript 1 "Unknown error found while checking the Content Switch: `"$csVip`". Exception Message: $ExceptMessage"
+                        } elseif (-Not [String]::IsNullOrEmpty($ExceptMessage)) {
+                            Write-DisplayText -ForeGroundColor Red "Unknown Error, `"$ExceptMessage`""
+                            Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Caught an unknown error. Exception Message: $ExceptMessage"
+                            TerminateScript 1 "Caught an unknown error. Exception Message: $ExceptMessage"
+                        }
+                    }
                 }
-            } catch {
-                $ExceptMessage = $_.Exception.Message
-                Write-DisplayText -ForeGroundColor Red " Error"
-                #ToDo CSVIP Array
-                Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available? Exception Message: $ExceptMessage"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-Error "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
-                TerminateScript 1 "Could not find/read out the content switch `"$($CertRequest.CsVipName)`" not available?"
-                if ($ExceptMessage -like "*(404) Not Found*") {
-                    Write-DisplayText -ForeGroundColor Red "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                    TerminateScript 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                    Write-DisplayText -ForeGroundColor Red "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`"."
-                    Write-DisplayText -ForeGroundColor Red "Error message: `"$ExceptMessage`""
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`". Exception Message: $ExceptMessage"
-                    TerminateScript 1 "Unknown error found while checking the Content Switch: `"$($CertRequest.CsVipName)`". Exception Message: $ExceptMessage"
-                } elseif (-Not [String]::IsNullOrEmpty($ExceptMessage)) {
-                    Write-DisplayText -ForeGroundColor Red "Unknown Error, `"$ExceptMessage`""
-                    Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Caught an unknown error. Exception Message: $ExceptMessage"
-                    TerminateScript 1 "Caught an unknown error. Exception Message: $ExceptMessage"
-                }
-            } 
+            } else {
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Skipped, UseLbVip parameter was configured."
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Load Balance Service exists."
+            }
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             try {
                 
@@ -2095,29 +2142,57 @@ function Invoke-AddInitialADCConfig {
             $payload = @{"name" = "$($Parameters.settings.LbName)"; "policyname" = "$($($Parameters.settings.RspName))_test"; "priority" = 5; }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type lbvserver_responderpolicy_binding -Payload $payload -Resource $($Parameters.settings.LbName)
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy bound successfully."
             if (-not $CertRequest.UseLbVip) {
+                
                 try {
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy bound successfully, check if Content Switch Policy exists."
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Content Switch Action exists with Load Balance VIP $($Parameters.settings.LbName) as target."
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csaction -Resource $($Parameters.settings.CsaName)
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Action exists, validating current settings..."
+                    Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if (-not($response.csaction.targetlbvserver -eq $Parameters.settings.LbName)) {
+                        Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Update required, making changes"
+                        $payload = @{ "name" = "$($Parameters.settings.CsaName)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "comment" = "Let's Encrypt Temp Action"; }
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csaction -Payload $payload
+                        Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                    }
+                } catch {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Create Content Switch Action."
+                    $payload = @{ "name" = "$($Parameters.settings.CsaName)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "comment" = "Let's Encrypt Temp Action"; }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type csaction -Payload $payload -Action add
+                    Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                }
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Action is OK"
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                try {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Check if Content Switch Policy exists."
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource $($Parameters.settings.CspName)
-                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy exists, continuing."
-                    if (-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) {
-                        $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")"; }
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy exists, validating current settings..."
+                    Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ((-not($response.cspolicy.rule -eq "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")")) -or (-not ($response.cspolicy.action -eq $($Parameters.settings.CsaName)))) {
+                        Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Update required, making changes"
+                        $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = "HTTP.REQ.URL.CONTAINS(`"well-known/acme-challenge/`")"; "action" = "$($Parameters.settings.CsaName)" ; }
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type cspolicy -Payload $payload
                         Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     }
                 } catch {
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Create Content Switch Policy."
-                    $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = 'HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")'; }
+                    $payload = @{"policyname" = "$($Parameters.settings.CspName)"; "rule" = 'HTTP.REQ.URL.CONTAINS("well-known/acme-challenge/")'; "action" = "$($Parameters.settings.CsaName)"; }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type cspolicy -Payload $payload -Action add
+                    Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy is OK"
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                #ToDo CSVIP Array
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy created successfully, bind Load Balancer `"$($Parameters.settings.LbName)`" to Content Switch `"$($CertRequest.CsVipName)`" with prio: $($Parameters.settings.CsVipBinding)"
-                $payload = @{"name" = "$($CertRequest.CsVipName)"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "targetlbvserver" = "$($Parameters.settings.LbName)"; "gotopriorityexpression" = "END"; }
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Binding created successfully!"
+                ForEach ($csVip in $CertRequest.CsVipName) {
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Bind Content Switch Policy `"$($Parameters.settings.CspName)`" to Content Switch `"$csVip`" with prio: $($Parameters.settings.CsVipBinding)"
+                    $payload = @{ "name" = "$csVip"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "gotopriorityexpression" = "END"; }
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
+                    Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Binding created successfully!"
+                }
             } else {
-                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "NO Content Switch Policy created, UseLbVip was configured"
+                Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "NO Content Switch Action & Policy created, UseLbVip parameter was configured"
             }
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Finished configuring the ADC"
         } catch {
@@ -2130,7 +2205,6 @@ function Invoke-AddInitialADCConfig {
         Start-Sleep -Seconds 2
         Write-DisplayText -ForeGroundColor Green " Ready"        
     }
-    
 }
 
 function Invoke-CheckDNS {
@@ -2436,8 +2510,7 @@ if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
 #endregion Help
 
 #region ScriptBasics
-#ToDo CSVIP Array
-if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $UseLbVip.ToBool()) -and [String]::IsNullOrEmpty($CsVipName)) {
+if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and (-Not $UseLbVip.ToBool()) -and $CsVipName.Count -gt 0) {
     Throw "The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-UseLbVip`" parameter."
 }
 
@@ -2536,6 +2609,10 @@ $PublicDnsServer = "1.1.1.1"
 
 if (-Not [String]::IsNullOrEmpty($ManagementURL)) {
     $ManagementURL = $ManagementURL.TrimEnd('/')
+}
+
+if ($CsVipName -like "*,*") {
+    $CsVipName = $CsVipName.Split(",")
 }
 
 $SessionRequestObjects = @()
@@ -2677,11 +2754,6 @@ try {
     }
 }
 
-#ToDo CSVIP Array
-if (-Not ($CreateUserPermissions) -and ($CsVipName -is [Array])) {
-    [String]$CsVipName = $CsVipName[0]
-}
-
 Write-DisplayText -Line "Defining parameters"
 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
 $PreLogLines += "I;PARAMETERS;Defining parameters"
@@ -2719,6 +2791,9 @@ if ($AutoRun) {
     }
     $Global:LogLevel = $Parameters.settings.LogLevel
     Write-DisplayText -ForeGroundColor Green " Done"
+    if ([String]::IsNullOrEmpty($($Parameters.settings.CsaName))) {
+        Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsaName -Value "csa_letsencrypt"
+    }
 } else {
     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
     $PreLogLines += "I;PARAMETERS;AutoRun NOT active, parsing/updating the parameters."
@@ -2750,6 +2825,7 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RspName -Value $RspName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name RsaName -Value $RsaName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CspName -Value $CspName
+    Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsaName -Value $CsaName
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name TrafficDomain -Value $TrafficDomain
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsVipBinding -Value $CsVipBinding
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ScriptVersion -Value $ScriptVersion
@@ -2760,8 +2836,7 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
-        #ToDo CSVIP Array
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value $CsVipName
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value [String[]]$CsVipName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseLbVip -Value $([bool]::Parse($UseLbVip))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
@@ -3035,7 +3110,7 @@ if ($ADCActionsRequired) {
             Write-Warning "You are connected to the $($hanode.state) node, http certificate request will fail!"
             Write-ToLogFile -W -C ADC-Check -M "You are connected to the $($hanode.state) node, http certificate request will fail!"
             Write-DisplayText -Blank
-            Start-Sleep -Seconds 5
+            TerminateScript 1 "You are connected to the $($hanode.state) node, http certificate request will fail!"
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the HA NOde info, $($_.Exception.message)"
@@ -3059,7 +3134,7 @@ if ($ADCActionsRequired) {
 
     if ($CreateUserPermissions -and $UseLbVip) {
         #Do Nothing, skip for CsVipName when using the -UseLbVip parameter
-    } elseif ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -eq 0)) ) {
+    } elseif ($CreateUserPermissions -and ([String]::IsNullOrEmpty($($CsVipName)) -or ($CsVipName.Count -lt 1)) ) {
         Write-DisplayText -Line "Content Switch"
         Write-DisplayText -ForeGroundColor Red "NOT Found! This is required for Command Policy creation!"
         TerminateScript 1 "No Content Switch VIP name defined, this is required for Command Policy creation!"
@@ -3071,9 +3146,6 @@ if ($ADCActionsRequired) {
 
 if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Blank
-    if ($CsVipName -like "*,*") {
-        $CsVipName = $CsVipName.Split(",")
-    }
     $CSVipString = ""
     Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
     Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
@@ -3086,9 +3158,13 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Line "CS VIP Name"
     if (-Not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
         ForEach ($VipName in $CsVipName) {
-            $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)"
+            $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)|(^\S+\s+cs\s+action\s+$($Parameters.settings.CsaName).*)"
         }
         Write-DisplayText -ForeGroundColor Cyan $($CsVipName -Join ", ")
+        Write-DisplayText -Line "CS Policy Name"
+        Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.CspName)
+        Write-DisplayText -Line "CS Action Name"
+        Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.CsaName)
     } else {
         Write-DisplayText -ForeGroundColor Cyan "none"
     }
@@ -3102,11 +3178,9 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RsaName)
     Write-DisplayText -Line "Responder Policy Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RspName)
-    Write-DisplayText -Line "CS Policy Name"
-    Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.CspName)
     Write-DisplayText -Line "Action"
 
-    $CmdSpec = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)"
+    $CmdSpec = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
     #$otherPartitions = @( $Parameters.settings.Partitions | Where-Object { $_ -ne "default"} )
     #if ($otherPartitions.Count -gt 0 ) {
@@ -3381,6 +3455,11 @@ if ($CertificateActions) {
     Write-ToLogFile -I -C CertLoop -M "$TotalRounds required for all requests."
     ForEach ($CertRequest in $Parameters.certrequests) {
         $round++
+        if ($CertRequest.CsVipName -like "*,*") {
+            $CertRequest.CsVipName = [String[]]$CertRequest.CsVipName.Split(",") 
+        } elseif (-Not ($CertRequest.CsVipName -is [Array])) {
+            $CertRequest.CsVipName = [String[]]$CertRequest.CsVipName
+        }
         $PfxPasswordGenerated = $false
         if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
@@ -3500,7 +3579,6 @@ if ($CertificateActions) {
             #region DNSPreCheck
             [regex]$fqdnExpression = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-).)+[A-Za-z]{2,63}$"
             if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
-                $SaveConfig = $false
                 Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
                 Write-ToLogFile -I -C DNSPreCheck -M "-CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
                 Write-DisplayText -Line "CN"
@@ -3512,8 +3590,8 @@ if ($CertificateActions) {
                 $CertRequest.ValidationMethod = "dns"
                 $CertRequest.DisableIPCheck = $true
                 Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
-            } elseif ($CertRequest.ValidationMethod -eq "dns") {
-                $SaveConfig = $false
+            }
+            if ($CertRequest.ValidationMethod -eq "dns") {
                 $CertRequest.DisableIPCheck = $true
                 Write-ToLogFile -I -C DNSPreCheck -M "Continuing with the `"$($CertRequest.ValidationMethod)`" validation method!"
                 Write-DisplayText -Line "CN"
@@ -3524,9 +3602,8 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
             } else {
                 $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-                #ToDo CSVIP Array
-                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName))) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.UseLbVip)) {
-                    Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" cannot be empty!" -PostBlank -PreBlank
+                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName)) -or ($CertRequest.CsVipName -lt 1)) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.UseLbVip)) {
+                    Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" parameter cannot be empty!" -PostBlank -PreBlank
                     Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
                     Invoke-RegisterError 1 "The `"-CsVipName`" cannot be empty!"
                     Continue
@@ -3651,101 +3728,100 @@ if ($CertificateActions) {
                         Write-Warning "Script will continue but uploading of certificates will probably Fail"
                         Write-ToLogFile -W -C ADC-CS-Validation -M "Could not verify the Citrix ADC Connection! Script will continue but uploading of certificates will probably Fail."
                     }
-                } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.CsVipName))) { #ToDo CSVIP Array
+                } elseif ($CertRequest.CsVipName.Count -gt 0) {
                     $CsVipError = $false
-                    try {
-                        Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch."
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $($CertRequest.CsVipName)
-                    } catch {
-                        $ExceptMessage = $_.Exception.Message
-                        Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                    } finally {
-                        if (($response.errorcode -eq "0") -and `
-                            ($response.csvserver.type -eq "CONTENT") -and `
-                            ($response.csvserver.curstate -eq "UP") -and `
-                            ($response.csvserver.servicetype -eq "HTTP") -and `
-                            ($response.csvserver.port -eq "80") ) {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$($CertRequest.CsVipName)"
-                            Write-DisplayText -ForeGroundColor Green " (found)"
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Green "OK"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
-                        } elseif ($ExceptMessage -like "*(404) Not Found*") {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Red "ERROR: The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist!"
-                            Write-DisplayText -Line "Error message"
-                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
-                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available" -PostBlank
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                            Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                            $CsVipError = $true
-                            Invoke-RegisterError 1 "The Content Switch `"$($CertRequest.CsVipName)`" does NOT exist! Please make sure a HTTP Content Switch is available."
-                        } elseif ($ExceptMessage -like "*The remote server returned an error*") {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Red "ERROR: Unknown error found while checking the Content Switch"
-                            Write-DisplayText -Line "Error message"
-                            Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                            Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
-                            $CsVipError = $true
-                            Invoke-RegisterError 1 "Unknown error found while checking the Content Switch"
-                        } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP"
-                            if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                    $loopCounter = 0
+                    ForEach ($csVip in $CertRequest.CsVipName) {
+                        $loopCounter++
+                        try {
+                            Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch $loopCounter of $($CertRequest.CsVipName.Count)."
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
+                        } catch {
+                            $ExceptMessage = $_.Exception.Message
+                            Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        } finally {
+                            Write-DisplayText -Line "Content Switch $loopCounter/$($CertRequest.CsVipName.Count)"
+                            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$csVip"
+                            if (($response.errorcode -eq "0") -and `
+                                ($response.csvserver.type -eq "CONTENT") -and `
+                                ($response.csvserver.curstate -eq "UP") -and `
+                                ($response.csvserver.servicetype -eq "HTTP") -and `
+                                ($response.csvserver.port -eq "80") ) {
+                                Write-DisplayText -ForeGroundColor Green " (found)"
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Green "OK"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch OK"
+                            } elseif ($ExceptMessage -like "*(404) Not Found*") {
+                                Write-DisplayText -ForeGroundColor Red " ERROR => The Content Switch does NOT exist!"
                                 Write-DisplayText -Line "Error message"
-                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
-                            }
-                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation." -PreBlank -PostBlank
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                            $CsVipError = $true
-                            Invoke-RegisterError 1 "Content Switch `"$($CertRequest.CsVipName)`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
-                        } elseif ($response.csvserver.td -ne $Parameters.settings.TrafficDomain) {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Red "ERROR: Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
-                            Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter." -PreBlank -PostBlank
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)! Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter."
-                            $CsVipError = $true
-                            Invoke-RegisterError 1 "Content Switch `"$($CertRequest.CsVipName)`" has a diffrent TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
-                        } else {
-                            Write-DisplayText -Line "Content Switch"
-                            Write-DisplayText -ForeGroundColor Green "Found"
-                            Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
-                            Write-DisplayText -Line "State"
-                            if ($response.csvserver.curstate -eq "UP") {
-                                Write-DisplayText -ForeGroundColor Green "UP"
-                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
-                            } else {
-                                Write-DisplayText -ForeGroundColor RED "$($response.csvserver.curstate)"
-                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
-                            }
-                            Write-DisplayText -Line "Type"
-                            if ($response.csvserver.type -eq "CONTENT") {
-                                Write-DisplayText -ForeGroundColor Green "CONTENT"
-                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
-                            } else {
-                                Write-DisplayText -ForeGroundColor RED "$($response.csvserver.type)"
-                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
-                            }
-                            if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
+                                Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please make sure a HTTP Content Switch is available" -PostBlank
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "The Content Switch `"$csVip`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                                $CsVipError = $true
+                                Invoke-RegisterError 1 "The Content Switch `"$csVip`" does NOT exist! Please make sure a HTTP Content Switch is available."
+                            } elseif ($ExceptMessage -like "*The remote server returned an error*") {
+                                Write-DisplayText -ForeGroundColor Red " ERROR => Unknown error found while checking the Content Switch"
                                 Write-DisplayText -Line "Error message"
-                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
+                                Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`"" -PostBlank
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "Unknown error found while checking the Content Switch"
+                                $CsVipError = $true
+                                Invoke-RegisterError 1 "Unknown error found while checking the Content Switch"
+                            } elseif (($response.errorcode -eq "0") -and (-not ($response.csvserver.servicetype -eq "HTTP"))) {
+                                Write-DisplayText -ForeGroundColor Red " ERROR => Content Switch `"$csVip`" is $($response.csvserver.servicetype) and NOT HTTP"
+                                if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                                    Write-DisplayText -Line "Error message"
+                                    Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
+                                }
+                                Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Please use a HTTP (Port 80) Content Switch!`r`n  This is required for the validation." -PreBlank -PostBlank
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$csVip`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                                $CsVipError = $true
+                                Invoke-RegisterError 1 "Content Switch `"$csVip`" is $($response.csvserver.servicetype) and NOT HTTP. Please use a HTTP (Port 80) Content Switch! This is required for the validation."
+                            } elseif ($response.csvserver.td -ne $Parameters.settings.TrafficDomain) {
+                                Write-DisplayText -ForeGroundColor Red " ERROR => Content Switch has a different TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
+                                Write-DisplayText -ForeGroundColor Yellow "  IMPORTANT: Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter." -PreBlank -PostBlank
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch `"$csVip`" has a different TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)! Run the script with the `"-TrafficDomain $($response.csvserver.td)`" additional parameter."
+                                $CsVipError = $true
+                                Invoke-RegisterError 1 "Content Switch `"$csVip`" has a different TrafficDomain $($response.csvserver.td) than specified $($Parameters.settings.TrafficDomain)!"
+                            } else {
+                                Write-DisplayText -ForeGroundColor Green " (found)"
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Found"
+                                Write-DisplayText -Line "State"
+                                if ($response.csvserver.curstate -eq "UP") {
+                                    Write-DisplayText -ForeGroundColor Green "UP"
+                                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch is UP"
+                                } else {
+                                    Write-DisplayText -ForeGroundColor RED "$($response.csvserver.curstate)"
+                                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch Not OK, Current Status: $($response.csvserver.curstate)."
+                                }
+                                Write-DisplayText -Line "Type"
+                                if ($response.csvserver.type -eq "CONTENT") {
+                                    Write-DisplayText -ForeGroundColor Green "CONTENT"
+                                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type OK, Type: $($response.csvserver.type)"
+                                } else {
+                                    Write-DisplayText -ForeGroundColor RED "$($response.csvserver.type)"
+                                    Write-ToLogFile -I -C ADC-CS-Validation -M "Content Switch type Not OK, Type: $($response.csvserver.type)"
+                                }
+                                if (-not ([String]::IsNullOrWhiteSpace($ExceptMessage))) {
+                                    Write-DisplayText -Line "Error message"
+                                    Write-DisplayText -ForeGroundColor Red "`"$ExceptMessage`""
+                                }
+                                Write-DisplayText -Line "Data"
+                                Write-DisplayText -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
+                                Write-DisplayText -Line "Connection"
+                                Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
+                                $CsVipError = $true
+                                Invoke-RegisterError 1 "Content Switch verification failed."
                             }
-                            Write-DisplayText -Line "Data"
-                            Write-DisplayText -ForeGroundColor Yellow $($response.csvserver | Format-List -Property * | Out-String)
-                            Write-DisplayText -Line "Connection"
-                            Write-DisplayText -ForeGroundColor Red "FAILED! Exiting now" -PostBlank
-                            Write-ToLogFile -E -C ADC-CS-Validation -M "Content Switch verification failed."
-                            $CsVipError = $true
-                            Invoke-RegisterError 1 "Content Switch verification failed."
                         }
                     }
                 } else {
@@ -4259,6 +4335,7 @@ if ($CertificateActions) {
                 }
 
                 if ($SessionRequestObject.ExitCode -eq 0) {
+                    $orderCompletionError = $false
                     Write-DisplayText -Title "Waiting for Order completion"
                     Write-DisplayText -Line "Completion"
                     Write-ToLogFile -I -C OrderValidation -M "Retrieving validation status."
@@ -4318,7 +4395,7 @@ if ($CertificateActions) {
                         }
                         Write-DisplayText -ForegroundColor Red "`r`nERROR: There are some invalid items"
                         Invoke-RegisterError 1 "There are some invalid items"
-                        Continue
+                        $orderCompletionError = $true
                     } else {
                         Write-DisplayText -ForeGroundColor Green " Completed"
                         Write-ToLogFile -I -C OrderValidation -M "Validation status finished."
@@ -4333,8 +4410,11 @@ if ($CertificateActions) {
                 if ($CertRequest.ValidationMethod -in "http", "dns") {
                     Invoke-ADCCleanup -Full
                 }
-
                 #endregion CleanupADC
+
+                if ($orderCompletionError) {
+                    Continue
+                }
             }
     
             #region DNSChallenge
@@ -5453,8 +5533,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCq02oMG/wrUHHf
-# ie/5+9uIdnhR88g3+s0ROeQ9wuMuFKCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCV2uV1FGulncgF
+# ddI9dQ0iv7zYoZJAdX59kzl/xixx8qCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5548,11 +5628,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgKy/hHohnoXvVZj9BejKZ4A4qmSp7vsCxIT/MVUPDn3kwDQYJKoZIhvcNAQEB
-# BQAEggEAJM8xuYl+0WUpz951acW6R7uRObJMLJu8BfMzMD8hwoV7APABmojGDiTZ
-# oLQCpp/+Te0k5GA5ypc3fIqtcK3oE1693VEhW5C6wQh/ir4BGBffQd8ySNbAVHkj
-# xX0THf435Yf48eJo4p+6T9HeXL3avQIG13XTyTQN12vToxFjb9ze16xnCAqhe9Bs
-# KeCp9wLcNUZ6IGHwO+TjVzMjalaym5aFQV6N8axed3DGliVZ8+mnAy6lCMKaPx/j
-# YQSBeaYUFzYnnw6wFlaU5hFmByJVDzmmqrmxsw6eg9AOs4Xm9BmBhvXDT8zq0b8L
-# oHbo6miinefv+5ud//p0rK8S0Jm7zQ==
+# IgQgeNjyXfpp4gimN5m7EejI/I5glLfmrmcHd1N5gNyRLOAwDQYJKoZIhvcNAQEB
+# BQAEggEAjPA75Dqoxg9gcTjFLI5Ty33xQCo/ihFnbbkvsapIQpTgquobLgCuJuPd
+# RZ6opJLPoyR9vOkIN7s+TOo5sVprZE5Ra+tcLnxiNmLO+GUG7VegL4VDWTUjuWAN
+# 7LgO9so9iM6P15mGUaA0IJTnWF6hNP5KhT7R7BVVMGP6STWeA2uHmYMGoZVEmawq
+# bM1IS9z/0YcwLdSiTJ+UJxzInT7W1Vo+qT//psCHco7mQu8jz9KB4s5Ajq8BCzIV
+# q4oJFhvU9pAv5t0sIFWFFTAbm7smtATYUDejRim9h8ye22P4Y2z1lNjDUTfNEbz9
+# r5P7vvmQyivr+OB+Ftx/aN1kWvbPJg==
 # SIG # End signature block
