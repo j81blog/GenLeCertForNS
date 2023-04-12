@@ -219,7 +219,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.16.0
+    Version   : v2.20.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -2715,7 +2715,16 @@ try {
                 try { if (-Not ($Parameters.settings.GetType().Name -eq "PSCustomObject")) { $Parameters.settings = $(New-Object -TypeName PSCustomObject) } } Catch { $Parameters.settings = $(New-Object -TypeName PSCustomObject) }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if (-Not ($Parameters.certrequests -is [Array])) { $Parameters.certrequests = @() }
-                try { $Parameters.ScriptVersion = $ScriptVersion } catch {}
+                try {
+                    if ($Parameters.settings.ScriptVersion -ne $ScriptVersion) { 
+                        if ( $Parameters.settings | Get-Member -Name ScriptVersion ) {
+                            $Parameters.settings.ScriptVersion = $ScriptVersion
+                        } else {
+                            $Parameters.settings | Add-Member -MemberType NoteProperty -Name ScriptVersion -Value $ScriptVersion
+                        }
+                        $SaveConfig = $true
+                    }
+                } catch { }
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
             }
@@ -2754,11 +2763,11 @@ try {
     }
 }
 
-Write-DisplayText -Line "Defining parameters"
+Write-DisplayText -Line "Initializing parameters"
 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-$PreLogLines += "I;PARAMETERS;Defining parameters"
+$PreLogLines += "I;PARAMETERS;Initializing parameters"
 if ($AutoRun) {
-    $PreLogLines += "I;PARAMETERS;AutoRun active, defining the SMTPCredential."
+    $PreLogLines += "D;PARAMETERS;AutoRun active, Initialize the ADCCredential."
     try {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         $ADCCredentialUsername = $Parameters.settings.ADCCredentialUsername
@@ -2775,16 +2784,19 @@ if ($AutoRun) {
     }
     try {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-        $PreLogLines += "I;PARAMETERS;Defining the SMTPCredential."
+        $PreLogLines += "D;PARAMETERS;Initialize the SMTPCredential."
         $SMTPCredentialUsername = $Parameters.settings.SMTPCredentialUsername
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
-        $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
-        $PreLogLines += "D;PARAMETERS;SMTPCredential ready. Username:$($SMTPCredential.UserName)"
+        if ([String]::IsNullOrEmpty($SMTPCredentialUsername)) {
+            $PreLogLines += "D;PARAMETERS;SMTPCredential not Initialized, skipped"
+        } else {
+            $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
+            $PreLogLines += "D;PARAMETERS;SMTPCredential ready. Username:$($SMTPCredential.UserName)"
+        }
         if (-Not $Parameters.settings.SMTPCredentialPassword.IsEncrypted) {
             Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $SMTPCredentialPassword)
             $SaveConfig = $true
         }
-
     } catch {
         $PreLogLines += "E;PARAMETERS;Could not read the SMTPCredential, setting EmptyCredential. ERROR:$($_.Exception.Message)"
         $SMTPCredential = [PSCredential]::Empty
@@ -2794,6 +2806,7 @@ if ($AutoRun) {
     if ([String]::IsNullOrEmpty($($Parameters.settings.CsaName))) {
         Invoke-AddUpdateParameter -Object $Parameters.settings -Name CsaName -Value "csa_letsencrypt"
     }
+    $PreLogLines += "I;PARAMETERS;Initialization done"
 } else {
     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
     $PreLogLines += "I;PARAMETERS;AutoRun NOT active, parsing/updating the parameters."
@@ -2868,6 +2881,7 @@ if ($Parameters.settings.DisableLogging) {
     $Script:LoggingEnabled = $false
     $Global:LogLevel = "None"
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name LogLevel -Value $Global:LogLevel
+    $PreLogLines += "D;PARAMETERS;LogLevel set to `"$($Parameters.settings.LogLevel)`"."
 } else {
     $Script:LoggingEnabled = $true
     if ($Parameters.settings.LogFile -like "*<DEFAULT>*") {
@@ -5533,8 +5547,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCV2uV1FGulncgF
-# ddI9dQ0iv7zYoZJAdX59kzl/xixx8qCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCpZ+e4aMPCD8gV
+# gOyWqC1T7pzXLKeKR2FCHfXc6Sn566CCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5628,11 +5642,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgeNjyXfpp4gimN5m7EejI/I5glLfmrmcHd1N5gNyRLOAwDQYJKoZIhvcNAQEB
-# BQAEggEAjPA75Dqoxg9gcTjFLI5Ty33xQCo/ihFnbbkvsapIQpTgquobLgCuJuPd
-# RZ6opJLPoyR9vOkIN7s+TOo5sVprZE5Ra+tcLnxiNmLO+GUG7VegL4VDWTUjuWAN
-# 7LgO9so9iM6P15mGUaA0IJTnWF6hNP5KhT7R7BVVMGP6STWeA2uHmYMGoZVEmawq
-# bM1IS9z/0YcwLdSiTJ+UJxzInT7W1Vo+qT//psCHco7mQu8jz9KB4s5Ajq8BCzIV
-# q4oJFhvU9pAv5t0sIFWFFTAbm7smtATYUDejRim9h8ye22P4Y2z1lNjDUTfNEbz9
-# r5P7vvmQyivr+OB+Ftx/aN1kWvbPJg==
+# IgQgwwSXBSmg3pGv7jRVx2igR/JQ1BVctNMoeXVm77Thx5IwDQYJKoZIhvcNAQEB
+# BQAEggEAV3AXeFYzntetMHZi28Su8BHByMjGYcB2tEVAyJn4fgbGZSrf3Y6hZSJT
+# rEhfgsuDTa0GQuFalYFFmskqvoeABKDbDU+u3KRZsbz4Qwmy88A5i9VFOoJh7njE
+# Ofay+nYqeDeAQnbIpVaf110KJ225w/u+Yudex1t0gQZ15mkL2Vt0zzLIgu4hgGw0
+# JcUaZIaA781bdPOM3fquVIwJ3tpO/XKv1BTa/c8R1dzDmzIwHMdAQSoeTwUGLBRs
+# 6ckaClBo0VdVvAPuzAEWYMeKVWEQ5xvjnACBwuECCKJpjSrR/avtnEMyFPHmTVYT
+# pp33/nmnRRTqG5Cq/q8Bq1J/8Z7bwA==
 # SIG # End signature block
