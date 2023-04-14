@@ -4950,9 +4950,9 @@ if ($CertificateActions) {
                                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
                                 Write-ToLogFile -I -C ADC-CertUpload -M "Certificate updated successfully."
                             } catch {
-                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not update certificate at first atempt, $($_.Exception.Message)"
+                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not update certificate at first attempt, $($_.Exception.Message)"
                                 try {
-                                    Write-ToLogFile -I -C ADC-CertUpload -M "Certificate update second atempt (nodomaincheck=true)"
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "Certificate update second attempt (nodomaincheck=true)"
                                     $payload.nodomaincheck = $true
                                     $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action update
                                     Write-ToLogFile -I -C ADC-CertUpload -M "Certificate updated successfully!"
@@ -5547,8 +5547,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCpZ+e4aMPCD8gV
-# gOyWqC1T7pzXLKeKR2FCHfXc6Sn566CCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDaJA6lAhUFI9+S
+# MJfXrdAa1Q1mk5HYQPMTb1ENzIQbkaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5642,11 +5642,11 @@ TerminateScript 0
 # IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgwwSXBSmg3pGv7jRVx2igR/JQ1BVctNMoeXVm77Thx5IwDQYJKoZIhvcNAQEB
-# BQAEggEAV3AXeFYzntetMHZi28Su8BHByMjGYcB2tEVAyJn4fgbGZSrf3Y6hZSJT
-# rEhfgsuDTa0GQuFalYFFmskqvoeABKDbDU+u3KRZsbz4Qwmy88A5i9VFOoJh7njE
-# Ofay+nYqeDeAQnbIpVaf110KJ225w/u+Yudex1t0gQZ15mkL2Vt0zzLIgu4hgGw0
-# JcUaZIaA781bdPOM3fquVIwJ3tpO/XKv1BTa/c8R1dzDmzIwHMdAQSoeTwUGLBRs
-# 6ckaClBo0VdVvAPuzAEWYMeKVWEQ5xvjnACBwuECCKJpjSrR/avtnEMyFPHmTVYT
-# pp33/nmnRRTqG5Cq/q8Bq1J/8Z7bwA==
+# IgQgU2cxJ+l2dHSME41VPnweKaogYI+JgbujSVQ2T5/YxpEwDQYJKoZIhvcNAQEB
+# BQAEggEAKVPLQFusLwJ+wX13K3XuD/dYKcseOYVt8ujWxITTaC45U07/pTPvlEyf
+# PVe+Yv3y8VXFSVQNh1I2eNHdRLHZDQ1MwRZLhJgWIa3CdYQjz35CoTy4IJltebHA
+# 6XCc45zVX5ElQHNuep0Y7J16MByKD0OMwA9F1q8I4MN2NBrn2+EZCeW/+RIA0Zyi
+# Udm2Rk7Rcnn1mEwv14meAql8CD2fet2aBGQ9dCLQuQsOYrPwpHBJis+mMhg9BNCy
+# oBviCbHw8yH9KoigzYdGq1mXBN5X/fPe08o8cnyYELzdGzjQBhDQ+KBn0jfT0Jql
+# NQwjnI+nl8sDKJbHmJnA2j4r3ySZLw==
 # SIG # End signature block
