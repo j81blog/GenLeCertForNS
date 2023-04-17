@@ -219,7 +219,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.20.0
+    Version   : v2.21.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -604,7 +604,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.20.0"
+$ScriptVersion = "2.21.0"
 $PoshACMEVersion = "4.17.1"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -3163,12 +3163,12 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     $CSVipString = ""
     Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
     Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
-    Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$NSCPName`"!"
+    Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$($NSCPName)-(Basics|Custom)`"!"
     Write-Warning "You can rerun this script with the changed parameters at any time to update an existing Command Policy"
-    Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$($NSCPName)`""
+    Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$($NSCPName)-(Basics|Custom)`""
     Write-DisplayText -Title "Api User Permissions Group (Command Policy)"
     Write-DisplayText -Line "Command Policy Name"
-    Write-DisplayText -ForeGroundColor Cyan "$NSCPName "
+    Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|Custom) "
     Write-DisplayText -Line "CS VIP Name"
     if (-Not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
         ForEach ($VipName in $CsVipName) {
@@ -3192,43 +3192,47 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RsaName)
     Write-DisplayText -Line "Responder Policy Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RspName)
-    Write-DisplayText -Line "Action"
-
-    $CmdSpec = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
+    $CmdSpec = @{
+        Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)"
+        Custom = "(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
+    }
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
     #$otherPartitions = @( $Parameters.settings.Partitions | Where-Object { $_ -ne "default"} )
     #if ($otherPartitions.Count -gt 0 ) {
     #    
     #}
-    
-    try {
-        $Filters = @{ policyname = "$NSCPName" }
-        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
-        if ($response.systemcmdpolicy.count -eq 1) {
-            Write-ToLogFile -I -C ApiUserPermissions -M "Existing found, updating Command Policy"
-            Write-DisplayText -NoNewLine -ForeGroundColor Yellow "Existing found, "
-            $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
-            Write-ToLogFile -D -C ApiUserPermissions -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemcmdpolicy -Payload $payload
-            Write-DisplayText -ForeGroundColor Green "Changed"
-            
-        } elseif ($response.systemcmdpolicy.count -gt 1) {
-            Write-DisplayText -ForeGroundColor Red "ERROR: Multiple Command Policies found!"
-            Write-ToLogFile -I -C ApiUserPermissions -M "Multiple Command Policies found."
-            $response.systemcmdpolicy | ForEach-Object {
-                Write-ToLogFile -D -C ApiUserPermissions -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+    ForEach ($item in $($CmdSpec.GetEnumerator())) {
+        Write-DisplayText -Line "Command Spec $($item.Name)"
+        try {
+            $policyName = "$($NSCPName)-$($item.Name)"
+            $Filters = @{ policyname = $policyName }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
+            if ($response.systemcmdpolicy.count -eq 1) {
+                Write-ToLogFile -I -C ApiUserPermissions -M "Existing found, updating Command Policy ($($item.Name))"
+                Write-DisplayText -NoNewLine -ForeGroundColor Yellow "Existing policy found ($policyName), "
+                $payload = @{ policyname = $policyName; action = "Allow"; cmdspec = $item.Value }
+                Write-ToLogFile -D -C ApiUserPermissions -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemcmdpolicy -Payload $payload
+                Write-DisplayText -ForeGroundColor Green "Changed"
+                
+            } elseif ($response.systemcmdpolicy.count -gt 1) {
+                Write-DisplayText -ForeGroundColor Red "ERROR: Multiple Command Policies found!"
+                Write-ToLogFile -I -C ApiUserPermissions -M "Multiple Command Policies found."
+                $response.systemcmdpolicy | ForEach-Object {
+                    Write-ToLogFile -D -C ApiUserPermissions -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                }
+            } else {
+                Write-ToLogFile -I -C ApiUserPermissions -M "None found, creating new Command Policy ($policyName)"
+                $payload = @{ policyname = $policyName; action = "Allow"; cmdspec = $item.Value }
+                Write-ToLogFile -D -C ApiUserPermissions -M "Posting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemcmdpolicy -Payload $payload
+                Write-DisplayText -ForeGroundColor Green "Created"
             }
-        } else {
-            Write-ToLogFile -I -C ApiUserPermissions -M "None found, creating new Command Policy"
-            $payload = @{ policyname = $NSCPName; action = "Allow"; cmdspec = $CmdSpec }
-            Write-ToLogFile -D -C ApiUserPermissions -M "Posting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemcmdpolicy -Payload $payload
-            Write-DisplayText -ForeGroundColor Green "Created"
+         } catch {
+            Write-DisplayText -ForeGroundColor Red "Error"
+            Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
-    } catch {
-        Write-DisplayText -ForeGroundColor Red "Error"
-        Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 }
 
@@ -3316,14 +3320,14 @@ if ($CreateApiUser) {
         }
         Write-ToLogFile -I -C ApiUser -M "Bind Command Policy"
         Write-DisplayText -Line "User Policy Binding"
-        Write-DisplayText -ForeGroundColor Cyan "$NSCPName "
+        Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|Custom) "
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
-        if ($response.systemuser_systemcmdpolicy_binding.policyname.Count -gt 1) {
-            Write-ToLogFile -I -C ApiUser -M "Multiple found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
-            Write-DisplayText -ForeGroundColor Yellow "Multiple found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
-            $BindingsToRemove = $response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -ne $NSCPName }
-            foreach ($Binding in $BindingsToRemove) {
-                Write-ToLogFile -D -C ApiUser -M "Removing `"$Binding`""
+        $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -ne "$($NSCPName)-Basics" -and $_ -ne "$($NSCPName)-Custom" })
+        if ($bindingsToRemove.Count -gt 0) {
+            Write-ToLogFile -I -C ApiUser -M "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
+            Write-Warning -Message "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
+            foreach ($binding in $bindingsToRemove) {
+                Write-ToLogFile -D -C ApiUser -M "Remove the binding for `"$Binding`""
                 Write-DisplayText -Line "Binding"
                 Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$Binding] "
                 try {
@@ -3339,16 +3343,22 @@ if ($CreateApiUser) {
             }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
         }
-        Write-DisplayText -Line "User Policy Binding"
-        if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $NSCPName }) {
-            Write-DisplayText -ForeGroundColor Cyan "Present"
-            Write-ToLogFile -I -C ApiUser -M "A binding is already present"
-        } else {
-            Write-ToLogFile -I -C ApiUser -M "Creating a new binding"
-            $payload = @{ username = $ApiUsername; policyname = $NSCPName; priority = 10 }
-            Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
-            Write-DisplayText -ForeGroundColor Green "Bound"
+        ForEach ($item in $($CmdSpec.GetEnumerator())) {
+            $policyName = "$($NSCPName)-$($item.Name)"
+            Write-DisplayText -Line "User Policy Binding"
+            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$policyName] "
+            if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $policyName }) {
+                Write-DisplayText -ForeGroundColor Green "Present"
+                Write-ToLogFile -I -C ApiUser -M "A bindings for `"$policyName`" already present"
+            } else {
+                Write-ToLogFile -I -C ApiUser -M "Creating a new binding for `"$policyName`""
+                if ($policyName -like "*basic*") { $prio = 10 }
+                if ($policyName -like "*custom*") { $prio = 20 }
+                $payload = @{ username = $ApiUsername; policyname = $policyName; priority = $prio }
+                Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
+                Write-DisplayText -ForeGroundColor Green "Bound"
+            }
         }
     } catch {
         Write-DisplayText -ForeGroundColor Red "Error"
@@ -3356,7 +3366,6 @@ if ($CreateApiUser) {
         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
     }
 }
-
 
 if (($CreateUserPermissions) -Or ($CreateApiUser)) {
     Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
@@ -5545,10 +5554,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIknAYJKoZIhvcNAQcCoIIkjTCCJIkCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDaJA6lAhUFI9+S
-# MJfXrdAa1Q1mk5HYQPMTb1ENzIQbkaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBT+ig+67EDyyYe
+# 5wePw8TAbPVQnvb9M9g6Gs7GMNJsFqCCHl8wggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5636,17 +5645,109 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
-# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
-# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
-# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
-# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
-# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgU2cxJ+l2dHSME41VPnweKaogYI+JgbujSVQ2T5/YxpEwDQYJKoZIhvcNAQEB
-# BQAEggEAKVPLQFusLwJ+wX13K3XuD/dYKcseOYVt8ujWxITTaC45U07/pTPvlEyf
-# PVe+Yv3y8VXFSVQNh1I2eNHdRLHZDQ1MwRZLhJgWIa3CdYQjz35CoTy4IJltebHA
-# 6XCc45zVX5ElQHNuep0Y7J16MByKD0OMwA9F1q8I4MN2NBrn2+EZCeW/+RIA0Zyi
-# Udm2Rk7Rcnn1mEwv14meAql8CD2fet2aBGQ9dCLQuQsOYrPwpHBJis+mMhg9BNCy
-# oBviCbHw8yH9KoigzYdGq1mXBN5X/fPe08o8cnyYELzdGzjQBhDQ+KBn0jfT0Jql
-# NQwjnI+nl8sDKJbHmJnA2j4r3ySZLw==
+# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
+# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
+# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
+# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
+# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
+# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
+# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
+# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
+# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
+# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
+# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
+# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
+# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
+# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
+# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
+# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
+# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
+# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
+# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
+# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
+# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
+# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
+# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
+# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
+# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
+# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
+# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
+# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
+# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
+# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
+# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
+# 4/kKyVRd1LlqdJ69SK6YMIIG9jCCBN6gAwIBAgIRAJA5f5rSSjoT8r2RXwg4qUMw
+# DQYJKoZIhvcNAQEMBQAwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIg
+# TWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGlnbyBM
+# aW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENBMB4X
+# DTIyMDUxMTAwMDAwMFoXDTMzMDgxMDIzNTk1OVowajELMAkGA1UEBhMCR0IxEzAR
+# BgNVBAgTCk1hbmNoZXN0ZXIxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDEsMCoG
+# A1UEAwwjU2VjdGlnbyBSU0EgVGltZSBTdGFtcGluZyBTaWduZXIgIzMwggIiMA0G
+# CSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCQsnE/eeHUuYoXzMOXwpCUcu1aOm8B
+# Q39zWiifJHygNUAG+pSvCqGDthPkSxUGXmqKIDRxe7slrT9bCqQfL2x9LmFR0IxZ
+# Nz6mXfEeXYC22B9g480Saogfxv4Yy5NDVnrHzgPWAGQoViKxSxnS8JbJRB85XZyw
+# lu1aSY1+cuRDa3/JoD9sSq3VAE+9CriDxb2YLAd2AXBF3sPwQmnq/ybMA0QfFijh
+# anS2nEX6tjrOlNEfvYxlqv38wzzoDZw4ZtX8fR6bWYyRWkJXVVAWDUt0cu6gKjH8
+# JgI0+WQbWf3jOtTouEEpdAE/DeATdysRPPs9zdDn4ZdbVfcqA23VzWLazpwe/Opw
+# feZ9S2jOWilh06BcJbOlJ2ijWP31LWvKX2THaygM2qx4Qd6S7w/F7KvfLW8aVFFs
+# M7ONWWDn3+gXIqN5QWLP/Hvzktqu4DxPD1rMbt8fvCKvtzgQmjSnC//+HV6k8+4W
+# OCs/rHaUQZ1kHfqA/QDh/vg61MNeu2lNcpnl8TItUfphrU3qJo5t/KlImD7yRg1p
+# sbdu9AXbQQXGGMBQ5Pit/qxjYUeRvEa1RlNsxfThhieThDlsdeAdDHpZiy7L9GQs
+# Qkf0VFiFN+XHaafSJYuWv8at4L2xN/cf30J7qusc6es9Wt340pDVSZo6HYMaV38c
+# AcLOHH3M+5YVxQIDAQABo4IBgjCCAX4wHwYDVR0jBBgwFoAUGqH4YRkgD8NBd0Uo
+# jtE1XwYSBFUwHQYDVR0OBBYEFCUuaDxrmiskFKkfot8mOs8UpvHgMA4GA1UdDwEB
+# /wQEAwIGwDAMBgNVHRMBAf8EAjAAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMEoG
+# A1UdIARDMEEwNQYMKwYBBAGyMQECAQMIMCUwIwYIKwYBBQUHAgEWF2h0dHBzOi8v
+# c2VjdGlnby5jb20vQ1BTMAgGBmeBDAEEAjBEBgNVHR8EPTA7MDmgN6A1hjNodHRw
+# Oi8vY3JsLnNlY3RpZ28uY29tL1NlY3RpZ29SU0FUaW1lU3RhbXBpbmdDQS5jcmww
+# dAYIKwYBBQUHAQEEaDBmMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnNlY3RpZ28u
+# Y29tL1NlY3RpZ29SU0FUaW1lU3RhbXBpbmdDQS5jcnQwIwYIKwYBBQUHMAGGF2h0
+# dHA6Ly9vY3NwLnNlY3RpZ28uY29tMA0GCSqGSIb3DQEBDAUAA4ICAQBz2u1ocsvC
+# uUChMbu0A6MtFHsk57RbFX2o6f2t0ZINfD02oGnZ85ow2qxp1nRXJD9+DzzZ9cN5
+# JWwm6I1ok87xd4k5f6gEBdo0wxTqnwhUq//EfpZsK9OU67Rs4EVNLLL3OztatcH7
+# 14l1bZhycvb3Byjz07LQ6xm+FSx4781FoADk+AR2u1fFkL53VJB0ngtPTcSqE4+X
+# rwE1K8ubEXjp8vmJBDxO44ISYuu0RAx1QcIPNLiIncgi8RNq2xgvbnitxAW06IQI
+# kwf5fYP+aJg05Hflsc6MlGzbA20oBUd+my7wZPvbpAMxEHwa+zwZgNELcLlVX0e+
+# OWTOt9ojVDLjRrIy2NIphskVXYCVrwL7tNEunTh8NeAPHO0bR0icImpVgtnyughl
+# A+XxKfNIigkBTKZ58qK2GpmU65co4b59G6F87VaApvQiM5DkhFP8KvrAp5eo6rWN
+# es7k4EuhM6sLdqDVaRa3jma/X/ofxKh/p6FIFJENgvy9TZntyeZsNv53Q5m4aS18
+# YS/to7BJ/lu+aSSR/5P8V2mSS9kFP22GctOi0MBk0jpCwRoD+9DtmiG4P6+mslFU
+# 1UzFyh8SjVfGOe1c/+yfJnatZGZn6Kow4NKtt32xakEnbgOKo3TgigmCbr/j9re8
+# ngspGGiBoZw/bhZZSxQJCZrmrr9gFd2G9TGCBZMwggWPAgEBMIGQMHwxCzAJBgNV
+# BAYTAkdCMRswGQYDVQQIExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1Nh
+# bGZvcmQxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGln
+# byBSU0EgQ29kZSBTaWduaW5nIENBAhAsJ03zZBC0i/247uUvWN5TMA0GCWCGSAFl
+# AwQCAQUAoIGEMBgGCisGAQQBgjcCAQwxCjAIoAKAAKECgAAwGQYJKoZIhvcNAQkD
+# MQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJ
+# KoZIhvcNAQkEMSIEIEjLK8ombXd8krvxVfRv9yYEIdMYZmw7hoxUK+s31MhbMA0G
+# CSqGSIb3DQEBAQUABIIBADEDYIuY7jo+mHCgL24KfP/1D3p1r4ZZfjgTCuwcxUjt
+# CdIHwo9KUhXuOWigzoAuEDoqPIWaskE/IUNKhCWwKExcjMluZ/qhXl0jfskwmKxP
+# Vb3Q/YyYbHhqisw136fyAgU9HYCIeDqY+Z2a90B1zkRG1h3Pnxp9nfOvhfqo+eRz
+# aaX65t4zgzN4kV7Dyzxuvz74fYV6AAt3fwbI56+HoQqpLRBwJEtiWE2I32LNo/5Z
+# 9Zjy1YEvedK6oruug5f+XxD85BYs9I/pFxAP8UdFvv0JevvA7OjbZY6P72ltKbkC
+# O1c85oTJI40uUMjAKcYXiWG2UUyRt1PcqPTlqGNXwBmhggNMMIIDSAYJKoZIhvcN
+# AQkGMYIDOTCCAzUCAQEwgZIwfTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0
+# ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYGA1UEChMPU2VjdGln
+# byBMaW1pdGVkMSUwIwYDVQQDExxTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIENB
+# AhEAkDl/mtJKOhPyvZFfCDipQzANBglghkgBZQMEAgIFAKB5MBgGCSqGSIb3DQEJ
+# AzELBgkqhkiG9w0BBwEwHAYJKoZIhvcNAQkFMQ8XDTIzMDQxNzEyMDcyN1owPwYJ
+# KoZIhvcNAQkEMTIEMJSv2ujzTDph2wp/YC5RTL0fHj88E0HfqwFrHhhTs4EEy4G7
+# /ZoHz7UxzNMbbpBBlzANBgkqhkiG9w0BAQEFAASCAgAd9tUp53Ur2IB/SiAmrSXR
+# ZXnvde1Y2gkIwGlciUjJrlEjMZt/f3ZsaKbPWkOVQfQ+jB8HrTBZBYGqSnVAed/w
+# hTi5oyFC0LmK34bt3nEWpsTe+IgTFL0n2aYgFNcWsIs75JS8XmS4aluaZF9++BNg
+# xwXKKFCQyzgTpsAAyOqqh9oKTA+oTPw6z+NMInITCsWnFlTUGbGhwhDRLY30p+ve
+# mGI2yHC3vMKYvuZjTYXQCmxdJjJMpd0OpraLPFGZdWYlkczC3rzGiMwPHN65qsJT
+# APl2HfuwaNScU3TVjy7RjlfxqxGGriQjT/iWmLxa5DyCcGHQmUx4A/8DWs3x/VM9
+# gpUguRe/oTCb1Ax6a3+wRrj6Bhrxe2hpSEsYe7fiwFXZt04PSUIdFn7Ur+e+Ri8x
+# 0W4ee080tuZrRXkYtbP/nrFhK/50q4l9TDCstCEjowBlaTVapZM1AXhSjhu29K7m
+# 8Fxe8RnC23iSHSsJ8HQrticZQ9nJLpnDiTK3CYOSdVd71W6rKFVYqW5n0a7SZEF3
+# dhfrsktFKgxj4p6Gibi/vcT+dq2PDTnxRjyygTeZvcER+fNEhiQ4+iyLPmKIsj+A
+# C0MA+0LIRVnzcSXBs6dqzEHkqkIJs7j2RhxaYRCX3FFv7TNZoLHDxaLjEOQ44LGv
+# SRzrXt2j3QyakTkh0CCuMQ==
 # SIG # End signature block
