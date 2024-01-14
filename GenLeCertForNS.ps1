@@ -48,6 +48,10 @@
 .PARAMETER CspName
     ADC Content Switch Policy name
     Default: "csp_letsencrypt"
+.PARAMETER EnableVipBefore
+    Enable the VIP before requesting a new certificate.
+.PARAMETER DisableVipAfter
+    Disable the VIP after requesting a new certificate.
 .PARAMETER CertKeyNameToUpdate
     ADC SSL Certkey name currently in use, that needs to be renewed
 .PARAMETER RemovePrevious
@@ -223,12 +227,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.22.0
+    Version   : v2.23.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.17.1 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.20.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -552,6 +556,18 @@ param(
     [Parameter(ParameterSetName = "CleanADC", DontShow)]
     [String[]]$Partitions = @("default"),
 
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$EnableVipBefore,
+
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$DisableVipAfter,
+
     [Parameter(ParameterSetName = "CommandPolicy", Mandatory = $true)]
     [Parameter(ParameterSetName = "CommandPolicyUser", Mandatory = $true)]
     [Switch]$CreateUserPermissions,
@@ -611,8 +627,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.21.0"
-$PoshACMEVersion = "4.17.1"
+$ScriptVersion = "2.23.0"
+$PoshACMEVersion = "4.20.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -1044,6 +1060,7 @@ function Invoke-ADCRestApi {
         $uri += "/$Resource"
     }
     if ($Method -ne 'GET') {
+        $Script:ADCCleanRequired = $true
         if (-not ([String]::IsNullOrEmpty($Action))) {
             $uri += "?action=$Action"
         }
@@ -1667,252 +1684,293 @@ function Invoke-ADCCleanup {
     process {
         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Cleaning the Citrix ADC Configuration."
         Write-DisplayText -Title "ADC - Cleanup"
-        Write-DisplayText -Line "Cleanup type"
-        #ToDo - Create two options, for now only Full
-        if ($Full) {
-            Write-DisplayText -ForegroundColor Cyan "Full"
-        } else {
-            Write-DisplayText -ForegroundColor Cyan "Full"
-        }
-        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
-        $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-        if (-Not $CertRequest.UseLbVip) {
-            Write-DisplayText -Line "Cleanup CS Vip"
-            try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
-                try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy_csvserver_binding -Resource $($Parameters.settings.CspName) -ErrorAction SilentlyContinue
-                } catch { }
-                if ($response.cspolicy_csvserver_binding.Count -gt 0) {
-                    ForEach ($item in $response.cspolicy_csvserver_binding) {
-                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
-                        $Arguments = @{"name" = "$($item.domain)"; "policyname" = "$($item.policyname)"; "priority" = "$($item.priority)"; }
-                        try {
-                            $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
-                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                        } catch {
-                            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
-                        }
-                    }
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
-                }
-                Write-DisplayText -ForeGroundColor Green " OK"
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding"
-            }
-            Write-DisplayText -Line "Cleanup CS Policy"
-            try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Policy `"$($Parameters.settings.CspName)`" exists."
-                try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource "$($Parameters.settings.CspName)"
-                } catch { }
-                if ($response.cspolicy.policyname -eq $($Parameters.settings.CspName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy exist, removing Content Switch Policy."
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type cspolicy -Resource "$($Parameters.settings.CspName)"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Policy successfully."
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
-                }
-                Write-DisplayText -ForeGroundColor Green " OK"
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
-            }
-            Write-DisplayText -Line "Cleanup CS Action"
-            try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Action `"$($Parameters.settings.CsaName)`" exists."
-                try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csaction -Resource "$($Parameters.settings.CsaName)"
-                } catch { }
-                if ($response.csaction.name -eq $($Parameters.settings.CsaName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action exist, removing Content Switch Action."
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csaction -Resource "$($Parameters.settings.CsaName)"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Action successfully."
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action not found."
-                }
-                Write-DisplayText -ForeGroundColor Green " OK"
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Action. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Action"
-            }
-            Write-DisplayText -Line "Cleanup LB Vip"
-            try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
-                try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-                } catch { }
-                if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
-                }
-                Write-DisplayText -ForeGroundColor Green " OK"
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
-            }
-        } else {
-            Write-DisplayText -Line "Cleanup LB Svc Binding"
-            try {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if service `"$($Parameters.settings.SvcName)`" is bound to Load Balance VIP `"$($Parameters.settings.LbName)`"."
-                try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)"
-                } catch { }
-                if ($response.lbvserver_service_binding.servicename -eq $($Parameters.settings.SvcName)) {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP binding with Service exists, removing the Load Balance VIP-Service binding."
-                    $Arguments = @{"servicename" = "$($Parameters.settings.SvcName)" }
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)" -Arguments $arguments
-                    Write-DisplayText -ForeGroundColor Green " OK"
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP - Service binding not found."
-                }
-            } catch {
-                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP - Service binding. Exception Message: $($_.Exception.Message)"
-                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP - Service binding"
-            }
-        }
-        Write-DisplayText -Line "Cleanup LB Service"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
-            try {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
-            } catch { }
-            if ($response.service.name -eq $($Parameters.settings.SvcName)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
+        if ($Script:ADCCleanRequired) {
+            Write-DisplayText -Line "Cleanup type"
+            #ToDo - Create two options, for now only Full
+            if ($Full) {
+                Write-DisplayText -ForegroundColor Cyan "Full"
             } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
+                Write-DisplayText -ForegroundColor Cyan "Full"
             }
-            Write-DisplayText -ForeGroundColor Green " OK"
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
-        }
-        Write-DisplayText -Line "Cleanup LB Server"
-        try {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
-            try {
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
-            } catch { }
-            if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
-                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
-            } else {
-                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
-            }
-            Write-DisplayText -ForeGroundColor Green " OK"
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
-        }
-        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
-        Write-DisplayText -Line "Cleanup Responder Policy"
-        try {
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-        }
-        if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
-            Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Policies found:"
-            $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
-                Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-            }
-            ForEach ($ResponderPolicy in $response.responderpolicy) {
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
+            $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
+            if (-Not $CertRequest.UseLbVip) {
+                Write-DisplayText -Line "Cleanup CS Vip"
                 try {
-                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if policy `"$($ResponderPolicy.name)`" is bound to Load Balance VIP."
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
-                    ForEach ($ResponderBinding in $response.responderpolicy_binding) {
-                        try {
-                            if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
-                                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy not bound."
-                            } else {
-                                Write-ToLogFile -D -C Invoke-ADCCleanup -M "ResponderBinding: $($ResponderBinding | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-                                $arguments = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
-                                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to unbind with the following arguments: $($arguments | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-                                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $arguments -Resource $($Parameters.settings.LbName)
-                                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy unbound successfully."
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy_csvserver_binding -Resource $($Parameters.settings.CspName) -ErrorAction SilentlyContinue
+                    } catch { }
+                    if ($response.cspolicy_csvserver_binding.Count -gt 0) {
+                        ForEach ($item in $response.cspolicy_csvserver_binding) {
+                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists, removing Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
+                            $Arguments = @{"name" = "$($item.domain)"; "policyname" = "$($item.policyname)"; "priority" = "$($item.priority)"; }
+                            try {
+                                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csvserver_cspolicy_binding -Arguments $Arguments
+                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            } catch {
+                                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
                             }
-                        } catch {
-                            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         }
+                    } else {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "No binding found."
+                    }
+                    Write-DisplayText -ForeGroundColor Green " OK"
+                } catch {
+                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding"
+                }
+                Write-DisplayText -Line "Cleanup CS Policy"
+                try {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Policy `"$($Parameters.settings.CspName)`" exists."
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy -Resource "$($Parameters.settings.CspName)"
+                    } catch { }
+                    if ($response.cspolicy.policyname -eq $($Parameters.settings.CspName)) {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy exist, removing Content Switch Policy."
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type cspolicy -Resource "$($Parameters.settings.CspName)"
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Policy successfully."
+                    } else {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Policy not found."
+                    }
+                    Write-DisplayText -ForeGroundColor Green " OK"
+                } catch {
+                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
+                }
+                Write-DisplayText -Line "Cleanup CS Action"
+                try {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Content Switch Action `"$($Parameters.settings.CsaName)`" exists."
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csaction -Resource "$($Parameters.settings.CsaName)"
+                    } catch { }
+                    if ($response.csaction.name -eq $($Parameters.settings.CsaName)) {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action exist, removing Content Switch Action."
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type csaction -Resource "$($Parameters.settings.CsaName)"
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Removed Content Switch Action successfully."
+                    } else {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Content Switch Action not found."
+                    }
+                    Write-DisplayText -ForeGroundColor Green " OK"
+                } catch {
+                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Action. Exception Message: $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Action"
+                }
+                Write-DisplayText -Line "Cleanup LB Vip"
+                try {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance VIP `"$($Parameters.settings.LbName)`" exists."
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                    } catch { }
+                    if ($response.lbvserver.name -eq $($Parameters.settings.LbName)) {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP exist, removing the Load Balance VIP."
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver -Resource "$($Parameters.settings.LbName)"
+                    } else {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP not found."
+                    }
+                    Write-DisplayText -ForeGroundColor Green " OK"
+                } catch {
+                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP. Exception Message: $($_.Exception.Message)"
+                    Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP"
+                }
+            } else {
+                Write-DisplayText -Line "Cleanup LB Svc Binding"
+                try {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if service `"$($Parameters.settings.SvcName)`" is bound to Load Balance VIP `"$($Parameters.settings.LbName)`"."
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)"
+                    } catch { }
+                    if ($response.lbvserver_service_binding.servicename -eq $($Parameters.settings.SvcName)) {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP binding with Service exists, removing the Load Balance VIP-Service binding."
+                        $Arguments = @{"servicename" = "$($Parameters.settings.SvcName)" }
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_service_binding -Resource "$($Parameters.settings.LbName)" -Arguments $arguments
+                        Write-DisplayText -ForeGroundColor Green " OK"
+                    } else {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance VIP - Service binding not found."
                     }
                 } catch {
-                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Load Balance VIP - Service binding. Exception Message: $($_.Exception.Message)"
+                    Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Load Balance VIP - Service binding"
                 }
+            }
+            Write-DisplayText -Line "Cleanup LB Service"
+            try {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Service `"$($Parameters.settings.SvcName)`" exists."
                 try {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
-                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$($ResponderPolicy.name)"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy removed successfully."
-                } catch {
-                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type service -Resource "$($Parameters.settings.SvcName)"
+                } catch { }
+                if ($response.service.name -eq $($Parameters.settings.SvcName)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service exist, removing Service `"$($Parameters.settings.SvcName)`"."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type service -Resource "$($Parameters.settings.SvcName)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Service not found."
                 }
+                Write-DisplayText -ForeGroundColor Green " OK"
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
             }
-        } else {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Policies found."
-        }
-        Write-DisplayText -ForeGroundColor Green " OK"
-        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Actions starting with the name `"$($Parameters.settings.RsaName)`"."
-        Write-DisplayText -Line "Cleanup Responder Action"
-        try {
-            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
-        } catch {
-            Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-        }
-        if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
-            Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Actions found:"
-            $response.responderaction | Select-Object name, target | ForEach-Object {
-                Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+            Write-DisplayText -Line "Cleanup LB Server"
+            try {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if Load Balance Server `"$($Parameters.settings.SvcDestination)`" exists."
+                try {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type server -Resource "$($Parameters.settings.SvcDestination)"
+                } catch { }
+                if ($response.server.name -eq $($Parameters.settings.SvcDestination)) {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server exist, removing Load Balance Server `"$($Parameters.settings.SvcDestination)`"."
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type server -Resource "$($Parameters.settings.SvcDestination)"
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Load Balance Server not found."
+                }
+                Write-DisplayText -ForeGroundColor Green " OK"
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
             }
-            ForEach ($ResponderAction in $response.responderaction) {
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
+            Write-DisplayText -Line "Cleanup Responder Policy"
+            try {
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                try {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
-                    $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Action removed successfully."
-                } catch {
-                    Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            }
+            if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
+                Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Policies found:"
+                $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
+                    Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                }
+                ForEach ($ResponderPolicy in $response.responderpolicy) {
+                    try {
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if policy `"$($ResponderPolicy.name)`" is bound to Load Balance VIP."
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
+                        ForEach ($ResponderBinding in $response.responderpolicy_binding) {
+                            try {
+                                if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
+                                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy not bound."
+                                } else {
+                                    Write-ToLogFile -D -C Invoke-ADCCleanup -M "ResponderBinding: $($ResponderBinding | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                                    $arguments = @{"bindpoint" = "REQUEST" ; "policyname" = "$($ResponderBinding.responderpolicy_lbvserver_binding.name)"; "priority" = "$($ResponderBinding.responderpolicy_lbvserver_binding.priority)"; }
+                                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to unbind with the following arguments: $($arguments | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                                    $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type lbvserver_responderpolicy_binding -Arguments $arguments -Resource $($Parameters.settings.LbName)
+                                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy unbound successfully."
+                                }
+                            } catch {
+                                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            }
+                        }
+                    } catch {
+                        Write-ToLogFile -E -C Invoke-ADCCleanup -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
+                    try {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
+                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderpolicy -Resource "$($ResponderPolicy.name)"
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy removed successfully."
+                    } catch {
+                        Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
+                }
+            } else {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Policies found."
+            }
+            Write-DisplayText -ForeGroundColor Green " OK"
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Actions starting with the name `"$($Parameters.settings.RsaName)`"."
+            Write-DisplayText -Line "Cleanup Responder Action"
+            try {
+                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
+            } catch {
+                Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            }
+            if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
+                Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Actions found:"
+                $response.responderaction | Select-Object name, target | ForEach-Object {
+                    Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                }
+                ForEach ($ResponderAction in $response.responderaction) {
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    try {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type responderaction -Resource "$($ResponderAction.name)"
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Action removed successfully."
+                    } catch {
+                        Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
+                }
+            } else {
+                Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Actions found."
+            }
+            Write-DisplayText -ForeGroundColor Green " OK"
+
+            if ($Full) {
+                Write-DisplayText -Line "Post CSVip Action"
+                if ($CertRequest.DisableVipAfter) {
+                    Write-DisplayText -ForeGroundColor Cyan "Required, DisableVipAfter was set"
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "DisableVipAfter was set for $($CertRequest.CsVipName)"
+                    try {
+                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Get the Vip status for $($CertRequest.CsVipName)"
+                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
+                        Write-DisplayText -Line "State"
+                        if ($response.csvserver.curstate -like "UP") {
+                            Write-DisplayText "$($response.csvserver.curstate), needs to be disabled"
+                            Write-ToLogFile -E -C Invoke-ADCCleanup -M "The CS Vip is enabled ($($response.csvserver.curstate)), disabling it now."
+                            $payload = @{"name" = "$($CertRequest.CsVipName)"; }
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type csvserver -Payload $payload -Action disable
+                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Verifying Content Switch to get latest data after enabling."
+                            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
+                            Write-DisplayText -Line "New State"
+                            Write-DisplayText "$($response.csvserver.curstate)"
+                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Final state: $($response.csvserver.curstate)"
+                        } else {
+                            Write-DisplayText "$($response.csvserver.curstate), no action required."
+                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "$($response.csvserver.curstate), no action required."
+                        }
+                    } catch {
+                        $ExceptMessage = $_.Exception.Message
+                        Write-ToLogFile -E -C Invoke-ADCCleanup -M "Error Verifying Content Switch. Details: $ExceptMessage"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
+                } else {
+                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "DisableVipAfter was not set for $($CertRequest.CsVipName)"
+                    Write-DisplayText -ForeGroundColor Green "Not required"
                 }
             }
+            Write-DisplayText -Line "Cleanup"
+            Write-DisplayText -ForeGroundColor Green " Completed"
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Finished cleaning up."        
         } else {
-            Write-ToLogFile -I -C Invoke-ADCCleanup -M "No Responder Actions found."
+            Write-DisplayText -Line "Cleanup"
+            Write-DisplayText -ForeGroundColor Green "Nothing to clean"
+            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Not required, nothng to clean."
         }
-        Write-DisplayText -ForeGroundColor Green " OK"
-        Write-DisplayText -Line "Cleanup"
-        Write-DisplayText -ForeGroundColor Green " Completed"
-        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Finished cleaning up."        
+        $Script:ADCCleanRequired = $false
     }
 }
 
@@ -1921,8 +1979,7 @@ function Invoke-AddInitialADCConfig {
     param (
         
     )
-   
-    process {
+    Process {
         try {
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to login into the Citrix ADC."
             Write-DisplayText -Title "ADC - Configure Prerequisites"
@@ -2858,6 +2915,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value [String[]]$CsVipName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseLbVip -Value $([bool]::Parse($UseLbVip))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name EnableVipBefore -Value $EnableVipBefore
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableVipAfter -Value $DisableVipAfter
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
@@ -3176,11 +3235,19 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$($NSCPName)-(Basics|Custom)`""
     Write-DisplayText -Title "Api User Permissions Group (Command Policy)"
     Write-DisplayText -Line "Command Policy Name"
-    Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|Custom) "
+    Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|LEBackend|LEFrontEnd) "
     Write-DisplayText -Line "CS VIP Name"
+    $csVipExtraActionsString = ""
+    if ($EnableVipBefore) {
+        $csVipExtraActionsString = $csVipExtraActionsString += '|enable'
+    }
+    if ($DisableVipAfter) {
+        $csVipExtraActionsString = $csVipExtraActionsString += '|disable'
+    }
+
     if (-Not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
         ForEach ($VipName in $CsVipName) {
-            $CSVipString += "|(^(set|show|bind|unbind)\s+cs\s+vserver\s+$($VipName).*)|(^\S+\s+cs\s+policy\s+$($Parameters.settings.CspName).*)|(^\S+\s+cs\s+action\s+$($Parameters.settings.CsaName).*)"
+            $CSVipString += "|(^(set|show|bind|unbind$($csVipExtraActionsString))\s+cs\s+vserver(\s+$($VipName).*))|(^\S+\s+cs\s+(policy\s+$($Parameters.settings.CspName)|action\s+$($Parameters.settings.CsaName)).*)"
         }
         Write-DisplayText -ForeGroundColor Cyan $($CsVipName -Join ", ")
         Write-DisplayText -Line "CS Policy Name"
@@ -3200,10 +3267,13 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RsaName)
     Write-DisplayText -Line "Responder Policy Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RspName)
+
     $CmdSpec = @{
-        Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)"
-        Custom = "(^show\s+ns\s+version)$CSVipString|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
+        Basics     = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)"
+        LEBackend  = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
+        LEFrontEnd = "$CSVipString"
     }
+
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
     #$otherPartitions = @( $Parameters.settings.Partitions | Where-Object { $_ -ne "default"} )
     #if ($otherPartitions.Count -gt 0 ) {
@@ -3236,7 +3306,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemcmdpolicy -Payload $payload
                 Write-DisplayText -ForeGroundColor Green "Created"
             }
-         } catch {
+        } catch {
             Write-DisplayText -ForeGroundColor Red "Error"
             Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
@@ -3328,9 +3398,9 @@ if ($CreateApiUser) {
         }
         Write-ToLogFile -I -C ApiUser -M "Bind Command Policy"
         Write-DisplayText -Line "User Policy Binding"
-        Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|Custom) "
+        Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|LEBackend|LEFrontEnd) "
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
-        $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -ne "$($NSCPName)-Basics" -and $_ -ne "$($NSCPName)-Custom" })
+        $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -notin "$($NSCPName)-Basics", "$($NSCPName)-LEBackend", "$($NSCPName)-LEFrontEnd" })
         if ($bindingsToRemove.Count -gt 0) {
             Write-ToLogFile -I -C ApiUser -M "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
             Write-Warning -Message "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
@@ -3360,8 +3430,9 @@ if ($CreateApiUser) {
                 Write-ToLogFile -I -C ApiUser -M "A bindings for `"$policyName`" already present"
             } else {
                 Write-ToLogFile -I -C ApiUser -M "Creating a new binding for `"$policyName`""
-                if ($policyName -like "*basic*") { $prio = 10 }
-                if ($policyName -like "*custom*") { $prio = 20 }
+                if ($policyName -like "*basic") { $prio = 10 }
+                if ($policyName -like "*LEBackend") { $prio = 20 }
+                if ($policyName -like "*LEFrontEnd") { $prio = 30 }
                 $payload = @{ username = $ApiUsername; policyname = $policyName; priority = $prio }
                 Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
@@ -3764,16 +3835,31 @@ if ($CertificateActions) {
                     $loopCounter = 0
                     ForEach ($csVip in $CertRequest.CsVipName) {
                         $loopCounter++
+                        Write-DisplayText -Line "Content Switch $loopCounter/$($CertRequest.CsVipName.Count)"
+                        Write-DisplayText "$csVip"
                         try {
                             Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch $loopCounter of $($CertRequest.CsVipName.Count)."
                             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
+                            if ($CertRequest.EnableVipBefore -and ($response.csvserver.curstate -like "OUT OF SERVICE")) {
+                                Write-DisplayText -Line "State"
+                                Write-DisplayText "$($response.csvserver.curstate), needs to be enabled first (EnableVipBefore was set)"
+                                Write-ToLogFile -E -C ADC-CS-Validation -M "The CS Vip is disabled, enabling it now because of parameter EnableVipBefore is set."
+                                $payload = @{"name" = "$csVip"; }
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type csvserver -Payload $payload -Action enable
+                                Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch to get latest data after enabling."
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
+                                Write-DisplayText -Line "New State"
+                                Write-DisplayText -ForeGroundColor Cyan "$($response.csvserver.curstate)"
+                                Write-DisplayText -Line "Content Switch"
+                            } else {
+                                Write-DisplayText -Line "Content Switch"
+                            }
                         } catch {
                             $ExceptMessage = $_.Exception.Message
                             Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
                             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         } finally {
-                            Write-DisplayText -Line "Content Switch $loopCounter/$($CertRequest.CsVipName.Count)"
-                            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$csVip"
+                            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "VIP"
                             if (($response.errorcode -eq "0") -and `
                                 ($response.csvserver.type -eq "CONTENT") -and `
                                 ($response.csvserver.curstate -eq "UP") -and `
@@ -3936,7 +4022,7 @@ if ($CertificateActions) {
                 if ($PARegistration.status -ne "valid") {
                     Write-DisplayText -ForeGroundColor Red " Error"
                     Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
-                    Write-Error  "Account status is $($Account.status)"
+                    Write-Error "Account status is $($Account.status)"
                     Invoke-RegisterError 1 "Account status is $($Account.status)"
                     Continue
                 } 
@@ -3961,7 +4047,7 @@ if ($CertificateActions) {
                         Write-ToLogFile -D -C Order -M "CertStoragePath: $CertStoragePath"
                         $CertStorageFilePath = Join-Path -Path $CertStoragePath -ChildPath "order.json" -ErrorAction Stop
                         Write-ToLogFile -D -C Order -M "CertStorageFilePath: CertStorageFilePath"
-                        if (Test-Path -Path  $CertStorageFilePath) {
+                        if (Test-Path -Path $CertStorageFilePath) {
                             Write-ToLogFile -I -C Order -M "Old certificate found, trying to remove (ForceCertRenew was set)"
                             Remove-Item -Path $CertStoragePath -Force -Recurse -ErrorAction Stop
                             Write-DisplayText -ForeGroundColor Green "Done"
@@ -4439,7 +4525,7 @@ if ($CertificateActions) {
                 #region CleanupADC
 
                 if ($CertRequest.ValidationMethod -in "http", "dns") {
-                    Invoke-ADCCleanup -Full
+                    Invoke-ADCCleanup
                 }
                 #endregion CleanupADC
 
@@ -5276,7 +5362,7 @@ if ($CertificateActions) {
             #region PostPoSHScriptFilename
             Write-ToLogFile -I -C PostPoSHScript -M "Checking if parameter `"PostPoSHScriptFilename`" was defined."
             
-            if ($CertRequest | Get-Member -Name  PostPoSHScriptFilename -ErrorAction SilentlyContinue) {
+            if ($CertRequest | Get-Member -Name PostPoSHScriptFilename -ErrorAction SilentlyContinue) {
                 $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
 
                 if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
@@ -5562,10 +5648,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIIkmgYJKoZIhvcNAQcCoIIkizCCJIcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDMnEpbCA08bsC+
-# J8McG6xJxP+Rku6ux+fgtvgd4eVPYqCCHl4wggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAnnv91vJUiiY48
+# I6YuYKTlNJF0s0gDEiT+Gz8QRXimO6CCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5653,109 +5739,17 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
-# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
-# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
-# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
-# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
-# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
-# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
-# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
-# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
-# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
-# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
-# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
-# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
-# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
-# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
-# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
-# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
-# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
-# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
-# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
-# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
-# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
-# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
-# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
-# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
-# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
-# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
-# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
-# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
-# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
-# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
-# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
-# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
-# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
-# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
-# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
-# 4/kKyVRd1LlqdJ69SK6YMIIG9TCCBN2gAwIBAgIQOUwl4XygbSeoZeI72R0i1DAN
-# BgkqhkiG9w0BAQwFADB9MQswCQYDVQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBN
-# YW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExp
-# bWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwHhcN
-# MjMwNTAzMDAwMDAwWhcNMzQwODAyMjM1OTU5WjBqMQswCQYDVQQGEwJHQjETMBEG
-# A1UECBMKTWFuY2hlc3RlcjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSwwKgYD
-# VQQDDCNTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIFNpZ25lciAjNDCCAiIwDQYJ
-# KoZIhvcNAQEBBQADggIPADCCAgoCggIBAKSTKFJLzyeHdqQpHJk4wOcO1NEc7GjL
-# AWTkis13sHFlgryf/Iu7u5WY+yURjlqICWYRFFiyuiJb5vYy8V0twHqiDuDgVmTt
-# oeWBIHIgZEFsx8MI+vN9Xe8hmsJ+1yzDuhGYHvzTIAhCs1+/f4hYMqsws9iMepZK
-# GRNcrPznq+kcFi6wsDiVSs+FUKtnAyWhuzjpD2+pWpqRKBM1uR/zPeEkyGuxmegN
-# 77tN5T2MVAOR0Pwtz1UzOHoJHAfRIuBjhqe+/dKDcxIUm5pMCUa9NLzhS1B7cuBb
-# /Rm7HzxqGXtuuy1EKr48TMysigSTxleGoHM2K4GX+hubfoiH2FJ5if5udzfXu1Cf
-# +hglTxPyXnypsSBaKaujQod34PRMAkjdWKVTpqOg7RmWZRUpxe0zMCXmloOBmvZg
-# ZpBYB4DNQnWs+7SR0MXdAUBqtqgQ7vaNereeda/TpUsYoQyfV7BeJUeRdM11EtGc
-# b+ReDZvsdSbu/tP1ki9ShejaRFEqoswAyodmQ6MbAO+itZadYq0nC/IbSsnDlEI3
-# iCCEqIeuw7ojcnv4VO/4ayewhfWnQ4XYKzl021p3AtGk+vXNnD3MH65R0Hts2B0t
-# EUJTcXTC5TWqLVIS2SXP8NPQkUMS1zJ9mGzjd0HI/x8kVO9urcY+VXvxXIc6ZPFg
-# SwVP77kv7AkTAgMBAAGjggGCMIIBfjAfBgNVHSMEGDAWgBQaofhhGSAPw0F3RSiO
-# 0TVfBhIEVTAdBgNVHQ4EFgQUAw8xyJEqk71j89FdTaQ0D9KVARgwDgYDVR0PAQH/
-# BAQDAgbAMAwGA1UdEwEB/wQCMAAwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwSgYD
-# VR0gBEMwQTA1BgwrBgEEAbIxAQIBAwgwJTAjBggrBgEFBQcCARYXaHR0cHM6Ly9z
-# ZWN0aWdvLmNvbS9DUFMwCAYGZ4EMAQQCMEQGA1UdHwQ9MDswOaA3oDWGM2h0dHA6
-# Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNybDB0
-# BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0dHA6Ly9jcnQuc2VjdGlnby5j
-# b20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNydDAjBggrBgEFBQcwAYYXaHR0
-# cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcNAQEMBQADggIBAEybZVj64HnP
-# 7xXDMm3eM5Hrd1ji673LSjx13n6UbcMixwSV32VpYRMM9gye9YkgXsGHxwMkysel
-# 8Cbf+PgxZQ3g621RV6aMhFIIRhwqwt7y2opF87739i7Efu347Wi/elZI6WHlmjl3
-# vL66kWSIdf9dhRY0J9Ipy//tLdr/vpMM7G2iDczD8W69IZEaIwBSrZfUYngqhHmo
-# 1z2sIY9wwyR5OpfxDaOjW1PYqwC6WPs1gE9fKHFsGV7Cg3KQruDG2PKZ++q0kmV8
-# B3w1RB2tWBhrYvvebMQKqWzTIUZw3C+NdUwjwkHQepY7w0vdzZImdHZcN6CaJJ5O
-# X07Tjw/lE09ZRGVLQ2TPSPhnZ7lNv8wNsTow0KE9SK16ZeTs3+AB8LMqSjmswaT5
-# qX010DJAoLEZKhghssh9BXEaSyc2quCYHIN158d+S4RDzUP7kJd2KhKsQMFwW5kK
-# QPqAbZRhe8huuchnZyRcUI0BIN4H9wHU+C4RzZ2D5fjKJRxEPSflsIZHKgsbhHZ9
-# e2hPjbf3E7TtoC3ucw/ZELqdmSx813UfjxDElOZ+JOWVSoiMJ9aFZh35rmR2kehI
-# /shVCu0pwx/eOKbAFPsyPfipg2I2yMO+AIccq/pKQhyJA9z1XHxw2V14Tu6fXiDm
-# CWp8KwijSPUV/ARP380hHHrl9Y4a1LlAMYIFkjCCBY4CAQEwgZAwfDELMAkGA1UE
-# BhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2Fs
-# Zm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdv
-# IFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUD
-# BAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMx
-# DAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkq
-# hkiG9w0BCQQxIgQghc8JesX/Xk3Kl/70t+NyGwjdfKi6i8FlWXeuMrVXxGYwDQYJ
-# KoZIhvcNAQEBBQAEggEAHHAHwEg5zq9kbKqOZFhBuMi3C0OacU9aEA3O9IkVepJD
-# ovS6+fas7fPOFlsMbDM3Whb4hRuS2kxZ0x+JdAwdBQE0RYw6QsiGyFZUxn0EOjqn
-# RH60WEUYMflrDzSEOC5tsBz+7KB9lPHyNjOM9mYSUrFNfsJCNUPYR54F+Y7nOMJK
-# 6w8C9CirfmmqMgp1tPXdL+HV7igukQRd4DSRlKOeRiccJ+oOoewlbtm10cd0nrNi
-# alER1foChZXQ1iqF//zRo1zh+FQWYy1sGZ8XA7igybMsbNlzK9MjqtKx28RJd6of
-# SkssOjAU9TPiwc/MRl7EoHW8zVhqU4OYUNCNUvuC8KGCA0swggNHBgkqhkiG9w0B
-# CQYxggM4MIIDNAIBATCBkTB9MQswCQYDVQQGEwJHQjEbMBkGA1UECBMSR3JlYXRl
-# ciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdv
-# IExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EC
-# EDlMJeF8oG0nqGXiO9kdItQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMx
-# CwYJKoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yMzA2MTYxMzQ0MDFaMD8GCSqG
-# SIb3DQEJBDEyBDDhSmZlE9KJYlrUdTzTTyFMG2p701tp5FKt/YCaYHRRz837oCXB
-# AeMOPy/z6WXrGnYwDQYJKoZIhvcNAQEBBQAEggIALm9yY0kcTHJCVtcBQ6DM3UMR
-# Ev8+ZO9YZHkOxvaz/eUq5/myzSMrd4uheQ76nA7cYNeV0ogsavH9/bfnWuVCxYMg
-# n+TC3t3Iy+TAxTYK3O3uSmqYR43zbJrL7ud9qVcOl08aJwM3xAJiDnCSRUBkxfVE
-# hyB7YEvWnk5qftqM467I5mndXxMbsDINjMGuOlGm8RzAleYDuGKkHvBoAw9FpQfz
-# 2PWuw1ud8NWImMZ3vgiiwulzx0v9uXBBeZMmH1/w+A8IKsasb8OY0e5VO0wRJAU2
-# 8fD4iqs2cn3IQuTM53EDGVvPgKgeEAlQN+nrhD87jTh2wXLIbgD8Gpf4SKLFHIhZ
-# DyXzeR/3zNzwOKi11Iuao8QdCB0zk0CbXI9tjruU3eB4nqnR0lKHtKpC16XWiIaG
-# KLufXppK8/qSGGMAMeug0O/IHZzZVQvDXLnkjm2TklnkxEQqJZ55SOMt9o6bfvBv
-# 8JocgsxbC1eBBSoU4ZaCCqzBcBZ0KnM9a7KYOdzqff88BWjiuGkwOLYfupDK+ju9
-# g67/szuisUbxPo3tAgZqJPKQi3S3iY0giuIjWqw+63UVdz/UYMKCbpd8u7aIXZwT
-# LAq1/oOzBExywDgMgZxy2urwtw0G4N0KRtCapB75xbnmGlsB3zDVYNLvN1QH5a/+
-# OrKEqCZcdL9nj5puMWg=
+# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
+# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
+# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
+# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
+# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
+# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
+# IgQgnhhX0YkuKJ8S/rWCt9wSezt+Qn7rBNlnGcYheq1euF0wDQYJKoZIhvcNAQEB
+# BQAEggEAhCqMSd0Fl92iq6IDQG+126bX433g629/Zf3OhC/YR4ItjAkgQ3g5iCyI
+# XNWyXuY+rKkYJWaj38qdewrt91A8MokveqeyeJf7HhxhmBSm9y09Yl1/n/Dozu9o
+# GFQ4J+1G5t23QPD7khHtkvdHJuh47k10DByWocJIheIzcCepCPjQJJXOcXH8ozvl
+# /kes18VvZE3fYNptDpS0vTVNmtuwMRstKYrrRqficDkdEh9Ve8+pNNKs5CBTc5Xx
+# yImP51lyVKYa3gfWMvn7N7WFWOIjL94rHW76UyiXj0b6naB5tkID34QXkOLcpQXK
+# Kbcz2wDTgNKck42yil1yMve9yuC98g==
 # SIG # End signature block
