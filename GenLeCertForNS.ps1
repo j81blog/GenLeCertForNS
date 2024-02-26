@@ -227,7 +227,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.24.0
+    Version   : v2.25.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -627,7 +627,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.24.0"
+$ScriptVersion = "2.25.0"
 $PoshACMEVersion = "4.20.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1952,37 +1952,7 @@ function Invoke-ADCCleanup {
             Write-DisplayText -ForeGroundColor Green " OK"
 
             if ($Full) {
-                Write-DisplayText -Line "Post CSVip Action"
-                if ($CertRequest.DisableVipAfter) {
-                    Write-DisplayText -ForeGroundColor Cyan "Required, DisableVipAfter was set"
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "DisableVipAfter was set for $($CertRequest.CsVipName)"
-                    try {
-                        Write-ToLogFile -I -C Invoke-ADCCleanup -M "Get the Vip status for $($CertRequest.CsVipName)"
-                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
-                        Write-DisplayText -Line "State"
-                        if ($response.csvserver.curstate -like "UP") {
-                            Write-DisplayText "$($response.csvserver.curstate), needs to be disabled"
-                            Write-ToLogFile -E -C Invoke-ADCCleanup -M "The CS Vip is enabled ($($response.csvserver.curstate)), disabling it now."
-                            $payload = @{"name" = "$($CertRequest.CsVipName)"; }
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type csvserver -Payload $payload -Action disable
-                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Verifying Content Switch to get latest data after enabling."
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
-                            Write-DisplayText -Line "New State"
-                            Write-DisplayText "$($response.csvserver.curstate)"
-                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "Final state: $($response.csvserver.curstate)"
-                        } else {
-                            Write-DisplayText "$($response.csvserver.curstate), no action required."
-                            Write-ToLogFile -I -C Invoke-ADCCleanup -M "$($response.csvserver.curstate), no action required."
-                        }
-                    } catch {
-                        $ExceptMessage = $_.Exception.Message
-                        Write-ToLogFile -E -C Invoke-ADCCleanup -M "Error Verifying Content Switch. Details: $ExceptMessage"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                    }
-                } else {
-                    Write-ToLogFile -I -C Invoke-ADCCleanup -M "DisableVipAfter was not set for $($CertRequest.CsVipName)"
-                    Write-DisplayText -ForeGroundColor Green "Not required"
-                }
+
             }
             Write-DisplayText -Line "Cleanup"
             Write-DisplayText -ForeGroundColor Green " Completed"
@@ -2603,7 +2573,7 @@ if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.Paramet
 }
 
 #Define the variable that will contain sensitive words like passwords that should not be logged
-$Script:replaceSensitiveWords = @()
+$Script:replaceSensitiveWords = [String[]]@()
 
 $PreLogLines = @()
 
@@ -2744,26 +2714,26 @@ if (-Not [String]::IsNullOrEmpty($DNSParams)) {
 try {
     if ((-Not $AutoRun) -and (-Not $CleanAllExpiredCertsOnDisk)) {
         if (($Password -is [String]) -and ($Password.Length -gt 0)) {
-            $Script:replaceSensitiveWords += $Password
+            $Script:replaceSensitiveWords += @($Password)
             [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
         }
         if ((($Password.Length -gt 0) -and ($Username.Length -gt 0))) {
             [PSCredential]$Credential = New-Object System.Management.Automation.PSCredential ($Username, $Password)
-            $Script:replaceSensitiveWords += $Credential.GetNetworkCredential().Password
+            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
             $Credential = Get-Credential -UserName nsroot -Message "Citrix ADC Credentials"
-            $Script:replaceSensitiveWords += $Credential.GetNetworkCredential().Password
+            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
             throw "No valid credential found, -Username & -Password or -Credential not specified!"
         } else {
             $ADCCredentialUsername = $Credential.Username
             $ADCCredentialPassword = $Credential.Password
-            $Script:replaceSensitiveWords += $Credential.GetNetworkCredential().Password
+            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
         }
         if (($PfxPassword -is [String]) -and ($PfxPassword.Length -gt 0)) {
-            $Script:replaceSensitiveWords += $PfxPassword
+            $Script:replaceSensitiveWords += @($PfxPassword)
             [SecureString]$PfxPassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
         }
     }
@@ -2822,10 +2792,10 @@ try {
                     }
                 } catch { }
 
-                $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword)
-                $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
+                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword))
+                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword))
                 if ($Parameters.certrequests.Count -gt 0) {
-                    $Parameters.certrequests | ForEach-Object { $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $_.PfxPassword }
+                    $Parameters.certrequests | ForEach-Object { $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $_.PfxPassword) }
                 }
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
@@ -2874,7 +2844,7 @@ if ($AutoRun) {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         $ADCCredentialUsername = $Parameters.settings.ADCCredentialUsername
         $ADCCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword)
-        $Script:replaceSensitiveWords += $ADCCredentialPassword
+        $Script:replaceSensitiveWords += @($ADCCredentialPassword)
         $Credential = New-Object -TypeName PSCredential -ArgumentList $ADCCredentialUsername, $ADCCredentialPassword
         $PreLogLines += "D;PARAMETERS;ADCCredential ready. Username:$($Credential.UserName)"
         if (-Not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
@@ -2891,7 +2861,7 @@ if ($AutoRun) {
         $SMTPCredentialUsername = $Parameters.settings.SMTPCredentialUsername
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
         if ($SMTPCredentialPassword.Length -gt 0) {
-            $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword
+            $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
         }
         if ([String]::IsNullOrEmpty($SMTPCredentialUsername)) {
             $PreLogLines += "D;PARAMETERS;SMTPCredential not Initialized, skipped"
@@ -2919,7 +2889,7 @@ if ($AutoRun) {
     $SMTPCredentialUsername = $SMTPCredential.Username
     $SMTPCredentialPassword = $SMTPCredential.Password
     if ($SMTPCredentialPassword.Length -gt 0) {
-        $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword
+        $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
     }
     if ($SMTPTo -like "*,*") {
         [String[]]$SMTPTo = $SMTPTo.Split(",") | ForEach-Object { $_.Trim() }
@@ -2990,7 +2960,7 @@ if ($AutoRun) {
 }
 
 # Get only the unique sensitive words
-$Script:replaceSensitiveWords = $Script:replaceSensitiveWords | Select-Object -Unique
+$Script:replaceSensitiveWords = @($Script:replaceSensitiveWords | Select-Object -Unique)
 
 if ($Parameters.settings.DisableLogging) {
     $Script:LoggingEnabled = $false
@@ -4136,7 +4106,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C Order -M "New PfxPassword generated"
                 }
                 Invoke-AddUpdateParameter -Object $CertRequest -Name PfxPassword -Value $PfxPassword
-                $Script:replaceSensitiveWords += ConvertFrom-EncryptedPassword -Object $PfxPassword
+                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $PfxPassword)
                 Write-DisplayText -Line "Order"
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 try {
@@ -5511,6 +5481,39 @@ if ($CleanADC) {
     Invoke-ADCCleanup -Full
 }
 
+Write-DisplayText -Title "Post CSVip Action"
+Write-DisplayText -Line "Action"
+if ($CertRequest.DisableVipAfter) {
+    Write-DisplayText -ForeGroundColor Cyan "Required, DisableVipAfter was set"
+    Write-ToLogFile -I -C PostCSActtion -M "DisableVipAfter was set for $($CertRequest.CsVipName)"
+    try {
+        Write-ToLogFile -I -C PostCSActtion -M "Get the Vip status for $($CertRequest.CsVipName)"
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
+        Write-DisplayText -Line "State"
+        if ($response.csvserver.curstate -like "UP") {
+            Write-DisplayText "$($response.csvserver.curstate), needs to be disabled"
+            Write-ToLogFile -E -C PostCSActtion -M "The CS Vip is enabled ($($response.csvserver.curstate)), disabling it now."
+            $payload = @{"name" = "$($CertRequest.CsVipName)"; }
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type csvserver -Payload $payload -Action disable
+            Write-ToLogFile -I -C PostCSActtion -M "Verifying Content Switch to get latest data after enabling."
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource "$($CertRequest.CsVipName)"
+            Write-DisplayText -Line "New State"
+            Write-DisplayText "$($response.csvserver.curstate)"
+            Write-ToLogFile -I -C PostCSActtion -M "Final state: $($response.csvserver.curstate)"
+        } else {
+            Write-DisplayText "$($response.csvserver.curstate), no action required."
+            Write-ToLogFile -I -C PostCSActtion -M "$($response.csvserver.curstate), no action required."
+        }
+    } catch {
+        $ExceptMessage = $_.Exception.Message
+        Write-ToLogFile -E -C PostCSActtion -M "Error Verifying Content Switch. Details: $ExceptMessage"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+    }
+} else {
+    Write-ToLogFile -I -C PostCSActtion -M "DisableVipAfter was not set for $($CertRequest.CsVipName)"
+    Write-DisplayText -ForeGroundColor Green "Skipped, Not required"
+}
+
 
 #endregion CleanupADC
 
@@ -5701,10 +5704,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIITYgYJKoZIhvcNAQcCoIITUzCCE08CAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIkmgYJKoZIhvcNAQcCoIIkizCCJIcCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAWeCD5xsVPB1RZ
-# 3Mozw8KpOKP154nM4/JWO77UkJnMEaCCEHUwggTzMIID26ADAgECAhAsJ03zZBC0
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDVwzvbFBzNIBWo
+# 1zC/QHU1xaeH8wahB5YwrQlFK4+CDqCCHl4wggTzMIID26ADAgECAhAsJ03zZBC0
 # i/247uUvWN5TMA0GCSqGSIb3DQEBCwUAMHwxCzAJBgNVBAYTAkdCMRswGQYDVQQI
 # ExJHcmVhdGVyIE1hbmNoZXN0ZXIxEDAOBgNVBAcTB1NhbGZvcmQxGDAWBgNVBAoT
 # D1NlY3RpZ28gTGltaXRlZDEkMCIGA1UEAxMbU2VjdGlnbyBSU0EgQ29kZSBTaWdu
@@ -5792,17 +5795,109 @@ TerminateScript 0
 # ngVR5UR43QHesXWYDVQk/fBO4+L4g71yuss9Ou7wXheSaG3IYfmm8SoKC6W59J7u
 # mDIFhZ7r+YMp08Ysfb06dy6LN0KgaoLtO0qqlBCk4Q34F8W2WnkzGJLjtXX4oemO
 # CiUe5B7xn1qHI/+fpFGe+zmAEc3btcSnqIBv5VPU4OOiwtJbGvoyJi1qV3AcPKRY
-# LqPzW0sH3DJZ84enGm1YMYICQzCCAj8CAQEwgZAwfDELMAkGA1UEBhMCR0IxGzAZ
-# BgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEYMBYG
-# A1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdvIFJTQSBDb2Rl
-# IFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUDBAIBBQCggYQw
-# GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
-# NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgUkoWBTPvHLEeQfDrgz/6NOYy1iDMgVUWJqavwrzfpgEwDQYJKoZIhvcNAQEB
-# BQAEggEAS0IQVtndry0EdfA+LSMnoj0Rk7KawzvFDXP5cKx0yZ0hav+GVByfPELL
-# vtZin4/y7d9J68AsyyRoYyL9+SsIh+RIkhgNjmnIPzE7HcYdwRmmHjA8g64LLbAR
-# jleW03PGnio2S9ONmAwwS10tau1cr6J8VVzfnUzvvcCLxHnQcxeoDeLZtfvtC2pv
-# khn2DBHwLyq7QXDlsqkElgZ038Wk1s3r+HzZBA8QSyDpFueFuREs3S+D68/Q19jg
-# Pl3x4Vtv8O82/GRh0W3PUnzgBZ/fdxQs9cYlEPJm8I5Bz/v7R8Scfhwdn9ktzzUU
-# MPTj7TbFQwHhWxSSCu+Q6HHNZscfJg==
+# LqPzW0sH3DJZ84enGm1YMIIG7DCCBNSgAwIBAgIQMA9vrN1mmHR8qUY2p3gtuTAN
+# BgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJz
+# ZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNU
+# IE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBSU0EgQ2VydGlmaWNhdGlvbiBB
+# dXRob3JpdHkwHhcNMTkwNTAyMDAwMDAwWhcNMzgwMTE4MjM1OTU5WjB9MQswCQYD
+# VQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdT
+# YWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExpbWl0ZWQxJTAjBgNVBAMTHFNlY3Rp
+# Z28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAw
+# ggIKAoICAQDIGwGv2Sx+iJl9AZg/IJC9nIAhVJO5z6A+U++zWsB21hoEpc5Hg7Xr
+# xMxJNMvzRWW5+adkFiYJ+9UyUnkuyWPCE5u2hj8BBZJmbyGr1XEQeYf0RirNxFrJ
+# 29ddSU1yVg/cyeNTmDoqHvzOWEnTv/M5u7mkI0Ks0BXDf56iXNc48RaycNOjxN+z
+# xXKsLgp3/A2UUrf8H5VzJD0BKLwPDU+zkQGObp0ndVXRFzs0IXuXAZSvf4DP0REK
+# V4TJf1bgvUacgr6Unb+0ILBgfrhN9Q0/29DqhYyKVnHRLZRMyIw80xSinL0m/9NT
+# IMdgaZtYClT0Bef9Maz5yIUXx7gpGaQpL0bj3duRX58/Nj4OMGcrRrc1r5a+2kxg
+# zKi7nw0U1BjEMJh0giHPYla1IXMSHv2qyghYh3ekFesZVf/QOVQtJu5FGjpvzdeE
+# 8NfwKMVPZIMC1Pvi3vG8Aij0bdonigbSlofe6GsO8Ft96XZpkyAcSpcsdxkrk5WY
+# nJee647BeFbGRCXfBhKaBi2fA179g6JTZ8qx+o2hZMmIklnLqEbAyfKm/31X2xJ2
+# +opBJNQb/HKlFKLUrUMcpEmLQTkUAx4p+hulIq6lw02C0I3aa7fb9xhAV3PwcaP7
+# Sn1FNsH3jYL6uckNU4B9+rY5WDLvbxhQiddPnTO9GrWdod6VQXqngwIDAQABo4IB
+# WjCCAVYwHwYDVR0jBBgwFoAUU3m/WqorSs9UgOHYm8Cd8rIDZsswHQYDVR0OBBYE
+# FBqh+GEZIA/DQXdFKI7RNV8GEgRVMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMBMGA1UdJQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0g
+# ADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNF
+# UlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwdgYIKwYBBQUHAQEE
+# ajBoMD8GCCsGAQUFBzAChjNodHRwOi8vY3J0LnVzZXJ0cnVzdC5jb20vVVNFUlRy
+# dXN0UlNBQWRkVHJ1c3RDQS5jcnQwJQYIKwYBBQUHMAGGGWh0dHA6Ly9vY3NwLnVz
+# ZXJ0cnVzdC5jb20wDQYJKoZIhvcNAQEMBQADggIBAG1UgaUzXRbhtVOBkXXfA3oy
+# Cy0lhBGysNsqfSoF9bw7J/RaoLlJWZApbGHLtVDb4n35nwDvQMOt0+LkVvlYQc/x
+# QuUQff+wdB+PxlwJ+TNe6qAcJlhc87QRD9XVw+K81Vh4v0h24URnbY+wQxAPjeT5
+# OGK/EwHFhaNMxcyyUzCVpNb0llYIuM1cfwGWvnJSajtCN3wWeDmTk5SbsdyybUFt
+# Z83Jb5A9f0VywRsj1sJVhGbks8VmBvbz1kteraMrQoohkv6ob1olcGKBc2NeoLvY
+# 3NdK0z2vgwY4Eh0khy3k/ALWPncEvAQ2ted3y5wujSMYuaPCRx3wXdahc1cFaJqn
+# yTdlHb7qvNhCg0MFpYumCf/RoZSmTqo9CfUFbLfSZFrYKiLCS53xOV5M3kg9mzSW
+# mglfjv33sVKRzj+J9hyhtal1H3G/W0NdZT1QgW6r8NDT/LKzH7aZlib0PHmLXGTM
+# ze4nmuWgwAxyh8FuTVrTHurwROYybxzrF06Uw3hlIDsPQaof6aFBnf6xuKBlKjTg
+# 3qj5PObBMLvAoGMs/FwWAKjQxH/qEZ0eBsambTJdtDgJK0kHqv3sMNrxpy/Pt/36
+# 0KOE2See+wFmd7lWEOEgbsausfm2usg1XTN2jvF8IAwqd661ogKGuinutFoAsYyr
+# 4/kKyVRd1LlqdJ69SK6YMIIG9TCCBN2gAwIBAgIQOUwl4XygbSeoZeI72R0i1DAN
+# BgkqhkiG9w0BAQwFADB9MQswCQYDVQQGEwJHQjEbMBkGA1UECBMSR3JlYXRlciBN
+# YW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdvIExp
+# bWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EwHhcN
+# MjMwNTAzMDAwMDAwWhcNMzQwODAyMjM1OTU5WjBqMQswCQYDVQQGEwJHQjETMBEG
+# A1UECBMKTWFuY2hlc3RlcjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSwwKgYD
+# VQQDDCNTZWN0aWdvIFJTQSBUaW1lIFN0YW1waW5nIFNpZ25lciAjNDCCAiIwDQYJ
+# KoZIhvcNAQEBBQADggIPADCCAgoCggIBAKSTKFJLzyeHdqQpHJk4wOcO1NEc7GjL
+# AWTkis13sHFlgryf/Iu7u5WY+yURjlqICWYRFFiyuiJb5vYy8V0twHqiDuDgVmTt
+# oeWBIHIgZEFsx8MI+vN9Xe8hmsJ+1yzDuhGYHvzTIAhCs1+/f4hYMqsws9iMepZK
+# GRNcrPznq+kcFi6wsDiVSs+FUKtnAyWhuzjpD2+pWpqRKBM1uR/zPeEkyGuxmegN
+# 77tN5T2MVAOR0Pwtz1UzOHoJHAfRIuBjhqe+/dKDcxIUm5pMCUa9NLzhS1B7cuBb
+# /Rm7HzxqGXtuuy1EKr48TMysigSTxleGoHM2K4GX+hubfoiH2FJ5if5udzfXu1Cf
+# +hglTxPyXnypsSBaKaujQod34PRMAkjdWKVTpqOg7RmWZRUpxe0zMCXmloOBmvZg
+# ZpBYB4DNQnWs+7SR0MXdAUBqtqgQ7vaNereeda/TpUsYoQyfV7BeJUeRdM11EtGc
+# b+ReDZvsdSbu/tP1ki9ShejaRFEqoswAyodmQ6MbAO+itZadYq0nC/IbSsnDlEI3
+# iCCEqIeuw7ojcnv4VO/4ayewhfWnQ4XYKzl021p3AtGk+vXNnD3MH65R0Hts2B0t
+# EUJTcXTC5TWqLVIS2SXP8NPQkUMS1zJ9mGzjd0HI/x8kVO9urcY+VXvxXIc6ZPFg
+# SwVP77kv7AkTAgMBAAGjggGCMIIBfjAfBgNVHSMEGDAWgBQaofhhGSAPw0F3RSiO
+# 0TVfBhIEVTAdBgNVHQ4EFgQUAw8xyJEqk71j89FdTaQ0D9KVARgwDgYDVR0PAQH/
+# BAQDAgbAMAwGA1UdEwEB/wQCMAAwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwSgYD
+# VR0gBEMwQTA1BgwrBgEEAbIxAQIBAwgwJTAjBggrBgEFBQcCARYXaHR0cHM6Ly9z
+# ZWN0aWdvLmNvbS9DUFMwCAYGZ4EMAQQCMEQGA1UdHwQ9MDswOaA3oDWGM2h0dHA6
+# Ly9jcmwuc2VjdGlnby5jb20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNybDB0
+# BggrBgEFBQcBAQRoMGYwPwYIKwYBBQUHMAKGM2h0dHA6Ly9jcnQuc2VjdGlnby5j
+# b20vU2VjdGlnb1JTQVRpbWVTdGFtcGluZ0NBLmNydDAjBggrBgEFBQcwAYYXaHR0
+# cDovL29jc3Auc2VjdGlnby5jb20wDQYJKoZIhvcNAQEMBQADggIBAEybZVj64HnP
+# 7xXDMm3eM5Hrd1ji673LSjx13n6UbcMixwSV32VpYRMM9gye9YkgXsGHxwMkysel
+# 8Cbf+PgxZQ3g621RV6aMhFIIRhwqwt7y2opF87739i7Efu347Wi/elZI6WHlmjl3
+# vL66kWSIdf9dhRY0J9Ipy//tLdr/vpMM7G2iDczD8W69IZEaIwBSrZfUYngqhHmo
+# 1z2sIY9wwyR5OpfxDaOjW1PYqwC6WPs1gE9fKHFsGV7Cg3KQruDG2PKZ++q0kmV8
+# B3w1RB2tWBhrYvvebMQKqWzTIUZw3C+NdUwjwkHQepY7w0vdzZImdHZcN6CaJJ5O
+# X07Tjw/lE09ZRGVLQ2TPSPhnZ7lNv8wNsTow0KE9SK16ZeTs3+AB8LMqSjmswaT5
+# qX010DJAoLEZKhghssh9BXEaSyc2quCYHIN158d+S4RDzUP7kJd2KhKsQMFwW5kK
+# QPqAbZRhe8huuchnZyRcUI0BIN4H9wHU+C4RzZ2D5fjKJRxEPSflsIZHKgsbhHZ9
+# e2hPjbf3E7TtoC3ucw/ZELqdmSx813UfjxDElOZ+JOWVSoiMJ9aFZh35rmR2kehI
+# /shVCu0pwx/eOKbAFPsyPfipg2I2yMO+AIccq/pKQhyJA9z1XHxw2V14Tu6fXiDm
+# CWp8KwijSPUV/ARP380hHHrl9Y4a1LlAMYIFkjCCBY4CAQEwgZAwfDELMAkGA1UE
+# BhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2Fs
+# Zm9yZDEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSQwIgYDVQQDExtTZWN0aWdv
+# IFJTQSBDb2RlIFNpZ25pbmcgQ0ECECwnTfNkELSL/bju5S9Y3lMwDQYJYIZIAWUD
+# BAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMx
+# DAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkq
+# hkiG9w0BCQQxIgQgp6qxc3PwJMmOD1s7w7xvghZPwT2MNoMBy0MqLwKbDVYwDQYJ
+# KoZIhvcNAQEBBQAEggEAGp5qSj55GLL6rynzo0LScV9h/+mF3wdfltKxdIJYcSv1
+# BaZBBqQUPOrwa2STxe0svx3Y/gTj/J5hLyCf4GVDRyHT/1XHpG4MbDbOg6THzAao
+# C5lENGVZIoi8uLdMNmJkMgoqldT7DtxuUatv0apWr7YTS6ldjX3QUmOhQn3QA8Tr
+# MLRcoA2BB5gA0X6vjXadTdJSBakST+Lelx7Ux14P5Ma4p/Hj9lqNVL1ULuoOVUQw
+# a6ArrZ6r4W3nKjPP+NMb72nnUpwSp8S2UoGuuMr3f4+3SZ48RiWGzz5TsblIaPDC
+# qFZPwY4nsxoPpmNZ5c9hBHZWKLGpMtl95iCw6GXDrqGCA0swggNHBgkqhkiG9w0B
+# CQYxggM4MIIDNAIBATCBkTB9MQswCQYDVQQGEwJHQjEbMBkGA1UECBMSR3JlYXRl
+# ciBNYW5jaGVzdGVyMRAwDgYDVQQHEwdTYWxmb3JkMRgwFgYDVQQKEw9TZWN0aWdv
+# IExpbWl0ZWQxJTAjBgNVBAMTHFNlY3RpZ28gUlNBIFRpbWUgU3RhbXBpbmcgQ0EC
+# EDlMJeF8oG0nqGXiO9kdItQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMx
+# CwYJKoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNDAyMjYyMTQxNDRaMD8GCSqG
+# SIb3DQEJBDEyBDCCqeByS2fNVXFYU9PbHl2kYHpNafQY9Cy2q1f5eARTOoFTshlg
+# ozdzMSgT1vHZyeYwDQYJKoZIhvcNAQEBBQAEggIALUUh64lAIJvp9D58m/6bFX9T
+# QhJAw1lN2fVKyRbTc1qiy/1x3V0raKG5fl3B3ujikbQnrzAOszlhfxIOGcBK4Nmb
+# cpoqxC3d5j4pSzgkYqgVwS/8enIO1VH7zgvfQO50w7YZ0G8OlpP0sorBLPNCJWuT
+# iGrx8AqnVBFKIk6hC/lzMfKzjiHKh+A90sUxkRADYG6AK2j4zMqKIbymHdwIksZQ
+# i0IenOnED8cmvLgpe+dcMqZ/pJmpT1O8wx9XXNYHW/52iolojb6F8/reTVOeHQhL
+# ozJj4V6uHJbmWXmCHs1JW5Hgmz8/BqUGD0jnUGnPa45phrFcfRv8Qz//e3ubJ08e
+# DX5v8N7E7oBqdMQwfMeOC9YQgEF/QBbsHtHDzS9GaVQdIK3t/vC+/CjP7YHuJCef
+# 3MExOO86pGWHReuh4ym3o+cE6BmIGTKLOOxQAtQOUgVOQvqMtklMVET33fPlbK6x
+# 3RmbetzZZKEG4D1Tf6WPKvKm7aVvSfF/Tpu765O3gDJv6AkrlTJplqR94qdMTiQT
+# HeHyACqeTLJ8yryCpG/S47beVtCQrOyUMxGB0x/609xoCtP+2yT8O28mimnCdZS+
+# hlnNWNjDRXnkOuZbbNoMpt7G/LdE6PpKwDE1j8oTRoGOLoU8e5p9hqNo/wlvwnSg
+# lICTdvumRxK8cB3QEY8=
 # SIG # End signature block
