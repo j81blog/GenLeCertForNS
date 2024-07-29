@@ -227,7 +227,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.28.0
+    Version   : v2.29.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -627,7 +627,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.28.0"
+$ScriptVersion = "2.29.0"
 $PoshACMEVersion = "4.24.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -2796,13 +2796,29 @@ try {
                     }
                 } catch { }
 
-                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword))
-                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword))
+                try {
+                    $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword))
+                } catch {
+                    $PreLogLines += "E;CONFIGFILE;Could not read the ADCCredential. ERROR: $($_.Exception.Message)"
+                }
+                try {
+                    $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword))
+                } catch {
+                    $PreLogLines += "E;CONFIGFILE;Could not read the SMTPCredential. ERROR:$($_.Exception.Message)"
+                }
                 if ($Parameters.certrequests.Count -gt 0) {
-                    $Parameters.certrequests | ForEach-Object { $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $_.PfxPassword) }
+                    $Parameters.certrequests | ForEach-Object {
+                        try {
+                            $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $_.PfxPassword)
+                        } catch {
+                            $PreLogLines += "E;CONFIGFILE;Could not read the PfxPassword. ERROR:$($_.Exception.Message)"
+                        }
+                    }
                 }
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
+                $PreLogLines += "E;CONFIGFILE;Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
+                $PreLogLines += "I;CONFIGFILE;Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
             Write-DisplayText -ForeGroundColor Green " Done"
         } else {
@@ -2865,9 +2881,16 @@ if ($AutoRun) {
         $SMTPCredentialUsername = $Parameters.settings.SMTPCredentialUsername
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
         if ($SMTPCredentialPassword.Length -gt 0) {
-            $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
+            try {
+                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
+            } catch {
+                $PreLogLines += "E;PARAMETERS;Could not read the SMTPCredentialPassword. ERROR:$($_.Exception.Message)"
+            }
+        } else {
+            $SMTPCredentialPassword = [SecureString]::new()
         }
         if ([String]::IsNullOrEmpty($SMTPCredentialUsername)) {
+            $SMTPCredentialUsername = $null
             $PreLogLines += "D;PARAMETERS;SMTPCredential not Initialized, skipped"
         } else {
             $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
@@ -5480,8 +5503,8 @@ if ($CertificateActions) {
 
         }
         if ($CertRequest.CleanExpiredCertsOnDisk -eq $true) {
-            Write-ToLogFile -i -C RemoveExpiredCerts -M "Removing expired certificates on disk (`"*.$($CertRequest.CN.Replace('*.',''))`")"
-            Write-DisplayText -Title "Removing expired certificates on disk (`"$($CertRequest.CertDir)\*.$($CertRequest.CN.Replace('*.',''))`")"
+            Write-ToLogFile -i -C RemoveExpiredCerts -M "Removing expired certificates on disk (`"*-$($CertRequest.CN.Replace('*.',''))`")"
+            Write-DisplayText -Title "Removing expired certificates on disk (`"$($CertRequest.CertDir)\*-$($CertRequest.CN.Replace('*.',''))`")"
             Write-DisplayText -Line "Removing files older than"
             Write-DisplayText -ForeGroundColor Cyan "$($CertRequest.CleanExpiredCertsOnDiskDays) Day(s)"
             Write-DisplayText -Line "Removing files"
@@ -5731,8 +5754,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIndQYJKoZIhvcNAQcCoIInZjCCJ2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCByZjGvM7S40clJ
-# ieakUfmPdUton3d5dQOW0bzWOf8u96CCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCwHZmliLWaiw61
+# fucW/0PEcoWW3v9XEe2xrhDJsf2NQKCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -5909,35 +5932,35 @@ TerminateScript 0
 # IDIwMjEgQ0ECEAgyT5232pFvY+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYK
 # KwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIB
 # BDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg
-# Blt2atjCIwwD8FIC/gZwMWVQnEsKDRzLYbehFuErDuswDQYJKoZIhvcNAQEBBQAE
-# ggGAhCCsqQraL3UIq183Z4iqpfamgTfAe4feDPrH6htjdjNDPiSSK9DkYtkPaGR8
-# OYlP93wVTfxrF8tv9J4pecnEyWK6ZC2hn58COaSQzQzDm/45D6HoSo9Bb3F7yT5o
-# oFjkz9F/m/xG2EVjXZ9nw2c1lhFkZDik+sDsnuNcBSy9BwxuTlg4zCY8qGjCWVjj
-# RGYKFw+bzM4RiErtYaG91fnsIeMOpvltOea57zVw0sDGKWAKTLHO3DXUh3PCeQVR
-# f15TXnULhWf0b4Mvqb2+4504b6040An+rwAKNuaSa8DObkep/rHDRYZvwmQ2IpKI
-# uNSDHRtJg+X5+uq61Iy8O7SPMU+h6ymDpSP1QDo+oQcwyuHixnNrGmy2W8al86LQ
-# 9Etc4j1laoO78ow64ldd144iiRnf04F+sY5pfBbILzFHjmPJkLvsYdS3CDZV7Ui/
-# 3Od2zHqVanYrimESuVpZSPov1Tb0iliw29x8OfGn/z0ieFYWSgHl2iJQNZ66V4zE
-# Rv/5oYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
+# jFgHg1BhjDrzPh0ORXbcxhSkRBAWV5yiiaiAq3KRQ4swDQYJKoZIhvcNAQEBBQAE
+# ggGALt+PRD90IEbVT2YfIQSDTSopuxxpcw2epzf21n7cHAu7vHNsKFIWQTxGmARI
+# xhQeyLwczgY981gJxDewSlSh+kfBYEseq8Vpwe6lHrxa1thol7frkb4oE32rAPqa
+# aPLygBOHNCdlgAoMuzrV7XcOxxI+AI/4mg7kvThNf2SeNK/gRd2O7O60nv0oqKDA
+# Nw00Fk89lfKU9Sd9nT4dGXs5/QIb6o+TmS9x9jAHKcWeO4yHW8uAcYyq9JHNnith
+# 03Cw43vCTtLk1wwweVCYcLjncMUUG8pWvlV1Yc95ghbRH1RFu+/ZZZEfprTqAi7a
+# HhLI3RJ6VfJpGIIaF5KSPabMiDLfPxqIPag6t8Ar15mK82WmtCvOrYy3b/TD5E3S
+# dsvVigHp/Y6q7st+bJLQ0s4vWTfghIBxediCb4ml5pVczAjLCF7Q+PMIozUgPjYa
+# mXsFSNGkbEpVpN+ce4exmu0kLBSHr4w0Y/Jaz042LIeW04s8P8cEbpg2FWsLC6og
+# PL2noYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
 # UEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMb
 # Q2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBAhAJxcz4u2Z9cTeqwVmABssxMA0G
 # CWCGSAFlAwQCAgUAoIIBVjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJ
-# KoZIhvcNAQkFMQ8XDTI0MDcyOTEyMTgwM1owNwYLKoZIhvcNAQkQAi8xKDAmMCQw
+# KoZIhvcNAQkFMQ8XDTI0MDcyOTE0MjI0NFowNwYLKoZIhvcNAQkQAi8xKDAmMCQw
 # IgQg6pVLsdBAtDFASNhln49hXYh0LMzgZ5LgVgJNSwA60xwwPwYJKoZIhvcNAQkE
-# MTIEMNSVB2yCFVDKwcRq1G+Y/1wSm6qtyNkJsf2JTVcD7K5Azrrt1+M7lsutSoKd
-# 8eS+KTCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
+# MTIEMK089Dp0RIvJ+7pXFYrsmuUtKgg0dluMGtkMg/qqJl71MXiQ9QFBV/y39A+Q
+# Y4B6QDCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
 # E9Bqped3MG4wWqRYMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0
 # YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAy
-# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgBpSn3ISGI/
-# CH2xILhYufaDWCrz3dbZnui9tNa3W47I0yVZjI8hojvYDGSp1tD9+uumcU/YJQdd
-# C9ZuH2Lt7ZsMyIoPM7mglA5OYgs9Pnwy2Vhz5Hlx4ZPwS0O3GZYgIkZval0RAiJD
-# zw7ZT03q3wJHX1Hoe5qjNXxEZwX9sNPs3yUj8sZbmWJ+idIEJn7WC48fBSk0SUJt
-# llfxKXYw/ycKl02LYQ3ysADjIzOIyZEddNgu6QJoZFPZFD/WlQceDCXCT26CcWxq
-# ImtPQV9s8b+RcvHtIiUd9j9ZN7DbCU/0Qlc1lSLfpr2nLdIxoi0yeNkWcobfh1I1
-# xjkJz+3YlMjBFa+H3bbU03A0F0WK6Jf8sbqSqBJUwEWCfv/JcQCWAOI3F7Fd3UtI
-# zchX3TgcxhWCt3n5HNBjyUDktk5RdYsa80td1qAkaPCoA+dwRFY9vWHJkNSNGlrY
-# XZj5d89kmN3l56mk+dj1vbzYX/IwuuU3xUTgOLvo2ma6LDN+rCYCFOyyjw/YPzfN
-# uALguvs32tGXzYo9usguwCDTYg+edQhtqeXaLAGXjJBxT8ih5SlGoVQBRYUyeZ6I
-# 61Ja0rGJahk4vPyG/OtUUP+Q4E7TNL8V9Uq+AoY6Q7E/StE3Zk+hmusaY+7yXQ9z
-# ubHrC/1imXkiNjOq0CTZkTxCFdtUtJXK9w==
+# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgAvAzXTdtBn
+# l+abqsj+iANp5ADsXEiyBacRNl5ypVMl4ItMcIAkUJSt4rSLNn7DzjMH8T1Dpgpl
+# J/zTKOR+EzOVJlvFRIIUvuX7gdSRnnYsO8wNvIedCtrWp6M2fxuwRTWLcZWEzcQU
+# YmgCqqyXkpkHU3Yb2Olp5MpU1jUnkTqdcCjEqcv8dM8S6y/lQWaMdyd8KNQQ+5H0
+# BOeH7qMtbgkyX71Tw3rxFjr8UVIptqVHynNw5Bt2k5fcgSyPzqAH0+4bi2yjkdNs
+# FjWaNxWcQWtZ9Fnqha5G8g0Tk8tsyll3D1iruQRhuJoK3TuLO4c9yp4PjsuDTDY9
+# 8axGy8yXWrdPrB3fv6zRPLls3r+8Bj+1lV5HCAJ6gxZLButzthcLNwdk/UoQPlsM
+# DT2vS1o0T0wK5gUFgq3ZQOAJG6sDFpBPYNwDwtPKr/L0KFapK3JPHKYlD8DXDZjz
+# xDjlHP24Fj8MaHoyNf9rDVoTNkKo0ser/EvrpTdbiBjKwgVRRdKdj3leaanTQ6IB
+# r7KU/Rrk7m3GAwvT0+IN8PVfJ3A/3SJqcrNWR8feeEW9cQi+CBCKY4meUNXEk+h6
+# lwOOaSS/C5svdLPiJss0sEKwZm9u+3prU8R928wHvs2eL6JkZu3Py2ngS7RplAe9
+# mdDWzXVth2oBlWrpHMqnJ0k6fafEzXC1iA==
 # SIG # End signature block
