@@ -3274,10 +3274,15 @@ if ($ADCActionsRequired) {
 if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Blank
     $CSVipString = ""
-    Write-Warning "When you want to use own names instead of the default values for VIPs, Policies, Actions, etc."
-    Write-Warning "Please run the script with the optional parameters. These names will be defined in the Command Policy."
-    Write-Warning "Only those configured are allowed to be used by the members of the Command Policy `"$($NSCPName)-(Basics|Custom)`"!"
-    Write-Warning "You can rerun this script with the changed parameters at any time to update an existing Command Policy"
+    Write-Information "INFO: When you want to use own names instead of the default values for VIPs, Policies, Actions, etc." -InformationAction Continue
+    Write-Information "INFO: Please run the script with the optional parameters. These names will be defined in the Command Policy." -InformationAction Continue
+    Write-Information "INFO: Only those configured are allowed to be used by the members of the Command Policy:" -InformationAction Continue
+    if ($NSCPName.length -ge 24) {
+        Write-Information "INFO: `"$($NSCPName.subString(0,24))-(Basics|LEBkEd|LEFtEd)`"!" -InformationAction Continue
+    } else {
+        Write-Information "INFO: `"$($NSCPName)-(Basics|LEBkEd|LEFtEd)`"!" -InformationAction Continue
+    }
+    Write-Information "INFO: You can rerun this script with the changed parameters at any time to update an existing Command Policy" -InformationAction Continue
     Write-ToLogFile -I -C ApiUserPermissions -M "CreateUserPermissions parameter specified, create or update Command Policy `"$($NSCPName)-(Basics|Custom)`""
     Write-DisplayText -Title "Api User Permissions Group (Command Policy)"
     Write-DisplayText -Line "Command Policy Name"
@@ -5754,8 +5759,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIndQYJKoZIhvcNAQcCoIInZjCCJ2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCwHZmliLWaiw61
-# fucW/0PEcoWW3v9XEe2xrhDJsf2NQKCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC6EoowpJtNLKby
+# /5GWwit4HDaqAv4nHb/ojVtgzvOg6qCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -5932,35 +5937,35 @@ TerminateScript 0
 # IDIwMjEgQ0ECEAgyT5232pFvY+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYK
 # KwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIB
 # BDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg
-# jFgHg1BhjDrzPh0ORXbcxhSkRBAWV5yiiaiAq3KRQ4swDQYJKoZIhvcNAQEBBQAE
-# ggGALt+PRD90IEbVT2YfIQSDTSopuxxpcw2epzf21n7cHAu7vHNsKFIWQTxGmARI
-# xhQeyLwczgY981gJxDewSlSh+kfBYEseq8Vpwe6lHrxa1thol7frkb4oE32rAPqa
-# aPLygBOHNCdlgAoMuzrV7XcOxxI+AI/4mg7kvThNf2SeNK/gRd2O7O60nv0oqKDA
-# Nw00Fk89lfKU9Sd9nT4dGXs5/QIb6o+TmS9x9jAHKcWeO4yHW8uAcYyq9JHNnith
-# 03Cw43vCTtLk1wwweVCYcLjncMUUG8pWvlV1Yc95ghbRH1RFu+/ZZZEfprTqAi7a
-# HhLI3RJ6VfJpGIIaF5KSPabMiDLfPxqIPag6t8Ar15mK82WmtCvOrYy3b/TD5E3S
-# dsvVigHp/Y6q7st+bJLQ0s4vWTfghIBxediCb4ml5pVczAjLCF7Q+PMIozUgPjYa
-# mXsFSNGkbEpVpN+ce4exmu0kLBSHr4w0Y/Jaz042LIeW04s8P8cEbpg2FWsLC6og
-# PL2noYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
+# qcWXPUh4aLzPcW9IpFgQM6rn8V67vV8kVwSOx1IWiLUwDQYJKoZIhvcNAQEBBQAE
+# ggGAj5juc2lvwSDTl3Tpi/qsVBknrR9+EpdNvd88e7bK55KwfXfUVJiLB+ZTGoCa
+# 6RSQqeLZllA9uDcdPQAvpQxcevlQgBUGUOVeRfnUvJDzuNcwy9KwADnMofZYHUs4
+# 2jGh0sYWkJoQBOm9wAGR7b9XsbnKHqhebdZU/lZzkm4L2RunWS5STuUy3YrSNbiH
+# 2nomAuwUoUikxuUHuDt65vtyLWGa5xMZc/wYOmgyHwR9xqIlCaZd3KCT+SyUgENL
+# CPGCJmtQzD6Fn0f4J2mN8xf/VBNNBcEDHFj+Z5xgvBYsi2Gsn4jrdJQLZ3wK25ET
+# MlPUhz6XRH0oGrebkQOe5b9rIqa1EdmnCABThwMIWdt66tWNXizLEfpUe5jj5vcH
+# /iHCjF/IXbsYRhVQjo+9abP4sVUT9SA38iH2AFJLaTn4jPzBg34iZpeYwkbqAFRw
+# Cbni3fFvJqgjT1wjCfDYnaXUUBYfLUEGXzxS/kb+6EWG/HIrN33HGRgaMsg2X5/P
+# nQ5hoYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
 # UEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMb
 # Q2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBAhAJxcz4u2Z9cTeqwVmABssxMA0G
 # CWCGSAFlAwQCAgUAoIIBVjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJ
-# KoZIhvcNAQkFMQ8XDTI0MDcyOTE0MjI0NFowNwYLKoZIhvcNAQkQAi8xKDAmMCQw
+# KoZIhvcNAQkFMQ8XDTI0MDcyOTE1NTQ1OVowNwYLKoZIhvcNAQkQAi8xKDAmMCQw
 # IgQg6pVLsdBAtDFASNhln49hXYh0LMzgZ5LgVgJNSwA60xwwPwYJKoZIhvcNAQkE
-# MTIEMK089Dp0RIvJ+7pXFYrsmuUtKgg0dluMGtkMg/qqJl71MXiQ9QFBV/y39A+Q
-# Y4B6QDCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
+# MTIEMHbCjmRCm4kCgS+ggWnSJm4rN0ynVu4D7+HQ1f5fKUX/bTDQ/6cENxjiZLcC
+# 1/aBODCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
 # E9Bqped3MG4wWqRYMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0
 # YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAy
-# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgAvAzXTdtBn
-# l+abqsj+iANp5ADsXEiyBacRNl5ypVMl4ItMcIAkUJSt4rSLNn7DzjMH8T1Dpgpl
-# J/zTKOR+EzOVJlvFRIIUvuX7gdSRnnYsO8wNvIedCtrWp6M2fxuwRTWLcZWEzcQU
-# YmgCqqyXkpkHU3Yb2Olp5MpU1jUnkTqdcCjEqcv8dM8S6y/lQWaMdyd8KNQQ+5H0
-# BOeH7qMtbgkyX71Tw3rxFjr8UVIptqVHynNw5Bt2k5fcgSyPzqAH0+4bi2yjkdNs
-# FjWaNxWcQWtZ9Fnqha5G8g0Tk8tsyll3D1iruQRhuJoK3TuLO4c9yp4PjsuDTDY9
-# 8axGy8yXWrdPrB3fv6zRPLls3r+8Bj+1lV5HCAJ6gxZLButzthcLNwdk/UoQPlsM
-# DT2vS1o0T0wK5gUFgq3ZQOAJG6sDFpBPYNwDwtPKr/L0KFapK3JPHKYlD8DXDZjz
-# xDjlHP24Fj8MaHoyNf9rDVoTNkKo0ser/EvrpTdbiBjKwgVRRdKdj3leaanTQ6IB
-# r7KU/Rrk7m3GAwvT0+IN8PVfJ3A/3SJqcrNWR8feeEW9cQi+CBCKY4meUNXEk+h6
-# lwOOaSS/C5svdLPiJss0sEKwZm9u+3prU8R928wHvs2eL6JkZu3Py2ngS7RplAe9
-# mdDWzXVth2oBlWrpHMqnJ0k6fafEzXC1iA==
+# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgCEn1E8tZgc
+# 8Lpc/8AZmQ+N7XqoTkmWp9AkQ86xhSAvQGRCHeEQ9I8Zbq52BEV4vzLnCEtLS3qd
+# 7shI1ZhGA+F5LH4MGAH3H0kMxEHE/4ClDslj8p9n9srW6d1F+IEK/h14GTCvcZhI
+# dRRQqhP6i6EKF8FZVCCUjzOEG3tX2ePfIdUrplVAcBS9tW7vF0zvttgfJgVE8fbu
+# NN8YNSZujX+t0cV0bYDZqOp7MtkDPHyPcBBVUaLTfyQwbCYwMO3ul6FjJQNyqAvi
+# 39XAvkE6m7ZccgMQ+kNwY7Xth3Ih4hXiw+D7192XYH34HcI28QCOIRUEePWLL8/p
+# G6KYtmC6lEa2LGIjxp/6CfNylbflqyG95yYZxHPW6mh2IG832/+bsckcGBewLaUn
+# ynppluXTcPt9MDGiOZdUa01/YXa9YjECANxnkMbJXhrn1fxErBN+Kl/tQ7xxOPSg
+# EpIgbsqe51p5B+r/sKIKfVgDOTaJcWNeiVGqXt18ktUVRBf3hrcGHci2mjpVhYiS
+# JAHpI1wlVe8fAdXLlJcRroujhFC6hqIAn7WJuXdNitexDu360jth/6YByKjrSrB0
+# wdZIpSK2LJMWpYsAMR9Hv7tIPAP+0x/1otAI8vckc60Sg83GL2P5c1eOmhpTYFgB
+# m28ULggxGvmmSeFF2YILthwZv6p/kilnmA==
 # SIG # End signature block
