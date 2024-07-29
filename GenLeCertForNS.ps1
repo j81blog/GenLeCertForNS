@@ -227,7 +227,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.27.0
+    Version   : v2.28.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -627,7 +627,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.27.0"
+$ScriptVersion = "2.28.0"
 $PoshACMEVersion = "4.24.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -3289,8 +3289,8 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
 
     $CmdSpec = @{
         Basics     = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)"
-        LEBackend  = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
-        LEFrontEnd = "(^show\s+ns\s+version)$CSVipString"
+        LEBkEd  = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
+        LEFtEd = "(^show\s+ns\s+version)$CSVipString"
     }
 
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
@@ -3302,6 +3302,13 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
         Write-DisplayText -Line "Command Spec $($item.Name)"
         try {
             $policyName = "$($NSCPName)-$($item.Name)"
+            if ($policyName.length -ge 31) {
+                $policyName = "$($NSCPName.subString(0,24))-$($item.Name)"
+                Write-ToLogFile -D -C ApiUserPermissions -M "$($policyName) was longer that 31 char. New policy name: `"$policyName`""
+            } else {
+                $policyName = "$($NSCPName)-$($item.Name)"
+                Write-ToLogFile -D -C ApiUserPermissions -M "Policy name: `"$policyName`""
+            }
             $Filters = @{ policyname = $policyName }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemcmdpolicy -Filters $Filters
             if ($response.systemcmdpolicy.count -eq 1) {
@@ -5706,8 +5713,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIndQYJKoZIhvcNAQcCoIInZjCCJ2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB0vgeTD2kAgHwf
-# HR/vEulerQ1tToMI0Jj3ZOnHatEIqqCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDyybcHx14KRlP3
+# XltN0c0QW023ihcR7eRuZVHuEteNgKCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -5884,35 +5891,35 @@ TerminateScript 0
 # IDIwMjEgQ0ECEAgyT5232pFvY+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYK
 # KwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIB
 # BDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg
-# mKSiZ+ZfGOD8BKjtmFQ/TW8Z9QbGOY/bAjvXkri6AN0wDQYJKoZIhvcNAQEBBQAE
-# ggGABBqms+NRBWfXQeS+y+vqwFaHncdY1xp6UI2KUGMfuwHvTXoR0sP5SRmCmgcY
-# Q9paQFRaqxlCWQRWhJ3YRKdq4wbWg50SMmFTcc/IkJESJ3PcI3cQlOLmIAL34WX8
-# VhNIGWdWE3sF7Cu3s6ISobHbouUknUrutxI5t/FCQXvmsBZHt+LJP6sCtAUEwpJj
-# AipsDg11+33xnp58FEzCzC3DGKfnc0WErD/R40LLvOysKmCIZpwFHDk/hqoDPpC8
-# G5IbsFBGO4ZXTpGnRrJJR/YXFq04YfAb2PwCGpS5dBL5C6rYp3x9eRomT9hamFe7
-# qfA7tnSn/Ws9BboW121v2lVUpGB1Dj/ksBCrUcSu8ffvYMy63BiiVcWfPyp3OUNB
-# Lv9dVJ+JdN1Ra7b6taLPfjW4YQtF3p7tsskX8kqbfWAishMxcZ3d8P9fc6dsUtBI
-# vcmcR4haFp0L0f4bx3SRWBDwU3bM8oTY0RcV/WRNXYr4Naq4uwNHfHX6B7BudDN5
-# g0juoYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
+# 0lSBmuX95/MFyHEV1u3z9j75zAkrW0vCIIu9RDpwURswDQYJKoZIhvcNAQEBBQAE
+# ggGAFtOnFWu5XahPeEjgsl1lXZ2zvj4M4QRBhhI7OXC19H6jOfbQoYHcoOJvv3Kx
+# aGjMx6hZT6rs2Mz+kWVehLDenQ02/V1lILbTgIoyW6VNOvBx4Jiw40qVoHEoYXDd
+# s3uIJVLrtVW84MZQYqL74NQqkpuw48qC/22YA2/233o+33mD57nJ+ZXOZIXJbXAM
+# l8SfKQHMCIOzZEPX0kKfExFTUBluH3URl8ilDt0oAFTqMm7wM5MlM523rTle4aMH
+# iekKnjMHxXY8F7qZD8ZyKguIlUdlwh0dSiDN7zCT9X8uMD7kXWPRP7L+3H1K0vOK
+# rXp0YNZtYCvLTakjs6Jrq+EHIyMbhdK/vr4Zx/gnzK2+kekJPCXznYcXrZs/cK/l
+# vceJ0ybTooetOT8tA0TJxL9Ph0eh0pBTGQvqTPAOfIj8PYVqtTE7QHY697/H9WaT
+# Tndi/qU4kBWVjVnnm3SpcYSnGFog33aAqZf1+kruUPLdeL6URawKgC4c29N5W+sc
+# Y3lioYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
 # UEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMb
 # Q2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBAhAJxcz4u2Z9cTeqwVmABssxMA0G
 # CWCGSAFlAwQCAgUAoIIBVjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJ
-# KoZIhvcNAQkFMQ8XDTI0MDcwNjE4MjExN1owNwYLKoZIhvcNAQkQAi8xKDAmMCQw
+# KoZIhvcNAQkFMQ8XDTI0MDcyOTExMzUwNFowNwYLKoZIhvcNAQkQAi8xKDAmMCQw
 # IgQg6pVLsdBAtDFASNhln49hXYh0LMzgZ5LgVgJNSwA60xwwPwYJKoZIhvcNAQkE
-# MTIEMEW3Ryc41GEOu48G22kijdbpNawfkoW07IaNYPtpPFnuHSvvqmUrGghxYR9S
-# 3mjDHDCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
+# MTIEMOAQIq7kAn8mJxl2P5bqxcaT15N3jUx55wnbzKm1fteignzOTP0hy6dLQe2a
+# 4OqrSjCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
 # E9Bqped3MG4wWqRYMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0
 # YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAy
-# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgBIOl+8Z4Xj
-# rmhkH5Lhrb2xBK/qfcOMxZjXZomqNsoHvyRwh8H97uWYBhMvFJJGYW73xD/o2KHk
-# ep2d52H3y2DisCkshgfD7QEuG/L0vkYL4mehEMVHZSClBOrBBQCKPhS77mDXfiA9
-# vKO0ceUmbx5k65NlKIFaI3LO7iWynS3vtsmGjrqClcqzqgaaiFQyRawHalz2F2Tl
-# D6JM/rpzn3+sxlTklIMqzKgDm+XOL/PQwiCcaog/Ktr0/LwP2MemzYUZ944N9SR5
-# orJ+8+QQOftRcavMdjM2Kx08gl/24Aauks0O5btdrGycfg70Zp3TRYD9znga3MYR
-# 0pwVV/EzQbZQAHkouIeDzpB/gAt/9XE+iOG+Pbn/BmWti0JVGBNkGfl+XraSm3GJ
-# rgUDKEYl9Uz+JgrdTXKL8j0wiZDAtR+4Q8MQHngsAFuB+C7H2OXcakoGKcnp5Dh4
-# 3Iga4W6PEUzWnOwMPJ2srk6RUIc130VZAc8po0Mwd1dtfMeKxPwb3gyGZP9YnMkt
-# gQrJI02J1kEUDuuhMKSoJJ8NSoqsT1vQaXJuDdsK8AHzuOLHSH1Tl5rPFHvWiJIi
-# 4nIXlOR9/9pA5J1YlvEIhOzca7YoIJTIg77MaPUZ8w0x5qQWKvvjKBqyzAQ9e4oI
-# xTsPuSiQtOKGaFvxpZXx5sYNgSaTimtdgw==
+# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgBO7djizHPL
+# cn2fANvf0D/7ROdqvT0CX9XQfO542SsUdPaqJx/w7WDbgXAgZU0tNOicf0Gw1n+V
+# ELuAVbXD9/bgRR/u+BlpDMKtvo7EOAgmD1Ng87AP2K7H8M6Fy288FMzBIW7nd/kl
+# W/H4SmAoUtwkwLr0kPdpkqEbSHCBDTJqsMuRHmZuKFYlkciokYuCjcfm+1bvGe3/
+# eLTECwXUhfOQ2d2F//qJttZL2YoFKjDV/SYdftiPZYXiXazd+/juS2K0PFZ5zD0n
+# X/e/VkXeaLyLSHxK1XzUo/z6r5No58SMZ23WDPyTXpECd2LzX02/AliKMqMUTF3z
+# uI115p7HCyU8GdHwiT3Fm13uynKPod7lfcwf63lefOPChUqS5PCy/cRFJFMR3qaU
+# g235fqeR12MAwBj2JiYK0wXi4hSgAhd2KdC5qfW9TFdQo3Qn7ZH+uFQSDcbF8fEW
+# K9YHRszA3rTh/tPFr9hfK5SGL0YxGbcLZHZ7APyP0Fb1nKTcJICGEUz28YX/W+tZ
+# L3kx2V3TDe4jjnnGGoBbCGilLgqanjIkBpnjtGprXw+DXgXYHRsYqipQYHq4A3tJ
+# WWlSHbmiw/pY0opGnqpu/nFeROMVSOe542xBrHlIa4XP9PG07A1vPuvhFSJLbNMC
+# bbiuuW6/E4MCY6MMYWShL68CxcIneE9uFw==
 # SIG # End signature block
