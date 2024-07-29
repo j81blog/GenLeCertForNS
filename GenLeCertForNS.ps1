@@ -3307,8 +3307,13 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
         try {
             $policyName = "$($NSCPName)-$($item.Name)"
             if ($policyName.length -ge 31) {
+                Write-DisplayText -ForeGroundColor Yellow "Policy name: `"$policyName`" is longer than 31 characters!"
+                $policyNameOld = $policyName
                 $policyName = "$($NSCPName.subString(0,24))-$($item.Name)"
                 Write-ToLogFile -D -C ApiUserPermissions -M "$($policyName) was longer that 31 char. New policy name: `"$policyName`""
+                Write-DisplayText -Line "Command Policy (new) Name"
+                Write-DisplayText -ForeGroundColor Cyan "$($policyNameOld) "
+                Write-DisplayText -Line "Command Spec $($item.Name)"
             } else {
                 $policyName = "$($NSCPName)-$($item.Name)"
                 Write-ToLogFile -D -C ApiUserPermissions -M "Policy name: `"$policyName`""
@@ -3428,9 +3433,18 @@ if ($CreateApiUser) {
         }
         Write-ToLogFile -I -C ApiUser -M "Bind Command Policy"
         Write-DisplayText -Line "User Policy Binding"
-        Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|LEBkEd|LEFtEd) "
+        $policyName = "$($NSCPName)"
+        if ($policyName.length -ge 24) {
+            $policyNameOld = $policyName
+            $policyName = "$($NSCPName.subString(0,24))"
+            Write-ToLogFile -D -C ApiUser -M "$($policyNameOld) was in total longer than 31 char. New policy name: `"$policyName`""
+        } else {
+            $policyName = "$($NSCPName)"
+            Write-ToLogFile -D -C ApiUser -M "Policy name: `"$($policyName)-(Basics|LEBkEd|LEFtEd)`""
+        }
+        Write-DisplayText -ForeGroundColor Cyan "$($policyName)-(Basics|LEBkEd|LEFtEd) "
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
-        $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -notin "$($NSCPName)-Basics", "$($NSCPName)-LEBkEd", "$($NSCPName)-LEFtEd" })
+        $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -notin "$($policyName)-Basics", "$($policyName)-LEBkEd", "$($policyName)-LEFtEd" })
         if ($bindingsToRemove.Count -gt 0) {
             Write-ToLogFile -I -C ApiUser -M "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
             Write-Warning -Message "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
@@ -3452,18 +3466,18 @@ if ($CreateApiUser) {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
         }
         ForEach ($item in $($CmdSpec.GetEnumerator())) {
-            $policyName = "$($NSCPName)-$($item.Name)"
+            $itemPolicyName = "$($policyName)-$($item.Name)"
             Write-DisplayText -Line "User Policy Binding"
-            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$policyName] "
-            if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $policyName }) {
+            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$itemPolicyName] "
+            if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $itemPolicyName }) {
                 Write-DisplayText -ForeGroundColor Green "Present"
-                Write-ToLogFile -I -C ApiUser -M "A bindings for `"$policyName`" already present"
+                Write-ToLogFile -I -C ApiUser -M "A bindings for `"$itemPolicyName`" already present"
             } else {
-                Write-ToLogFile -I -C ApiUser -M "Creating a new binding for `"$policyName`""
-                if ($policyName -like "*basic") { $prio = 10 }
-                if ($policyName -like "*LEBkEd") { $prio = 20 }
-                if ($policyName -like "*LEFtEd") { $prio = 30 }
-                $payload = @{ username = $ApiUsername; policyname = $policyName; priority = $prio }
+                Write-ToLogFile -I -C ApiUser -M "Creating a new binding for `"$itemPolicyName`""
+                if ($itemPolicyName -like "*basic") { $prio = 10 }
+                if ($itemPolicyName -like "*LEBkEd") { $prio = 20 }
+                if ($itemPolicyName -like "*LEFtEd") { $prio = 30 }
+                $payload = @{ username = $ApiUsername; policyname = $itemPolicyName; priority = $prio }
                 Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
                 Write-DisplayText -ForeGroundColor Green "Bound"
@@ -5717,8 +5731,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIIndQYJKoZIhvcNAQcCoIInZjCCJ2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAR0Fs34aaSAv6O
-# gcYYIB3Rr4IkPYPUpOYyixYRwV1oqqCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCByZjGvM7S40clJ
+# ieakUfmPdUton3d5dQOW0bzWOf8u96CCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -5895,35 +5909,35 @@ TerminateScript 0
 # IDIwMjEgQ0ECEAgyT5232pFvY+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYK
 # KwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIB
 # BDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg
-# Re+lgUcEPXbiVINdQi3vwg+J0gU0lVIgxqIMCjGepEAwDQYJKoZIhvcNAQEBBQAE
-# ggGAN+8TkWO/zbnecBhywPc/NhDl9WVgsWh4/mE32/lfPWUHusVFLSTHu5lHq+Qf
-# 3OIO2kx9+0++D4tuBV1Z0w6F7zTfLXC8/3/a2YwQxTuJfWFTb7KXWmIfeOF701cf
-# 9C0hCNi/ZcZ9qx1yU+649yx62ey3ENNmnRpu7yK5h/GX3fWf3NhExGnK2UnLOiLQ
-# cnAUpX1VMSGdyXGg6Oa3RTuOWpOVf1p2i0dc4j2TnXZIq88o5ZrXWjurWwMN6Gs1
-# dPPXnVm2NwtPExJU3PmeHjUQs7kTm4p0IFpImZywLTiDj+KCKTXCRPLpMqcjSvkm
-# BmkaT/il5UJFRejITpAKtif7ArM8PfT4Y8P/MIAbFJRqK1811qpAhDO0xUIpKpv9
-# nCM/4UPoyfJXpu8VxBd6ScL7A4IVPzwMqm+Ts9NpJ3+DNTy0U4ZIgaxn2d5HKOwN
-# zvvt6dV2ywvtiSMPOEJJT2crWwPMRfTuvclBZeC3k0LJUcBRuvb6o8BNpUcA2OSg
-# RS49oYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
+# Blt2atjCIwwD8FIC/gZwMWVQnEsKDRzLYbehFuErDuswDQYJKoZIhvcNAQEBBQAE
+# ggGAhCCsqQraL3UIq183Z4iqpfamgTfAe4feDPrH6htjdjNDPiSSK9DkYtkPaGR8
+# OYlP93wVTfxrF8tv9J4pecnEyWK6ZC2hn58COaSQzQzDm/45D6HoSo9Bb3F7yT5o
+# oFjkz9F/m/xG2EVjXZ9nw2c1lhFkZDik+sDsnuNcBSy9BwxuTlg4zCY8qGjCWVjj
+# RGYKFw+bzM4RiErtYaG91fnsIeMOpvltOea57zVw0sDGKWAKTLHO3DXUh3PCeQVR
+# f15TXnULhWf0b4Mvqb2+4504b6040An+rwAKNuaSa8DObkep/rHDRYZvwmQ2IpKI
+# uNSDHRtJg+X5+uq61Iy8O7SPMU+h6ymDpSP1QDo+oQcwyuHixnNrGmy2W8al86LQ
+# 9Etc4j1laoO78ow64ldd144iiRnf04F+sY5pfBbILzFHjmPJkLvsYdS3CDZV7Ui/
+# 3Od2zHqVanYrimESuVpZSPov1Tb0iliw29x8OfGn/z0ieFYWSgHl2iJQNZ66V4zE
+# Rv/5oYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
 # UEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMb
 # Q2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBAhAJxcz4u2Z9cTeqwVmABssxMA0G
 # CWCGSAFlAwQCAgUAoIIBVjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJ
-# KoZIhvcNAQkFMQ8XDTI0MDcyOTExNTQzM1owNwYLKoZIhvcNAQkQAi8xKDAmMCQw
+# KoZIhvcNAQkFMQ8XDTI0MDcyOTEyMTgwM1owNwYLKoZIhvcNAQkQAi8xKDAmMCQw
 # IgQg6pVLsdBAtDFASNhln49hXYh0LMzgZ5LgVgJNSwA60xwwPwYJKoZIhvcNAQkE
-# MTIEMGnJyQeq/ZEY0zLxjY7mEPPZQNd9jqqICnWX7jxeGC8632gODYb9fC9zs8/7
-# TYubpjCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
+# MTIEMNSVB2yCFVDKwcRq1G+Y/1wSm6qtyNkJsf2JTVcD7K5Azrrt1+M7lsutSoKd
+# 8eS+KTCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
 # E9Bqped3MG4wWqRYMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0
 # YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAy
-# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgCEjQ3XlZLe
-# B1MeiIO91uLxlnBO6gs1q+lgp6xOJGiGYaCO0T+3TTBPAHqCuzQFw45LNxUKE3fM
-# 179IMRRKGmNUSFRj0BsqltjgSuLWoSQ9AjqgfyiWjeTQsHsJlmh9o7U1xPXTsfEw
-# 9ghE8Er0qYnuOXcUXX8WGA4dMXmybYfpwVNWPXhv7XoTj3cVcXUdeiC5/bSRfmhk
-# RKJG22eldGwonCoCBvi2p9Kc4xL/EGgttxGOjas1KAbLcTzLw2UrzpQZvNExQSaA
-# hAWgJPTbJn8B7OpmkJRoaOabdq0t17H+nJhMupLgtJpY+j2PSYFcynFu2d9+u9um
-# pXZFy2MFYPLla1VF0ticUh9oUYXnfGwlST7RIfqmSH+PPYKAy51Qi0jd3ZvAWRgM
-# O5HAv0xiW4QRYho4pzXgMQwZwJRszc4cbutvP60FTd8D+bDz6l+sleex727U03ys
-# xTqhNYniWIR5inH4jdJKA4XNnhXAG29IQAuY7I1isy3JT3RIZop0LwGnoOYVPwNT
-# Pb8vtZqjaTqaci0QWvAAaA05X0ZMKepDHIACeO+z9L8ACR9aTqvo3u3AMB1fKfAv
-# oBAF+mY55Z6BdYAhgjGbFJ5Os96DXgKl4/scvBpM0dBDeJ4NaGnR1mi9dADqb2xc
-# WH3zZiLfqzghu+NxwpXg6leh1DLLUVjkdg==
+# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgBpSn3ISGI/
+# CH2xILhYufaDWCrz3dbZnui9tNa3W47I0yVZjI8hojvYDGSp1tD9+uumcU/YJQdd
+# C9ZuH2Lt7ZsMyIoPM7mglA5OYgs9Pnwy2Vhz5Hlx4ZPwS0O3GZYgIkZval0RAiJD
+# zw7ZT03q3wJHX1Hoe5qjNXxEZwX9sNPs3yUj8sZbmWJ+idIEJn7WC48fBSk0SUJt
+# llfxKXYw/ycKl02LYQ3ysADjIzOIyZEddNgu6QJoZFPZFD/WlQceDCXCT26CcWxq
+# ImtPQV9s8b+RcvHtIiUd9j9ZN7DbCU/0Qlc1lSLfpr2nLdIxoi0yeNkWcobfh1I1
+# xjkJz+3YlMjBFa+H3bbU03A0F0WK6Jf8sbqSqBJUwEWCfv/JcQCWAOI3F7Fd3UtI
+# zchX3TgcxhWCt3n5HNBjyUDktk5RdYsa80td1qAkaPCoA+dwRFY9vWHJkNSNGlrY
+# XZj5d89kmN3l56mk+dj1vbzYX/IwuuU3xUTgOLvo2ma6LDN+rCYCFOyyjw/YPzfN
+# uALguvs32tGXzYo9usguwCDTYg+edQhtqeXaLAGXjJBxT8ih5SlGoVQBRYUyeZ6I
+# 61Ja0rGJahk4vPyG/OtUUP+Q4E7TNL8V9Uq+AoY6Q7E/StE3Zk+hmusaY+7yXQ9z
+# ubHrC/1imXkiNjOq0CTZkTxCFdtUtJXK9w==
 # SIG # End signature block
