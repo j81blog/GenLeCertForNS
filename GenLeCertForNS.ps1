@@ -125,6 +125,19 @@
 .PARAMETER IISSiteToUpdate
     Select a IIS Site you want to add the certificate to.
     Default value when not specifying this parameter is "Default Web Site".
+.PARAMETER UpdateGlobalVPNCertBinding
+    If specified, the script will try to update the Global VPN Certificate Binding with the new certificate
+.PARAMETER GlobalVPNCertBindingIncludeCA
+    If specified, the script will include the CA certificate in the Global VPN Certificate Binding
+    Only used when the UpdateGlobalVPNCertBinding parameter is specified
+.PARAMETER GlobalVPNCertBindingCrlCheck
+    Specify the CRL Check for the Global VPN Certificate Binding
+    Options: 'Mandatory' or 'Optional'
+    Only used when the UpdateGlobalVPNCertBinding parameter is specified
+.PARAMETER GlobalVPNCertBindingOcspCheck
+    Specify the OCSP Check for the Global VPN Certificate Binding
+    Options: 'Mandatory' or 'Optional'
+    Only used when the UpdateGlobalVPNCertBinding parameter is specified
 .PARAMETER PostPoSHScriptFilename
     Configure this parameter with a full path name to a PowerShell script.
     This script will be executed after a successful certificate request. The script needs three parameters:
@@ -227,12 +240,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.29.0
+    Version   : v2.30.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.24.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.28.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -460,6 +473,24 @@ param(
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$UpdateGlobalVPNCertBinding,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$GlobalVPNCertBindingIncludeCA,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [ValidateSet('Mandatory', 'Optional', IgnoreCase = $true)]
+    [String]$GlobalVPNCertBindingCrlCheck,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [ValidateSet('Mandatory', 'Optional', IgnoreCase = $true)]
+    [String]$GlobalVPNCertBindingOcspCheck,
+
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$IISSiteToUpdate = "Default Web Site",
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -627,8 +658,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.29.0"
-$PoshACMEVersion = "4.24.0"
+$ScriptVersion = "2.30.0"
+$PoshACMEVersion = "4.28.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -2974,6 +3005,10 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PfxPassword -Value $PfxPassword
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UpdateIIS -Value $([bool]::Parse($UpdateIIS))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name IISSiteToUpdate -Value $IISSiteToUpdate
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UpdateGlobalVPNCertBinding -Value $([bool]::Parse($UpdateGlobalVPNCertBinding))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name GlobalVPNCertBindingIncludeCA -Value $([bool]::Parse($GlobalVPNCertBindingIncludeCA))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name GlobalVPNCertBindingCrlCheck -Value $GlobalVPNCertBindingCrlCheck
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name GlobalVPNCertBindingOcspCheck -Value $GlobalVPNCertBindingOcspCheck
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PostPoSHScriptFilename -value $PostPoSHScriptFilename
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PostPoSHScriptExtraParameters -value $PostPoSHScriptExtraParameters
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CleanExpiredCertsOnDisk -Value $([bool]::Parse($CleanExpiredCertsOnDisk))
@@ -5314,6 +5349,88 @@ if ($CertificateActions) {
                         $mailDataItem.Text += "`r`nError while gathering data for mail, Error: $($_.Exception.Message)"
                     }
 
+                    #region UpdateGlobalVPNCertBinding
+
+                    if ($CertRequest.UpdateGlobalVPNCertBinding) {
+                        Write-DisplayText -Title "Global VPN Certificate Binding"
+                        try {
+                            Write-DisplayText -Line "Certificate Key Name"
+                            if (-not $($CertRequest.CertKeyNameToUpdate)) {
+                                Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "No Certificate Key Name found"
+                                Write-DisplayText -ForeGroundColor Red "No Certificate Key Name found"
+                                Invoke-RegisterError 1 "No Certificate Key Name found"
+                            } else {
+                                Write-DisplayText -ForeGroundColor Cyan $($CertRequest.CertKeyNameToUpdate)
+                            }
+                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Retrieving current SSL Certificate Binding for VPN Global"
+                            Write-DisplayText -Line "Check Current Binding"
+                            if ($response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type vpnglobal_sslcertkey_binding | Select-Object -ExpandProperty vpnglobal_sslcertkey_binding -ErrorAction SilentlyContinue) {
+                                Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Response: $($response | ConvertTo-Json -Compress)"
+                                if ($currentBinding = $response | Where-Object { $_.certkeyname -ieq $($CertRequest.CertKeyNameToUpdate) } ) {
+                                    Write-DisplayText -ForeGroundColor Cyan "Current Bindings found"
+                                    Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Current Binding: $($currentBinding | ConvertTo-Json -Compress)"
+                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Unbinding current certificate"
+                                    Write-DisplayText -Line "Unbinding Current Cert"
+                                    $arguments = @{ certkeyname = $($CertRequest.CertKeyNameToUpdate) }
+                                    try {
+                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type vpnglobal_sslcertkey_binding -Arguments $arguments
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully unbound certificate"
+                                        Write-DisplayText -ForeGroundColor Green "Successfully unbound certificate"
+                                    } catch {
+                                        Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to unbind certificate"
+                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                        Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
+                                    }
+                                } else {
+                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Bindings found, but not the one we are looking for"
+                                    Write-DisplayText -ForeGroundColor Cyan "Bindings found, but not the one we are looking for"
+                                }
+                            } else {
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "No current binding found"
+                                Write-DisplayText -ForeGroundColor Cyan "No current binding found"
+                            }
+                            try {
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Binding new certificate"
+                                $payload = @{
+                                    certkeyname = $($CertRequest.CertKeyNameToUpdate)
+                                }
+                                Write-DisplayText -Line "Include CA"
+                                if ($CertRequest.GlobalVPNCertBindingIncludeCA) {
+                                    $payload.cacert = $IntermediateCACertKeyName
+                                    Write-DisplayText -ForeGroundColor Cyan "Include CA: $($IntermediateCACertKeyName)"
+                                } else {
+                                    Write-DisplayText -ForeGroundColor Cyan "No CA included"
+                                }
+                                Write-DisplayText -Line "Certificate validity check"
+                                if ($CertRequest.GlobalVPNCertBindingOcspCheck.ToLower() -in 'mandatory', 'optional') {
+                                    $payload.ocspcheck = $CertRequest.GlobalVPNCertBindingOcspCheck.ToLower()
+                                    Write-DisplayText -ForeGroundColor Cyan "OCSP Check: $($CertRequest.GlobalVPNCertBindingOcspCheck)"
+                                } elseif ($CertRequest.GlobalVPNCertBindingCrlCheck.ToLower() -in 'mandatory', 'optional') {
+                                    $payload.crlcheck = $CertRequest.GlobalVPNCertBindingCrlCheck.ToLower()
+                                    Write-DisplayText -ForeGroundColor Cyan "CRL Check: $($CertRequest.GlobalVPNCertBindingCrlCheck)"
+                                } else {
+                                    Write-DisplayText -ForeGroundColor Cyan "No OCSP or CRL Check"
+                                }
+
+                                Write-DisplayText -Line "Binding New Certificate"
+                                $result = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type vpnglobal_sslcertkey_binding -Payload $payload
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully bound certificate"
+                                Write-DisplayText -ForeGroundColor Green "Successfully bound certificate"
+                            } catch {
+                                Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind certificate"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-DisplayText -ForeGroundColor Red "Failed to bind certificate"
+                            }
+                            $MailData += "NSIDP (Global) Certificate binding updated: $($CertRequest.CertKeyNameToUpdate)"
+                        } catch {
+                            Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Caught an error, $($_.Exception.Message)"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Invoke-RegisterError 1 "Caught an error, $($_.Exception.Message)"
+                        }
+                    }
+
+                    #endregion UpdateGlobalVPNCertBinding
+
                     ##Saving Config if required
                     Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
 
@@ -5438,9 +5555,21 @@ if ($CertificateActions) {
             #region PostPoSHScriptFilename
             Write-ToLogFile -I -C PostPoSHScript -M "Checking if parameter `"PostPoSHScriptFilename`" was defined."
 
-            if ($CertRequest | Get-Member -Name PostPoSHScriptFilename -ErrorAction SilentlyContinue) {
+            if (($CertRequest | Get-Member -Name PostPoSHScriptFilename -ErrorAction SilentlyContinue) -and (-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename)))) {
+                if (-Not (Split-Path -Path $CertRequest.PostPoSHScriptFilename -Parent -ErrorAction SilentlyContinue)) {
+                    Write-ToLogFile -I -C PostPoSHScript -M "PostPoSHScriptFilename is not a full path, trying to find it in the scripts folder."
+                    $tempPath = Join-Path -Path (Join-Path -Path $ScriptRoot -ChildPath "scripts") -ChildPath $CertRequest.PostPoSHScriptFilename
+                    Write-ToLogFile -I -C PostPoSHScript -M "Checking if `"$tempPath`" exists."
+                    if (Test-Path -Path $tempPath) {
+                        Write-ToLogFile -I -C PostPoSHScript -M "Found the script in the scripts folder."
+                        $CertRequest.PostPoSHScriptFilename = $tempPath
+                    } else {
+                        Write-ToLogFile -W -C PostPoSHScript -M "Could not find the script in the scripts folder."
+                    }
+                } else {
+                    Write-ToLogFile -I -C PostPoSHScript -M "PostPoSHScriptFilename is a full path."
+                }
                 $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
-
                 if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
                     Write-DisplayText -Title "Post PowerShell Script"
                     Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell Script defined, Filename: `"$($CertRequest.PostPoSHScriptFilename)`""
@@ -5463,6 +5592,7 @@ if ($CertificateActions) {
                                 & "$poshScript" -Thumbprint $Thumbprint -PFXfilename $PFXfilename -PFXPassword $PFXPassword @extraParams *>&1
                                 Write-ToLogFile -D -C PoSHScript -M "Post Script Ended [$LastExitCode]"
                             } -ArgumentList $CertRequest.PostPoSHScriptFilename, $FinalCertificate.Thumbprint, $pfxCertificateFilename, $PfxPassword, $CertRequest.PostPoSHScriptExtraParameters
+
                             $postPoSHScriptResult = $LastExitCode
                             Write-ToLogFile -D -C PostPoSHScript -M "Post Script Finished [ExitCode:$postPoSHScriptResult]"
                             if ($null -ne $output) {
@@ -5503,6 +5633,8 @@ if ($CertificateActions) {
                 } else {
                     Write-ToLogFile -I -C PostPoSHScript -M "No Post PowerShell Script defined"
                 }
+            } else {
+                Write-ToLogFile -I -C PostPoSHScript -M "No Post PowerShell Script defined"
             }
             #endregion PostPoSHScriptFilename
 
@@ -5757,10 +5889,10 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIIndQYJKoZIhvcNAQcCoIInZjCCJ2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC6EoowpJtNLKby
-# /5GWwit4HDaqAv4nHb/ojVtgzvOg6qCCICkwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBj4SIAqjtIuArI
+# r8ZFVixwH88l5HRQbe9QUiRtDcXgE6CCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -5825,147 +5957,147 @@ TerminateScript 0
 # xL06Rbg1gs9tU5HGGz9KNQMfQFQ70Wz7UIhezGcFcRfkIfSkMmQYYpsc7rfzj+z0
 # ThfDVzzJr2dMOFsMlfj1T6l22GBq9XQx0A4lcc5Fl9pRxbOuHHWFqIBD/BCEhwni
 # OCySzqENd2N+oz8znKooSISStnkNaYXt6xblJF2dx9Dn89FK7d1IquNxOwt0tI5d
-# MIIGlTCCBH2gAwIBAgIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQwFADBW
+# MIIGgzCCBGugAwIBAgIRAJ6cBPZVqLSnAm1JjGx4jaowDQYJKoZIhvcNAQEMBQAw
+# VjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5B
+# LjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBMB4XDTI1MDEw
+# OTA4NDA0M1oXDTM2MDEwNzA4NDA0M1owUDELMAkGA1UEBhMCUEwxITAfBgNVBAoM
+# GEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEeMBwGA1UEAwwVQ2VydHVtIFRpbWVz
+# dGFtcCAyMDI1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxylfZ/is
+# K92QReVAi1jkPzXW25QL0HhjI3wov24m0+9YT5MCleFL0LdTLjsKGlAmLbC4cPI6
+# 5jpqM9h6ByisxKYktwNawN7LF1GTJ0q24olaQ4/uTLZ210lRCSm3HLh25sHI5d/T
+# eFu9s3HKAv53igLsDtQyfvUjvmJB53EYlfeYnVocUQHA2L+O4XPRhBWbUxcUFy26
+# y+DezfdAai5Xt2ss583HBD0PhOh+qdNMxPR1Kfvt22UxeD38j0Zygi3OXswMxKqm
+# 21ORf57o8evU9ZptNo5bZRV50zBdb5WpHkF1mKRiI7a0e1j+7SDGZ5O/J62En3gK
+# fJXvv1v+fqq+7akGbn1vYp77EU3H5Oz/ppyoyS7km8KoMXpbwga8s/a+dW09OetW
+# kdnPo6BcoKlu5+BTwpzCzo+NF+KLe8D9rvJC0Q1R24bB6uUhi6q/A2xateMLNgC0
+# t7WGthhogO8F+/a0uaAzJ0mP8ZiTuXLqbkr6qcpczu483CzsFoqgq6tOQF6edUka
+# 4/cUbfCnWVqQ3VoVphPDBYhbZkNAKjgyyQZ9YUAMdxbw/6bXuqRNQYpdATlQtkp2
+# 3qv9zcpQ8Lw3QIP9AmUSbECGsnR7MCcMmAZWFA8mkCtslEue4aG52Mf70rTL0wfe
+# oouIxld1JGYdxr8HQwrGZGyV2lPAExf8+g8CAwEAAaOCAVAwggFMMHUGCCsGAQUF
+# BwEBBGkwZzA7BggrBgEFBQcwAoYvaHR0cDovL3N1YmNhLnJlcG9zaXRvcnkuY2Vy
+# dHVtLnBsL2N0c2NhMjAyMS5jZXIwKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
+# Y3NwLWNlcnR1bS5jb20wHwYDVR0jBBgwFoAUvlQCL79AbHNDzqwJJU6eQ0Qa7uAw
+# DAYDVR0TAQH/BAIwADA5BgNVHR8EMjAwMC6gLKAqhihodHRwOi8vc3ViY2EuY3Js
+# LmNlcnR1bS5wbC9jdHNjYTIwMjEuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMI
+# MA4GA1UdDwEB/wQEAwIHgDAiBgNVHSAEGzAZMAgGBmeBDAEEAjANBgsqhGgBhvZ3
+# AgUBCzAdBgNVHQ4EFgQUgYwGoChT/AA/236eSsEfIuyyEokwDQYJKoZIhvcNAQEM
+# BQADggIBAJkPGQwb6wVD52i/OwGHOCZZnx9WT+creuTLc2LvH25rC93d3L2LPhJ2
+# 7X7vX9sDHoc0sr3nd0XOfWtODvDTe6ZcOD14O9cH0hODERTNRLqi+t86vbk45v/b
+# QO969WgnVppKayqdGi6GaJVDdKhnL6/fkBvFSCVTHLkqhXhL0ayxCitsVZDEnU02
+# w4bHlIyOLzfga15uc+ORAN2g6UomULqDXeERZw83XW4H3AkD2mNlMl6szQY57s+g
+# Mh5xcyrTZQnr5DAYIeHSA7f9AxhgzmkxAFmbVBKiuQJR3dDwZ3eNC56IOFAE1Nwb
+# ehh33g5lhBxU4xyrJp/UPMIho/dOm1YC/N+bXxB/RIGA5JaqzlMVsQ39XDgO3bP6
+# /KSHNr4y0PbTkpJvVl1W503ixt0Oe3604Ar0zm3f6n91MxPe50zTlO7zjGRKONQI
+# JobhGxrMkCAzP1enyUF9UZ88yTaKn005FM1KD9rZTR5zbIxaNmFfucmXKGmsJjVp
+# ke08sFFxtv7xYCWhtG3xKKHXnl6ewOCOB2gw6X0Wu8qYCRD3k8B7gUSaY/Tftcba
+# 4vugcxz8LAAL1CZufDxqFbLXhwF8L6YODVYL1JNwSm5e8RbpVlNSh6h/7JO09AhQ
+# UOaIbij5hX9aKgD+ADvWt2INsATMBINczzoesW1F7JM7PYkmvchsMIIGuTCCBKGg
+# AwIBAgIRAJmjgAomVTtlq9xuhKaz6jkwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNV
+# BAYTAlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYD
+# VQQLEx5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0Nl
+# cnR1bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMThaFw0zNjA1
+# MTgwNTMyMThaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBT
+# eXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBD
+# QTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJ0jzwQwIzvBRiznM3M+
+# Y116dbq+XE26vest+L7k5n5TeJkgH4Cyk74IL9uP61olRsxsU/WBAElTMNQI/HsE
+# 0uCJ3VPLO1UufnY0qDHG7yCnJOvoSNbIbMpT+Cci75scCx7UsKK1fcJo4TXetu4d
+# u2vEXa09Tx/bndCBfp47zJNsamzUyD7J1rcNxOw5g6FJg0ImIv7nCeNn3B6gZG28
+# WAwe0mDqLrvU49chyKIc7gvCjan3GH+2eP4mYJASflBTQ3HOs6JGdriSMVoD1lzB
+# JobtYDF4L/GhlLEXWgrVQ9m0pW37KuwYqpY42grp/kSYE4BUQrbLgBMNKRvfhQPs
+# kDfZ/5GbTCyvlqPN+0OEDmYGKlVkOMenDO/xtMrMINRJS5SY+jWCi8PRHAVxO0xd
+# x8m2bWL4/ZQ1dp0/JhUpHEpABMc3eKax8GI1F03mSJVV6o/nmmKqDE6TK34eTAgD
+# iBuZJzeEPyR7rq30yOVw2DvetlmWssewAhX+cnSaaBKMEj9O2GgYkPJ16Q5Da1AP
+# YO6n/6wpCm1qUOW6Ln1J6tVImDyAB5Xs3+JriasaiJ7P5KpXeiVV/HIsW3ej85A6
+# cGaOEpQA2gotiUqZSkoQUjQ9+hPxDVb/Lqz0tMjp6RuLSKARsVQgETwoNQZ8jCeK
+# wSQHDkpwFndfCceZ/OfCUqjxAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/
+# MB0GA1UdDgQWBBTddF1MANt7n6B0yrFu9zzAMsBwzTAfBgNVHSMEGDAWgBS2oVQ5
+# AsOgP46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
+# BQUHAwMwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3Ru
+# Y2EyLmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJj
+# YS5vY3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5
+# LmNlcnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsG
+# AQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQAD
+# ggIBAHWIWA/lj1AomlOfEOxD/PQ7bcmahmJ9l0Q4SZC+j/v09CD2csX8Yl7pmJQE
+# TIMEcy0VErSZePdC/eAvSxhd7488x/Cat4ke+AUZZDtfCd8yHZgikGuS8mePCHyA
+# iU2VSXgoQ1MrkMuqxg8S1FALDtHqnizYS1bIMOv8znyJjZQESp9RT+6NH024/IqT
+# RsRwSLrYkbFq4VjNn/KV3Xd8dpmyQiirZdrONoPSlCRxCIi54vQcqKiFLpeBm5S0
+# IoDtLoIe21kSw5tAnWPazS6sgN2oXvFpcVVpMcq0C4x/CLSNe0XckmmGsl9z4UUg
+# uAJtf+5gE8GVsEg/ge3jHGTYaZ/MyfujE8hOmKBAUkVa7NMxRSB1EdPFpNIpEn/p
+# SHuSL+kWN/2xQBJaDFPr1AX0qLgkXmcEi6PFnaw5T17UdIInA58rTu3mefNuzUts
+# e4AgYmxEmJDodf8NbVcU6VdjWtz0e58WFZT7tST6EWQmx/OoHPelE77lojq7lpsj
+# hDCzhhp4kfsfszxf9g2hoCtltXhCX6NqsqwTT7xe8LgMkH4hVy8L1h2pqGLT2aNC
+# x7h/F95/QvsTeGGjY7dssMzq/rSshFQKLZ8lPb8hFTmiGDJNyHga5hZ59IGynk08
+# mHhBFM/0MLeBzlAQq1utNjQprztZ5vv/NJy8ua9AGbwkMWkOMIIGuTCCBKGgAwIB
+# AgIRAOf/acc7Nc5LkSbYdHxopYcwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNVBAYT
+# AlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQL
+# Ex5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0NlcnR1
+# bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMDdaFw0zNjA1MTgw
+# NTMyMDdaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBTeXN0
+# ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAyMSBDQTCC
+# AiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAOkSHwQ17bldesWmlUG+imV/
+# TnfRbSV102aO2/hhKH9/t4NAoVoipzu0ePujH67y8iwlmWuhqRR4xLeLdPxolEL5
+# 5CzgUXQaq+Qzr5Zk7ySbNl/GZloFiYwuzwWS2AVgLPLCZd5DV8QTF+V57Y6lsdWT
+# rrl5dEeMfsxhkjM2eOXabwfLy6UH2ZHzAv9bS/SmMo1PobSx+vHWST7c4aiwVRvv
+# JY2dWRYpTipLEu/XqQnqhUngFJtnjExqTokt4HyzOsr2/AYOm8YOcoJQxgvc26+L
+# AfXHiBkbQkBdTfHak4DP3UlYolICZHL+XSzSXlsRgqiWD4MypWGU4A13xiHmaRBZ
+# owS8FET+QAbMiqBaHDM3Y6wohW07yZ/mw9ZKu/KmVIAEBhrXesxifPB+DTyeWNke
+# CGq4IlgJr/Ecr1px6/1QPtj66yvXl3uauzPPGEXUk6vUym6nZyE1IGXI45uGVI7X
+# qvCt99WuD9LNop9Kd1LmzBGGvxucOo0lj1M3IRi8FimAX3krunSDguC5HgD75nWc
+# UgdZVjm/R81VmaDPEP25Wj+C1reicY5CPckLGBjHQqsJe7jJz1CJXBMUtZs10cVK
+# MEK3n/xD2ku5GFWhx0K6eFwe50xLUIZD9GfT7s/5/MyBZ1Ep8Q6H+GMuudDwF0mJ
+# itk3G8g6EzZprfMQMc3DAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/MB0G
+# A1UdDgQWBBS+VAIvv0Bsc0POrAklTp5DRBru4DAfBgNVHSMEGDAWgBS2oVQ5AsOg
+# P46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUH
+# AwgwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3RuY2Ey
+# LmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
+# Y3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5LmNl
+# cnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsGAQUF
+# BwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQADggIB
+# ALiTWXfJTBX9lAcIoKd6oCzwQZOfARQkt0OmiQ390yEqMrStHmpfycggfPGlBHdM
+# DDYhHDVTGyvY+WIbdsIWpJ1BNRt9pOrpXe8HMR5sOu71AWOqUqfEIXaHWOEs0UWm
+# Vs8mJb4lKclOHV8oSoR0p3GCX2tVO+XF8Qnt7E6fbkwZt3/AY/C5KYzFElU7TCeq
+# BLuSagmM0X3Op56EVIMM/xlWRaDgRna0hLQze5mYHJGv7UuTCOO3wC1bzeZWdlPJ
+# Ow5v4U1/AljsNLgWZaGRFuBwdF62t6hOKs86v+jPIMqFPwxNJN/ou22DqzpP+7Ty
+# YNbDocrThlEN9D2xvvtBXyYqA7jhYY/fW9edUqhZUmkUGM++Mvz9lyT/nBdfaKqM
+# 5otK0U5H8hCSL4SGfjOVyBWbbZlUIE8X6XycDBRRKEK0q5JTsaZksoKabFAyRKJY
+# gtObwS1UPoDGcmGirwSeGMQTJSh+WR5EXZaEWJVA6ZZPBlGvjgjFYaQ0kLq1Oitb
+# muXZmX7Z70ks9h/elK0A8wOg8oiNVd3o1bb59ms1QF4OjZ45rkWfsGuz8ctB9/le
+# CuKzkx5Rt1WAOsXy7E7pws+9k+jrePrZKw2DnmlNaT19QgX2I+hFtvhC6uOhj/Cg
+# jVEA4q1i1OJzpoAmre7zdEg+kZcFIkrDHgokA5mcIMK1MYIGpDCCBqACAQEwajBW
 # MQswCQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEu
-# MSQwIgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0EwHhcNMjMxMTAy
-# MDgzMjIzWhcNMzQxMDMwMDgzMjIzWjBQMQswCQYDVQQGEwJQTDEhMB8GA1UECgwY
-# QXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMR4wHAYDVQQDDBVDZXJ0dW0gVGltZXN0
-# YW1wIDIwMjMwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQC5Frrqxud9
-# kjaqgkAo85Iyt6ecN343OWPztNOFkORvsc6ukhucOOQQ+szxH0jsi3ARjBwG1b9o
-# QwnDx1COOkOpwm2HzY2zxtJe2X2qC+H8DMt4+nUNAYFuMEMjReq5ptDTI3JidDEb
-# gcxKdr2azfCwmJ3FpqGpKr1LbtCD2Y7iLrwZOxODkdVYKEyJL0UPJ2A18JgNR54+
-# CZ0/pVfCfbOEZag65oyU3A33ZY88h5mhzn9WIPF/qLR5qt9HKe9u8Y+uMgz8MKQa
-# gH/ajWG/uYcqeQK28AS3Eh5AcSwl4xFfwHGaFwExxBWSXLZRGUbn9aFdirSZKKde
-# 20p1COlmZkxImJY+bxQYSgw5nEM0jPg6rePD+0IQQc4APK6dSHAOQS3QvBJrfzTW
-# lCQokGtOvxcNIs5cOvaANmTcGcLgkH0eHgMBpLFlcyzE0QkY8Heh+xltZFEiAvK5
-# gbn8CHs8oo9o0/JjLqdWYLrW4HnES43/NC1/sOaCVmtslTaFoW/WRRbtJaRrK/03
-# jFjrN921dCntRRinB/Ew3MQ1kxPN604WCMeLvAOpT3F5KbBXoPDrMoW9OGTYnYqv
-# 88A6hTbVFRs+Ei8UJjk4IlfOknHWduimRKQ4LYDY1GDSA33YUZ/c3Pootanc2iWP
-# Navjy/ieDYIdH8XVbRfWqchnDpTE+0NFcwIDAQABo4IBYzCCAV8wDAYDVR0TAQH/
-# BAIwADAdBgNVHQ4EFgQUx2k8Lua941lH/xkSwdk06EHP448wHwYDVR0jBBgwFoAU
-# vlQCL79AbHNDzqwJJU6eQ0Qa7uAwDgYDVR0PAQH/BAQDAgeAMBYGA1UdJQEB/wQM
-# MAoGCCsGAQUFBwMIMDMGA1UdHwQsMCowKKAmoCSGImh0dHA6Ly9jcmwuY2VydHVt
-# LnBsL2N0c2NhMjAyMS5jcmwwbwYIKwYBBQUHAQEEYzBhMCgGCCsGAQUFBzABhhxo
-# dHRwOi8vc3ViY2Eub2NzcC1jZXJ0dW0uY29tMDUGCCsGAQUFBzAChilodHRwOi8v
-# cmVwb3NpdG9yeS5jZXJ0dW0ucGwvY3RzY2EyMDIxLmNlcjBBBgNVHSAEOjA4MDYG
-# CyqEaAGG9ncCBQELMCcwJQYIKwYBBQUHAgEWGWh0dHBzOi8vd3d3LmNlcnR1bS5w
-# bC9DUFMwDQYJKoZIhvcNAQEMBQADggIBAHjd7rE6Q+b32Ws4vTJeC0HcGDi7mfQU
-# nbaJ9nFFOQpizPX+YIpHuK89TPkOdDF7lOEmTZzVQpw0kwpIZDuB8lSM0Gw9KloO
-# vXIsGjF/KgTNxYM5aViQNMtoIiF6W9ysmubDHF7lExSToPd1r+N0zYGXlE1uEX4o
-# 988K/Z7kwgE/GC649S1OEZ5IGSGmirtcruLX/xhjIDA5S/cVfz0We/ElHamHs+Uf
-# W3/IxTigvvq4JCbdZHg9DsjkW+UgGGAVtkxB7qinmWJamvdwpgujAwOT1ym/giPT
-# W5C8/MnkL18ZgVQ38sqKqFdqUS+ZIVeXKfV58HaWtV2Lip1Y0luL7Mswb856jz7z
-# XINk79H4XfbWOryf7AtWBjrus28jmHWK3gXNhj2StVcOI48Dc6CFfXDMo/c/E/ab
-# 217kTYhiht2rCWeGS5THQ3bZVx+lUPLaDe3kVXjYvxMYQKWu04QX6+vURFSeL3WV
-# rUSO6nEnZu7X2EYci5MUmmUdEEiAVZO/03yLlNWUNGX72/949vU+5ZN9r9EGdp7X
-# 3W7mLL1Tx4gLmHnrB97O+e9RYK6370MC52siufu11p3n8OG5s2zJw2J6LpD+HLby
-# CgfRId9Q5UKgsj0A1QuoBut8FI6YdaH3sR1ponEv6GsNYrTyBtSR77csUWLUCyVb
-# osF3+ae0+SofMIIGuTCCBKGgAwIBAgIRAJmjgAomVTtlq9xuhKaz6jkwDQYJKoZI
-# hvcNAQEMBQAwgYAxCzAJBgNVBAYTAlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hu
-# b2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRo
-# b3JpdHkxJDAiBgNVBAMTG0NlcnR1bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0y
-# MTA1MTkwNTMyMThaFw0zNjA1MTgwNTMyMThaMFYxCzAJBgNVBAYTAlBMMSEwHwYD
-# VQQKExhBc3NlY28gRGF0YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBD
-# b2RlIFNpZ25pbmcgMjAyMSBDQTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoC
-# ggIBAJ0jzwQwIzvBRiznM3M+Y116dbq+XE26vest+L7k5n5TeJkgH4Cyk74IL9uP
-# 61olRsxsU/WBAElTMNQI/HsE0uCJ3VPLO1UufnY0qDHG7yCnJOvoSNbIbMpT+Cci
-# 75scCx7UsKK1fcJo4TXetu4du2vEXa09Tx/bndCBfp47zJNsamzUyD7J1rcNxOw5
-# g6FJg0ImIv7nCeNn3B6gZG28WAwe0mDqLrvU49chyKIc7gvCjan3GH+2eP4mYJAS
-# flBTQ3HOs6JGdriSMVoD1lzBJobtYDF4L/GhlLEXWgrVQ9m0pW37KuwYqpY42grp
-# /kSYE4BUQrbLgBMNKRvfhQPskDfZ/5GbTCyvlqPN+0OEDmYGKlVkOMenDO/xtMrM
-# INRJS5SY+jWCi8PRHAVxO0xdx8m2bWL4/ZQ1dp0/JhUpHEpABMc3eKax8GI1F03m
-# SJVV6o/nmmKqDE6TK34eTAgDiBuZJzeEPyR7rq30yOVw2DvetlmWssewAhX+cnSa
-# aBKMEj9O2GgYkPJ16Q5Da1APYO6n/6wpCm1qUOW6Ln1J6tVImDyAB5Xs3+Jriasa
-# iJ7P5KpXeiVV/HIsW3ej85A6cGaOEpQA2gotiUqZSkoQUjQ9+hPxDVb/Lqz0tMjp
-# 6RuLSKARsVQgETwoNQZ8jCeKwSQHDkpwFndfCceZ/OfCUqjxAgMBAAGjggFVMIIB
-# UTAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTddF1MANt7n6B0yrFu9zzAMsBw
-# zTAfBgNVHSMEGDAWgBS2oVQ5AsOgP46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMC
-# AQYwEwYDVR0lBAwwCgYIKwYBBQUHAwMwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDov
-# L2NybC5jZXJ0dW0ucGwvY3RuY2EyLmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYB
-# BQUHMAGGHGh0dHA6Ly9zdWJjYS5vY3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKG
-# Jmh0dHA6Ly9yZXBvc2l0b3J5LmNlcnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQy
-# MDAwLgYEVR0gADAmMCQGCCsGAQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9D
-# UFMwDQYJKoZIhvcNAQEMBQADggIBAHWIWA/lj1AomlOfEOxD/PQ7bcmahmJ9l0Q4
-# SZC+j/v09CD2csX8Yl7pmJQETIMEcy0VErSZePdC/eAvSxhd7488x/Cat4ke+AUZ
-# ZDtfCd8yHZgikGuS8mePCHyAiU2VSXgoQ1MrkMuqxg8S1FALDtHqnizYS1bIMOv8
-# znyJjZQESp9RT+6NH024/IqTRsRwSLrYkbFq4VjNn/KV3Xd8dpmyQiirZdrONoPS
-# lCRxCIi54vQcqKiFLpeBm5S0IoDtLoIe21kSw5tAnWPazS6sgN2oXvFpcVVpMcq0
-# C4x/CLSNe0XckmmGsl9z4UUguAJtf+5gE8GVsEg/ge3jHGTYaZ/MyfujE8hOmKBA
-# UkVa7NMxRSB1EdPFpNIpEn/pSHuSL+kWN/2xQBJaDFPr1AX0qLgkXmcEi6PFnaw5
-# T17UdIInA58rTu3mefNuzUtse4AgYmxEmJDodf8NbVcU6VdjWtz0e58WFZT7tST6
-# EWQmx/OoHPelE77lojq7lpsjhDCzhhp4kfsfszxf9g2hoCtltXhCX6NqsqwTT7xe
-# 8LgMkH4hVy8L1h2pqGLT2aNCx7h/F95/QvsTeGGjY7dssMzq/rSshFQKLZ8lPb8h
-# FTmiGDJNyHga5hZ59IGynk08mHhBFM/0MLeBzlAQq1utNjQprztZ5vv/NJy8ua9A
-# GbwkMWkOMIIGuTCCBKGgAwIBAgIRAOf/acc7Nc5LkSbYdHxopYcwDQYJKoZIhvcN
-# AQEMBQAwgYAxCzAJBgNVBAYTAlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xv
-# Z2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3Jp
-# dHkxJDAiBgNVBAMTG0NlcnR1bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1
-# MTkwNTMyMDdaFw0zNjA1MTgwNTMyMDdaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQK
-# ExhBc3NlY28gRGF0YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1l
-# c3RhbXBpbmcgMjAyMSBDQTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIB
-# AOkSHwQ17bldesWmlUG+imV/TnfRbSV102aO2/hhKH9/t4NAoVoipzu0ePujH67y
-# 8iwlmWuhqRR4xLeLdPxolEL55CzgUXQaq+Qzr5Zk7ySbNl/GZloFiYwuzwWS2AVg
-# LPLCZd5DV8QTF+V57Y6lsdWTrrl5dEeMfsxhkjM2eOXabwfLy6UH2ZHzAv9bS/Sm
-# Mo1PobSx+vHWST7c4aiwVRvvJY2dWRYpTipLEu/XqQnqhUngFJtnjExqTokt4Hyz
-# Osr2/AYOm8YOcoJQxgvc26+LAfXHiBkbQkBdTfHak4DP3UlYolICZHL+XSzSXlsR
-# gqiWD4MypWGU4A13xiHmaRBZowS8FET+QAbMiqBaHDM3Y6wohW07yZ/mw9ZKu/Km
-# VIAEBhrXesxifPB+DTyeWNkeCGq4IlgJr/Ecr1px6/1QPtj66yvXl3uauzPPGEXU
-# k6vUym6nZyE1IGXI45uGVI7XqvCt99WuD9LNop9Kd1LmzBGGvxucOo0lj1M3IRi8
-# FimAX3krunSDguC5HgD75nWcUgdZVjm/R81VmaDPEP25Wj+C1reicY5CPckLGBjH
-# QqsJe7jJz1CJXBMUtZs10cVKMEK3n/xD2ku5GFWhx0K6eFwe50xLUIZD9GfT7s/5
-# /MyBZ1Ep8Q6H+GMuudDwF0mJitk3G8g6EzZprfMQMc3DAgMBAAGjggFVMIIBUTAP
-# BgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBS+VAIvv0Bsc0POrAklTp5DRBru4DAf
-# BgNVHSMEGDAWgBS2oVQ5AsOgP46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYw
-# EwYDVR0lBAwwCgYIKwYBBQUHAwgwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2Ny
-# bC5jZXJ0dW0ucGwvY3RuY2EyLmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUH
-# MAGGHGh0dHA6Ly9zdWJjYS5vY3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0
-# dHA6Ly9yZXBvc2l0b3J5LmNlcnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAw
-# LgYEVR0gADAmMCQGCCsGAQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMw
-# DQYJKoZIhvcNAQEMBQADggIBALiTWXfJTBX9lAcIoKd6oCzwQZOfARQkt0OmiQ39
-# 0yEqMrStHmpfycggfPGlBHdMDDYhHDVTGyvY+WIbdsIWpJ1BNRt9pOrpXe8HMR5s
-# Ou71AWOqUqfEIXaHWOEs0UWmVs8mJb4lKclOHV8oSoR0p3GCX2tVO+XF8Qnt7E6f
-# bkwZt3/AY/C5KYzFElU7TCeqBLuSagmM0X3Op56EVIMM/xlWRaDgRna0hLQze5mY
-# HJGv7UuTCOO3wC1bzeZWdlPJOw5v4U1/AljsNLgWZaGRFuBwdF62t6hOKs86v+jP
-# IMqFPwxNJN/ou22DqzpP+7TyYNbDocrThlEN9D2xvvtBXyYqA7jhYY/fW9edUqhZ
-# UmkUGM++Mvz9lyT/nBdfaKqM5otK0U5H8hCSL4SGfjOVyBWbbZlUIE8X6XycDBRR
-# KEK0q5JTsaZksoKabFAyRKJYgtObwS1UPoDGcmGirwSeGMQTJSh+WR5EXZaEWJVA
-# 6ZZPBlGvjgjFYaQ0kLq1OitbmuXZmX7Z70ks9h/elK0A8wOg8oiNVd3o1bb59ms1
-# QF4OjZ45rkWfsGuz8ctB9/leCuKzkx5Rt1WAOsXy7E7pws+9k+jrePrZKw2DnmlN
-# aT19QgX2I+hFtvhC6uOhj/CgjVEA4q1i1OJzpoAmre7zdEg+kZcFIkrDHgokA5mc
-# IMK1MYIGojCCBp4CAQEwajBWMQswCQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNv
-# IERhdGEgU3lzdGVtcyBTLkEuMSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5n
-# IDIwMjEgQ0ECEAgyT5232pFvY+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYK
-# KwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIB
-# BDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg
-# qcWXPUh4aLzPcW9IpFgQM6rn8V67vV8kVwSOx1IWiLUwDQYJKoZIhvcNAQEBBQAE
-# ggGAj5juc2lvwSDTl3Tpi/qsVBknrR9+EpdNvd88e7bK55KwfXfUVJiLB+ZTGoCa
-# 6RSQqeLZllA9uDcdPQAvpQxcevlQgBUGUOVeRfnUvJDzuNcwy9KwADnMofZYHUs4
-# 2jGh0sYWkJoQBOm9wAGR7b9XsbnKHqhebdZU/lZzkm4L2RunWS5STuUy3YrSNbiH
-# 2nomAuwUoUikxuUHuDt65vtyLWGa5xMZc/wYOmgyHwR9xqIlCaZd3KCT+SyUgENL
-# CPGCJmtQzD6Fn0f4J2mN8xf/VBNNBcEDHFj+Z5xgvBYsi2Gsn4jrdJQLZ3wK25ET
-# MlPUhz6XRH0oGrebkQOe5b9rIqa1EdmnCABThwMIWdt66tWNXizLEfpUe5jj5vcH
-# /iHCjF/IXbsYRhVQjo+9abP4sVUT9SA38iH2AFJLaTn4jPzBg34iZpeYwkbqAFRw
-# Cbni3fFvJqgjT1wjCfDYnaXUUBYfLUEGXzxS/kb+6EWG/HIrN33HGRgaMsg2X5/P
-# nQ5hoYIEAjCCA/4GCSqGSIb3DQEJBjGCA+8wggPrAgEBMGowVjELMAkGA1UEBhMC
-# UEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMb
-# Q2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBAhAJxcz4u2Z9cTeqwVmABssxMA0G
-# CWCGSAFlAwQCAgUAoIIBVjAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJ
-# KoZIhvcNAQkFMQ8XDTI0MTIwNzA5MDA0NVowNwYLKoZIhvcNAQkQAi8xKDAmMCQw
-# IgQg6pVLsdBAtDFASNhln49hXYh0LMzgZ5LgVgJNSwA60xwwPwYJKoZIhvcNAQkE
-# MTIEMHbCjmRCm4kCgS+ggWnSJm4rN0ynVu4D7+HQ1f5fKUX/bTDQ/6cENxjiZLcC
-# 1/aBODCBnwYLKoZIhvcNAQkQAgwxgY8wgYwwgYkwgYYEFA9PuFUe/9j23n9nJrQ8
-# E9Bqped3MG4wWqRYMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0
-# YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAy
-# MSBDQQIQCcXM+LtmfXE3qsFZgAbLMTANBgkqhkiG9w0BAQEFAASCAgCu7N/QDFf4
-# GCHw3GT7ERE0AAc2HMgW07kgShZx+JYVfVQup0PakXXJkkH5hpjkRc8xr7bntrGf
-# UMELqe8oERWsRG5SMWWMbZOI5OXgfldsd3k0FE8ergD2FeVSINL2/oo2ZVH3L39B
-# qFjsq5hN/cpRKpdKtSNQRc3vPtaSMPwWEMFYaQzXKQw0sxVCKS8zApWs1swXnk1G
-# 0L8xLGqrj3DiQ6GC1HojUJArom0l3V/BcFYDm0rjhH6+N/RQMrXj8pOVX68nvZFM
-# AYKHLG35b0bPQG1QiUUC9UzqTlam+SRROmxRBl+EFXAQ3CmHppNmNgKwlfJ6bGIP
-# 40qTTphCKXJiwgxtSbzAbYaW0h5Rpbemmh/oEzcBwKxPu7/nnXN3QGi4NW1ZDZ4p
-# 7VYhOXJEJEPYgI7qH0w7XMVaV2d/gZoLUWcJ1LezblMI0d3DlgxIXSEjGILHl9Ay
-# g87hNWVbUjYdX/nu54/rxSlVteZb8l6Ca8sXUfv5f4PcV1t/eXmiEHKqLCIYpBYP
-# wsm/n1rc/F2SwUWbTMkRmtWt+DCEN6mvkIlVeuolsIiXyIZ8u611bJ+sN3nGqcT4
-# mAb2kY0RiDsLaBYLHDbyXKw/DhBehoQJXz1xeKDHA1vONLh34ZY+m+z3Jca/rrXx
-# sCALfMiQ7Ku6qsrBUAcOCFiCQldn77XgIg==
+# MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
+# Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
+# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgCCoNswCrnM/dqfMiP80xm/+U
+# hQUph97yE9y+bxG5MGswDQYJKoZIhvcNAQEBBQAEggGAeUDBtZWfoRYsOR5DjCwd
+# Jjbmt0PWC0Ic29683plf2PdlmnpIzs4B+e+9ACM52sOmfayYFpxgJj/r1TiSvu5c
+# VczSQOGkzl7LBikTJdJGDmP2cTcBxUbmUGf5ZzB87WhbyJeP6to9A+UErHQnaHoY
+# b2Y+hSW7xLWW27G8n6H/HnayhlEfNE7SaDzHJBmNZevHoujhGgMuYpj1uXK10GEL
+# IzTZPdd4sQSYVXhdgadtB4X4CAZUepSCGbXuWUZz25j7vsrJ3tkOb1JsHqO2+z0y
+# kxNpEASaE6Gydw8I9/nR7Vi4jE2PR+HGyFcpMIeML0iOaXdPVD1G97M3C6Kb4AgR
+# t0LzttAFnDxzFWjEDfNyQUhoK5NfT/cLsKjiJ9/YjWUa7NlPzrrwlTxc56FQvIGN
+# Tym5/m0q6+UksnWgDfgmH/1HFUl5Mh5mW1NlUeIXuRtWYOPTuegahMQe+Bj4M3kj
+# FYN4F/hTueDnYxyXrkllhGggRawJwISws6duKYGx6V1foYIEBDCCBAAGCSqGSIb3
+# DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
+# byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
+# ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
+# GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTAy
+# MTUxOTE1MTdaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDAWLKA9jcpkECWe0NTJ
+# tMiKJ6fgIGcZI5gG7zhqBkM6QYPecFxFDrcShBmhe9Rl8b4wgaAGCyqGSIb3DQEJ
+# EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
+# CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
+# IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAJcQb0veklHUYH0fPlDn9SW8MGEDvEQ7
+# cRLzcTC8v0lwxGuKxLa/7sZ8QnnMsTJBzgzt4urG/bRsjiRXSrTpdAnPo+jM7KHs
+# 5tvyCNEnLiiiMO+JNz9hFJgpksdd97CiRbfM26w5pSHHZz77bQlqIe0LqI1D0sTt
+# aUWlPi9Hn5/yXKfYXN7tjmdqW8e5YuRtY5kMaf+qPaH4kKFQI4uPTz+Iv7J36RzG
+# s0UtqeWB4Z2mhG/R4RQLrwy4ubroGdGp1KwybGYR0CaJ1uPS5r2Q9sOwerp1whMf
+# OhkGREGUp4BdpP345SlgfjX3n0oVuhVTpzQ/1BLddzGTOyI9Ugbk+wA68ounIlIW
+# WsRjP+PP6v5oRDcDSoJXwOxsj/OnM3rFMmPdxgP2yL7Adj2EFIonGGoFYpU/uJd6
+# OF2igq7zlW5//5VfJyW9NmO7eH5KoGyWgX+ST3SnEb6xf8PBG/o8gUW6XxeMq9IV
+# Pml/G1c9vWMCrOCmUmgIH8bi0ys5BgEmMP4Jw7B4ZTUJXkaYC+xFq1etjJCgpnCa
+# h+jFTkdwK1o3f3wkjZNFm/ZwPcCOAUYXXVoqhh6yJhjLv821ZWnKK7m2duNz3ROh
+# FkifVCP4rHFPYiaevc0ATmabGVMNDVforE6yL+4CmIdox0airwKvzDOms///tc3P
+# mJbh6E3aLT2C
 # SIG # End signature block
