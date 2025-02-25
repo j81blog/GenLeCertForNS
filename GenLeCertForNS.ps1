@@ -138,6 +138,15 @@
     Specify the OCSP Check for the Global VPN Certificate Binding
     Options: 'Mandatory' or 'Optional'
     Only used when the UpdateGlobalVPNCertBinding parameter is specified
+.PARAMETER AlternateDNSValidationDomain
+    Specify an alternate domain to be used for DNS validation. This is useful when the domain you are requesting a certificate for is a CNAME to another domain.
+    The domain you are requesting a certificate for must be a CNAME to the alternate domain.
+    This parameter is only used when the DNS validation method is used.
+.PARAMETER AlternateDNSValidationDomainSkipCheck
+    Specify this parameter if you want to skip manual steps for the alternate domain when using the AlternateDNSValidationDomain parameter.
+.PARAMETER UseNetScalerDNS
+    Specify this parameter if you want to use the NetScaler DNS service for DNS validation.
+    This parameter is only used when the DNS validation method is used with the -AlternateDNSValidationDomain parameter.
 .PARAMETER PostPoSHScriptFilename
     Configure this parameter with a full path name to a PowerShell script.
     This script will be executed after a successful certificate request. The script needs three parameters:
@@ -240,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.30.0
+    Version   : v2.31.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -471,6 +480,8 @@ param(
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$UpdateIIS,
 
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$UpdateGlobalVPNCertBinding,
@@ -593,6 +604,17 @@ param(
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [Switch]$EnableVipBefore,
 
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [String]$AlternateDNSValidationDomain,
+
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$AlternateDNSValidationDomainSkipCheck,
+
+    [Parameter(ParameterSetName = "CommandPolicy")]
+    [Parameter(ParameterSetName = "CommandPolicyUser")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
+    [Switch]$UseNetScalerDNS,
+
     [Parameter(ParameterSetName = "CommandPolicy")]
     [Parameter(ParameterSetName = "CommandPolicyUser")]
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -658,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.30.0"
+$ScriptVersion = "2.31.0"
 $PoshACMEVersion = "4.28.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -1702,7 +1724,7 @@ function Save-ADCConfig {
     param (
         [Switch]$SaveADCConfig
     )
-    Write-DisplayText -Title "ADC Configuration"
+    Write-DisplayText -Title "NS Configuration"
     Write-DisplayText -Line "Config Saved"
     if ($SaveADCConfig) {
         Write-ToLogFile -I -C SaveADCConfig -M "Saving ADC configuration.  (`"-SaveADCConfig`" Parameter set)"
@@ -1720,12 +1742,12 @@ function Save-ADCConfig {
             }
         } catch {
             Write-DisplayText -ForeGroundColor Red "ERROR, NOT Saved!"
-            Write-ToLogFile -E -C SaveADCConfig -M "ERROR, ADC configuration NOT Saved! $($_.Exception.Message)"
+            Write-ToLogFile -E -C SaveADCConfig -M "ERROR, NS configuration NOT Saved! $($_.Exception.Message)"
         }
     } else {
         Write-DisplayText -ForeGroundColor Yellow "NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
-        Write-ToLogFile -I -C SaveADCConfig -M "ADC configuration NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
-        $Script:MailLog += "`r`nIMPORTANT: Your Citrix ADC configuration was NOT saved!`r`n"
+        Write-ToLogFile -I -C SaveADCConfig -M "NetScaler configuration NOT Saved! (`"-SaveADCConfig`" Parameter not defined)"
+        $Script:MailLog += "`r`nIMPORTANT: Your Citrix NetScaler configuration was NOT saved!`r`n"
     }
 }
 
@@ -1994,6 +2016,100 @@ function Invoke-ADCCleanup {
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Not required, nothng to clean."
         }
         $Script:ADCCleanRequired = $false
+    }
+}
+
+function Invoke-NSPublishTXTRecord {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $true)]
+        [String]$DomainName,
+
+        [Parameter(Mandatory = $true)]
+        [String]$TXTValue,
+
+        [Parameter()]
+        [Int]$TTL = 300
+    )
+
+    $payload = @{
+        domain = $DomainName
+        string = $TXTValue
+        ttl    = $TTL
+    }
+    try {
+        Write-ToLogFile -I -C Invoke-ADCPublishTXTRecord -M "Adding NS TXT Record for Domain: $DomainName"
+        Write-DisplayText -Line "Adding NS TXT Record"
+        $filters = @{
+            domain = $DomainName
+            string = $TXTValue
+        }
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type dnstxtrec -Filters $filters
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        if ($response.dnstxtrec) {
+            Write-DisplayText -ForeGroundColor Yellow " already exists"
+            Write-ToLogFile -I -C Invoke-ADCPublishTXTRecord -M "TXT Record already exists."
+        } else {
+            Write-ToLogFile -I -C Invoke-ADCPublishTXTRecord -M "Adding TXT Record for Domain: $DomainName"
+            Write-DisplayText -ForeGroundColor Cyan -NoNewLine " $DomainName"
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type dnstxtrec -Payload $payload
+            Write-DisplayText -ForeGroundColor Green " OK"
+            Write-ToLogFile -I -C Invoke-ADCPublishTXTRecord -M "TXT Record added successfully."
+        }
+    } catch {
+        Write-DisplayText -ForeGroundColor Red " Error"
+        Write-ToLogFile -E -C Invoke-ADCPublishTXTRecord -M "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Throw "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-NSRemoveTXTRecord {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory = $true)]
+        [String]$DomainName,
+
+        [Parameter(Mandatory = $true)]
+        [String]$TXTValue
+    )
+
+    try {
+        Write-ToLogFile -I -C Invoke-NSRemoveTXTRecord -M "Removing NS TXT Record for Domain: $DomainName"
+        Write-DisplayText -Line "Remove NS TXT Record"
+        Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$DomainName"
+        $filters = @{
+            domain = $DomainName
+            string = $TXTValue
+        }
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine " *"
+        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type dnstxtrec -Filters $filters
+        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+        if ($response.dnstxtrec) {
+            Write-ToLogFile -I -C Invoke-NSRemoveTXTRecord -M "Record found, removing TXT Record for Domain: $DomainName"
+            $arguments = @{
+                "recordid" = $response.dnstxtrec.recordid
+            }
+            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+            $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type dnstxtrec -Resource "$($DomainName)" -Arguments $arguments
+            Write-DisplayText -ForeGroundColor Green " OK"
+            Write-ToLogFile -I -C Invoke-NSRemoveTXTRecord -M "TXT Record removed successfully."
+        } else {
+            Write-DisplayText -ForeGroundColor Yellow " Record not found"
+            Write-ToLogFile -I -C Invoke-NSRemoveTXTRecord -M "TXT Record not found."
+        }
+    } catch {
+        if ($_.Exception.Message -match "404") {
+            Write-DisplayText -ForeGroundColor Yellow " Record not found"
+            Write-ToLogFile -I -C Invoke-NSRemoveTXTRecord -M "TXT Record not found."
+        } else {
+
+            Write-DisplayText -ForeGroundColor Red " Error"
+            Write-ToLogFile -E -C Invoke-NSRemoveTXTRecord -M "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Throw "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -3002,6 +3118,9 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name Partitions -Value $Partitions
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name ForceCertRenew -Value $([bool]::Parse($ForceCertRenew))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableIPCheck -Value $([bool]::Parse($DisableIPCheck))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name AlternateDNSValidationDomain -Value $AlternateDNSValidationDomain
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name AlternateDNSValidationDomainSkipCheck -Value $([bool]::Parse($AlternateDNSValidationDomainSkipCheck))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseNetScalerDNS -Value $([bool]::Parse($UseNetScalerDNS))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name PfxPassword -Value $PfxPassword
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UpdateIIS -Value $([bool]::Parse($UpdateIIS))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name IISSiteToUpdate -Value $IISSiteToUpdate
@@ -3244,7 +3363,7 @@ Write-ToLogFile -I -C VersionInfo -M "Version check finished."
 #region ADC-Check
 if ($ADCActionsRequired) {
     Write-ToLogFile -I -C ADC-Check -M "Trying to login into the Citrix ADC."
-    Write-DisplayText -Title "Citrix ADC Connection"
+    Write-DisplayText -Title "Citrix NS Connection"
     Write-DisplayText -Line "Connecting"
     try {
         $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
@@ -3358,6 +3477,12 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
         Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)"
         LEBkEd = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
         LEFtEd = "(^show\s+ns\s+version)$CSVipString"
+    }
+    if ($UseNetScalerDNS) {
+        $CmdSpec["LEFtEd"] += "|(^\S+\s+dns\s+txtRec)|(^\S+\s+dns\s+txtRec\s+.*)"
+    }
+    if ($UpdateGlobalVPNCertBinding) {
+        $CmdSpec["LEBkEd"] += "|(^\S+\s+vpn\s+global)|(^\S+\s+vpn\s+global\s+.*)"
     }
 
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
@@ -3858,10 +3983,16 @@ if ($CertificateActions) {
 
             Write-ToLogFile -D -C DNSPreCheck -M "ValidationMethod is set to: `"$($CertRequest.ValidationMethod)`"."
 
-            if ($CertRequest.ValidationMethod -eq "dns" -and ($AutoRun)) {
+            if ($UseNetScalerDNS -and -Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck -and $AutoRun) {
+                Write-ToLogFile -E -C DNSPreCheck -M "-AutoRun and -UseNetScalerDNS are defined, we will allow this"
+
+            } elseif ($DNSPlugin -ine "Manual" -and $DNSParams.count -gt 0 -and $AutoRun) {
+                Write-ToLogFile -E -C DNSPreCheck -M "-AutoRun and -DNSPlugin are defined, we will allow this"
+
+            } elseif ($CertRequest.ValidationMethod -eq "dns" -and ($AutoRun)) {
                 Write-ToLogFile -E -C DNSPreCheck -M "You cannot use the dns validation method with the -AutoRun parameter!"
-                Write-DisplayText -Line "Wildcard"
-                Write-DisplayText -ForeGroundColor RED "A wildcard was found while also using the -AutoRun parameter. Only HTTP validation (no Wildcard) is allowed!"
+                Write-DisplayText -Line "DNS Validation"
+                Write-DisplayText -ForeGroundColor RED "(Manual) DNS validation is configured together with the -AutoRun parameter. Only HTTP validation or Automatic DNS validations are supported with -AutoRun"
                 Break
             }
 
@@ -3921,7 +4052,7 @@ if ($CertificateActions) {
 
             #endregion DNSPreCheck
 
-            Write-DisplayText -Title "Citrix ADC Content Switch"
+            Write-DisplayText -Title "Citrix NS Content Switch"
             if ($CertRequest.ValidationMethod -eq "dns") {
                 Write-DisplayText -Line "Connection"
                 Write-DisplayText -ForeGroundColor Yellow "Skipped"
@@ -4200,7 +4331,7 @@ if ($CertificateActions) {
                 try {
                     Write-ToLogFile -I -C Order -M "Trying to create a new order."
                     $domains = $SessionRequestObject.DNSObjects | Select-Object DNSName -ExpandProperty DNSName
-                    $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -KeyLength $CertRequest.KeyLength -Force -FriendlyName $CertRequest.FriendlyName -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword)
+                    $PAOrder = Posh-ACME\New-PAOrder -Domain $domains -AlwaysNewKey -KeyLength $CertRequest.KeyLength -Force -FriendlyName $CertRequest.FriendlyName -PfxPassSecure $PfxPassword
                     Start-Sleep -Seconds 1
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -D -C Order -M "Order data:"
@@ -4265,7 +4396,12 @@ if ($CertificateActions) {
                         } else {
                             $DNSObject.Challenge = $PAChallenge
                         }
-                        if ($($CertRequest.DisableIPCheck) -Or $($Parameters.settings.DisableIPCheck)) {
+                        if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                            $DNSObject.IPAddress = "NoIPCheck"
+                            $DNSObject.Match = $true
+                            $DNSObject.Status = $true
+                            Write-ToLogFile -I -C DNS-Validation -M "Skipped IP Checking for alternate DNS Validation Domain."
+                        } elseif ($($CertRequest.DisableIPCheck) -Or $($Parameters.settings.DisableIPCheck)) {
                             $DNSObject.IPAddress = "NoIPCheck"
                             $DNSObject.Match = $true
                             $DNSObject.Status = $true
@@ -4629,7 +4765,6 @@ if ($CertificateActions) {
                 } else {
                     Write-ToLogFile -D -C OrderValidation -M "Skipped Order Completion, Exit Code: $($SessionRequestObject.ExitCode)"
                 }
-                #endregion OrderValidation
 
                 #region CleanupADC
 
@@ -4642,32 +4777,74 @@ if ($CertificateActions) {
                     Continue
                 }
             }
+            #endregion OrderValidation
 
             #region DNSChallenge
 
             if (($CertRequest.ValidationMethod -eq "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 $PAOrderItems = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
+
                 $TXTRecords = $PAOrderItems | Select-Object fqdn, `
                 @{L = 'TXTName'; E = { "_acme-challenge.$($_.fqdn.Replace('*.',''))" } }, `
                 @{L = 'TXTValue'; E = { (Get-KeyAuthorization $_.DNS01Token -ForDNS) } }, `
                 @{L = 'SanitizedFqdn'; E = { "$($_.fqdn.Replace('*.',''))" } }, `
-                @{L = 'Token'; E = { $_.DNS01Token } }
+                @{L = 'Token'; E = { $_.DNS01Token } }, `
+                @{L = 'AlternateDNS'; E = { if ($AlternateDNSValidationDomain) { $true } else { $false } } }, `
+                @{L = 'AlternateCNAMEName'; E = { "_acme-challenge.$($($_.fqdn.Replace('*.','')))" } }, `
+                @{L = 'AlternateCNAMEValue'; E = { "$($AlternateDNSValidationDomain)" } }, `
+                @{L = 'AlternateTXTName'; E = { "$($AlternateDNSValidationDomain)" } }
                 $PoshACMEPluginUsed = $false
-                if ([String]::IsNullOrEmpty($DNSParams) -or [String]::IsNullOrEmpty($DNSPlugin) -or ($DNSParams.Count -eq 0) -or ($DNSPlugin -like "Manual")) {
+                Write-DisplayText -Title "DNS Challenge"
+                Write-ToLogFile -I -C DNSChallenge -M "DNS Challenge requested."
+
+                if (-Not ([String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                    Write-ToLogFile -I -C DNSChallenge -M "Alternate DNS Validation Domain is set."
+                    Write-DisplayText -Line "Alt. DNS validation"
+                    Write-DisplayText -ForeGroundColor Cyan "Enabled"
+                    Write-DisplayText -Line "Alt. DNS Name"
+                    Write-DisplayText -ForeGroundColor Cyan "$AlternateDNSValidationDomain"
+                }
+
+                if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck )) {
+                    Write-ToLogFile -I -C DNSChallenge -M "Alternate DNS Validation Domain is set to `"$AlternateDNSValidationDomain`" and -AlternateDNSValidationDomainSkipCheck was configured, skipping DNS manual configuration."
+                    Write-DisplayText -Line "Validation Skip"
+                    Write-DisplayText -ForeGroundColor Cyan "Enabled"
+
+                } elseif ([String]::IsNullOrEmpty($DNSParams) -or [String]::IsNullOrEmpty($DNSPlugin) -or ($DNSParams.Count -eq 0) -or ($DNSPlugin -like "Manual") ) {
                     Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-                    Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
-                    Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+                    if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                        Write-DisplayText -ForeGroundColor Magenta "* Make sure the following CNAME records are configured at your DNS *"
+                        Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+                        Write-DisplayText -ForeGroundColor Magenta "* You can leave the CNAME records after validation is completed.   *"
+                    } else {
+                        Write-DisplayText -ForeGroundColor Magenta "* Make sure the following TXT records are configured at your DNS   *"
+                        Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
+                    }
                     Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
                     Write-ToLogFile -I -C DNSChallenge -M "Make sure the following TXT records are configured at your DNS provider before continuing! If not, DNS validation will fail!"
                     foreach ($Record in $TXTRecords) {
                         Write-DisplayText -Blank
-                        Write-DisplayText -Line "DNS Hostname"
-                        Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                        Write-DisplayText -Line "TXT Record Name."
-                        Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                        Write-DisplayText -Line "TXT Record Value"
-                        Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
-                        Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
+                        if ($Record.AlternateDNS) {
+                            Write-DisplayText -Line "CNAME Record Name"
+                            Write-DisplayText -ForeGroundColor Cyan "$($Record.AlternateCNAMEName)"
+                            Write-DisplayText -Line "CNAME Record Value"
+                            Write-DisplayText -ForeGroundColor Cyan "$($Record.AlternateCNAMEValue)"
+                            Write-ToLogFile -I -C DNSChallenge -M "CNAME Record: `"$($Record.AlternateCNAMEName)`" => `"$($Record.AlternateCNAMEValue)`"."
+                            if (-Not $UseNetScalerDNS) {
+                                Write-DisplayText -Line "TXT Record Name."
+                                Write-DisplayText -ForeGroundColor Yellow "$($Record.AlternateTXTName)"
+                                Write-DisplayText -Line "TXT Record Value"
+                                Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
+                            }
+                        } else {
+                            Write-DisplayText -Line "DNS Hostname"
+                            Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
+                            Write-DisplayText -Line "TXT Record Name."
+                            Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                            Write-DisplayText -Line "TXT Record Value"
+                            Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTValue)"
+                            Write-ToLogFile -I -C DNSChallenge -M "DNS Hostname: `"$($Record.fqdn)`" => TXT Record Name: `"$($Record.TXTName)`", Value: `"$($Record.TXTValue)`"."
+                        }
                     }
                     Write-DisplayText -Blank
                     Write-DisplayText -ForeGroundColor Magenta "********************************************************************"
@@ -4681,6 +4858,7 @@ if ($CertificateActions) {
                             Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
                             Exit (0)
                         }
+                        Write-DisplayText -Blank
                     }
                 } else {
                     Write-ToLogFile -I -C DNSChallenge -M "Using the Posh-ACME Plugin: `"$DNSPlugin`""
@@ -4704,8 +4882,20 @@ if ($CertificateActions) {
                     }
                     $PoshACMEPluginUsed = $true
                 }
-                Write-DisplayText "Continuing, Waiting $($CertRequest.DNSWaitTime) seconds for the records to settle"
-                Start-Sleep -Seconds $($CertRequest.DNSWaitTime)
+
+                if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                    Write-ToLogFile -I -C DNSChallenge -M "Using the NetScaler DNS Plugin."
+                    Write-DisplayText -Line "NetScaler DNS Plugin"
+                    Write-DisplayText -ForeGroundColor Cyan "Enabled"
+                    foreach ($record in $TXTRecords) {
+                        Invoke-NSPublishTXTRecord -DomainName $record.AlternateTXTName -TXTValue $record.TXTValue
+                    }
+                } else {
+                    Write-DisplayText -Blank
+                    Write-DisplayText -ForeGroundColor Green -NoNewLine "Continuing"
+                    Write-DisplayText ", Waiting $($CertRequest.DNSWaitTime) seconds for the records to settle"
+                    Start-Sleep -Seconds $($CertRequest.DNSWaitTime)
+                }
                 Write-ToLogFile -I -C DNSChallenge -M "Start verifying the TXT records."
                 $issues = $false
                 try {
@@ -4717,16 +4907,16 @@ if ($CertificateActions) {
                         Write-ToLogFile -I -C DNSChallenge -M "Trying to retrieve the TXT record for `"$($Record.fqdn)`"."
                         $result = $null
                         if ($IPv6) {
-                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServerv6 -DnsOnly
+                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServerv6 -DnsOnly -ErrorAction SilentlyContinue
                         } else {
-                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly
+                            $dnsserver = Resolve-DnsName -Name $Record.TXTName -Server $PublicDnsServer -DnsOnly -ErrorAction SilentlyContinue
                         }
                         if ([String]::IsNullOrWhiteSpace($dnsserver.PrimaryServer)) {
                             Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$PublicDnsServer`" for resolving the TXT records."
-                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly
+                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $PublicDnsServer -DnsOnly -ErrorAction SilentlyContinue
                         } else {
                             Write-ToLogFile -D -C DNSChallenge -M "Using DNS Server `"$($dnsserver.PrimaryServer)`" for resolving the TXT records."
-                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly
+                            $result = Resolve-DnsName -Name $Record.TXTName -Type TXT -Server $dnsserver.PrimaryServer -DnsOnly -ErrorAction SilentlyContinue
                         }
                         Write-ToLogFile -D -C DNSChallenge -M "Output: $($result | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                         if ([String]::IsNullOrWhiteSpace($result.Strings -like "*$($Record.TXTValue)*")) {
@@ -5431,6 +5621,57 @@ if ($CertificateActions) {
 
                     #endregion UpdateGlobalVPNCertBinding
 
+                    #region CleanupDNSRecords
+                    if ($CertRequest.ValidationMethod -eq "dns") {
+                        if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Cleanup DNS Records using the NetScaler DNS Plugin"
+                            Write-DisplayText -Title "Cleanup DNS Records"
+                            foreach ($record in $TXTRecords) {
+                                Invoke-NSRemoveTXTRecord -DomainName $record.AlternateTXTName -TXTValue $record.TXTValue -ErrorAction SilentlyContinue
+                            }
+                        } elseif ($PoshACMEPluginUsed -ne $true) {
+                            Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
+                            Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
+                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
+                            if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                                foreach ($Record in $TXTRecords) {
+                                    Write-DisplayText -Blank
+                                    Write-DisplayText -Line "DNS Hostname"
+                                    Write-DisplayText -ForeGroundColor Cyan "$($record.AlternateCNAMEName)"
+                                    Write-DisplayText -Line "TXT Record Name"
+                                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($record.AlternateCNAMEName)`" => `"$($Record.TXTName)`""
+                                }
+                            } else {
+                                foreach ($Record in $TXTRecords) {
+                                    Write-DisplayText -Blank
+                                    Write-DisplayText -Line "DNS Hostname"
+                                    Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
+                                    Write-DisplayText -Line "TXT Record Name"
+                                    Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($record.fqdn)`" => `"$($Record.TXTName)`""
+                                }
+                            }
+                            Write-DisplayText -Blank
+                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
+                        } else {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "Using the Posh-ACME Plugin: `"$DNSPlugin`""
+                            foreach ($Record in $TXTRecords) {
+                                try {
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "Removing DNS record for $($Record.fqdn)"
+                                    Write-ToLogFile -D -C DNSChallenge -M "DNS Arguments: $($DNSParams | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
+                                    Write-ToLogFile -D -C DNSChallenge -M "Domain: $($Record.SanitizedFqdn) Token: $($Record.Token) -Plugin: $DNSPlugin"
+                                    Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
+                                } catch {
+                                    Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, $($_.Exception.Message)"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                }
+                            }
+                        }
+                    }
+                    #endregion CleanupDNSRecords
+
                     ##Saving Config if required
                     Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
 
@@ -5498,38 +5739,6 @@ if ($CertificateActions) {
 
                     #endregion IISActions
 
-                    if ($CertRequest.ValidationMethod -eq "dns") {
-                        if ($PoshACMEPluginUsed -ne $true) {
-                            Write-DisplayText -ForegroundColor Magenta "`r`n********************************************************************"
-                            Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
-                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
-                            foreach ($Record in $TXTRecords) {
-                                Write-DisplayText -Blank
-                                Write-DisplayText -Line "DNS Hostname"
-                                Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
-                                Write-DisplayText -Line "TXT Record Name"
-                                Write-DisplayText -ForeGroundColor Yellow "$($Record.TXTName)"
-                                Write-ToLogFile -I -C ADC-CertUpload -M "TXT Record: `"$($Record.TXTName)`""
-                            }
-                            Write-DisplayText -Blank
-                            Write-DisplayText -ForegroundColor Magenta "********************************************************************"
-                        } else {
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Using the Posh-ACME Plugin: `"$DNSPlugin`""
-                            foreach ($Record in $TXTRecords) {
-                                try {
-                                    Write-ToLogFile -I -C ADC-CertUpload -M "Removing DNS record for $($Record.fqdn)"
-                                    Write-ToLogFile -D -C DNSChallenge -M "DNS Arguments: $($DNSParams | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
-                                    Write-ToLogFile -D -C DNSChallenge -M "Domain: $($Record.SanitizedFqdn) Token: $($Record.Token) -Plugin: $DNSPlugin"
-                                    Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
-                                } catch {
-                                    Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, $($_.Exception.Message)"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                                }
-                            }
-                        }
-
-                    }
                     if (-not $Production) {
                         Write-DisplayText -ForeGroundColor Yellow "`r`nYou are now ready for the Production version!"
                         Write-DisplayText -ForeGroundColor Yellow "Add the `"-Production`" parameter and rerun the same script." -PostBlank
@@ -5547,7 +5756,6 @@ if ($CertificateActions) {
                     Write-Warning "There were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!"
                     $mailDataItem.Text += "`r`nThere were $($SessionRequestObject.ErrorOccurred) errors during this request, please check logs!`r`n"
                 }
-
             }
 
             #endregion ADC-CertUpload
@@ -5666,9 +5874,9 @@ if ($CleanADC) {
     Invoke-ADCCleanup -Full
 }
 
-Write-DisplayText -Title "Post CSVip Action"
-Write-DisplayText -Line "Action"
 if ($CertRequest.DisableVipAfter) {
+    Write-DisplayText -Title "Post CSVip Action"
+    Write-DisplayText -Line "Action"
     Write-DisplayText -ForeGroundColor Cyan "Required, DisableVipAfter was set"
     Write-ToLogFile -I -C PostCSActtion -M "DisableVipAfter was set for $($CertRequest.CsVipName)"
     try {
@@ -5696,7 +5904,6 @@ if ($CertRequest.DisableVipAfter) {
     }
 } else {
     Write-ToLogFile -I -C PostCSActtion -M "DisableVipAfter was not set for $($CertRequest.CsVipName)"
-    Write-DisplayText -ForeGroundColor Green "Skipped, Not required"
 }
 
 
@@ -5887,217 +6094,3 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 }
 
 TerminateScript 0
-
-# SIG # Begin signature block
-# MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBj4SIAqjtIuArI
-# r8ZFVixwH88l5HRQbe9QUiRtDcXgE6CCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
-# AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
-# ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
-# dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
-# dHdvcmsgQ0EwHhcNMjEwNTMxMDY0MzA2WhcNMjkwOTE3MDY0MzA2WjCBgDELMAkG
-# A1UEBhMCUEwxIjAgBgNVBAoTGVVuaXpldG8gVGVjaG5vbG9naWVzIFMuQS4xJzAl
-# BgNVBAsTHkNlcnR1bSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTEkMCIGA1UEAxMb
-# Q2VydHVtIFRydXN0ZWQgTmV0d29yayBDQSAyMIICIjANBgkqhkiG9w0BAQEFAAOC
-# Ag8AMIICCgKCAgEAvfl4+ObVgAxknYYblmRnPyI6HnUBfe/7XGeMycxca6mR5rlC
-# 5SBLm9qbe7mZXdmbgEvXhEArJ9PoujC7Pgkap0mV7ytAJMKXx6fumyXvqAoAl4Va
-# qp3cKcniNQfrcE1K1sGzVrihQTib0fsxf4/gX+GxPw+OFklg1waNGPmqJhCrKtPQ
-# 0WeNG0a+RzDVLnLRxWPa52N5RH5LYySJhi40PylMUosqp8DikSiJucBb+R3Z5yet
-# /5oCl8HGUJKbAiy9qbk0WQq/hEr/3/6zn+vZnuCYI+yma3cWKtvMrTscpIfcRnNe
-# GWJoRVfkkIJCu0LW8GHgwaM9ZqNd9BjuiMmNF0UpmTJ1AjHuKSbIawLmtWJFfzcV
-# WiNoidQ+3k4nsPBADLxNF8tNorMe0AZa3faTz1d1mfX6hhpneLO/lv403L3nUlbl
-# s+V1e9dBkQXcXWnjlQ1DufyDljmVe2yAWk8TcsbXfSl6RLpSpCrVQUYJIP4ioLZb
-# MI28iQzV13D4h1L92u+sUS4Hs07+0AnacO+Y+lbmbdu1V0vc5SwlFcieLnhO+Nqc
-# noYsylfzGuXIkosagpZ6w7xQEmnYDlpGizrrJvojybawgb5CAKT41v4wLsfSRvbl
-# jnX98sy50IdbzAYQYLuDNbdeZ95H7JlI8aShFf6tjGKOOVVPORa5sWOd/7cCAwEA
-# AaOCAT4wggE6MA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFLahVDkCw6A/joq8
-# +tT4HKbROg79MB8GA1UdIwQYMBaAFAh2zcsH/yT2xc3tu5C84oQ3RnX3MA4GA1Ud
-# DwEB/wQEAwIBBjAvBgNVHR8EKDAmMCSgIqAghh5odHRwOi8vY3JsLmNlcnR1bS5w
-# bC9jdG5jYS5jcmwwawYIKwYBBQUHAQEEXzBdMCgGCCsGAQUFBzABhhxodHRwOi8v
-# c3ViY2Eub2NzcC1jZXJ0dW0uY29tMDEGCCsGAQUFBzAChiVodHRwOi8vcmVwb3Np
-# dG9yeS5jZXJ0dW0ucGwvY3RuY2EuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQG
-# CCsGAQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEM
-# BQADggEBAFHCoVgWIhCL/IYx1MIy01z4S6Ivaj5N+KsIHu3V6PrnCA3st8YeDrJ1
-# BXqxC/rXdGoABh+kzqrya33YEcARCNQOTWHFOqj6seHjmOriY/1B9ZN9DbxdkjuR
-# mmW60F9MvkyNaAMQFtXx0ASKhTP5N+dbLiZpQjy6zbzUeulNndrnQ/tjUoCFBMQl
-# lVXwfqefAcVbKPjgzoZwpic7Ofs4LphTZSJ1Ldf23SIikZbr3WjtP6MZl9M7JYjs
-# NhI9qX7OAo0FmpKnJ25FspxihjcNpDOO16hO0EoXQ0zF8ads0h5YbBRRfopUofbv
-# n3l6XYGaFpAP4bvxSgD5+d2+7arszgowggZFMIIELaADAgECAhAIMk+dt9qRb2Pk
-# 8qM8Xl1RMA0GCSqGSIb3DQEBCwUAMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhB
-# c3NlY28gRGF0YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNp
-# Z25pbmcgMjAyMSBDQTAeFw0yNDA0MDQxNDA0MjRaFw0yNzA0MDQxNDA0MjNaMGsx
-# CzAJBgNVBAYTAk5MMRIwEAYDVQQHDAlTY2hpam5kZWwxIzAhBgNVBAoMGkpvaG4g
-# QmlsbGVrZW5zIENvbnN1bHRhbmN5MSMwIQYDVQQDDBpKb2huIEJpbGxla2VucyBD
-# b25zdWx0YW5jeTCCAaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBAMslntDb
-# SQwHZXwFhmibivbnd0Qfn6sqe/6fos3pKzKxEsR907RkDMet2x6RRg3eJkiIr3TF
-# PwqBooyXXgK3zxxpyhGOcuIqyM9J28DVf4kUyZHsjGO/8HFjrr3K1hABNUszP0o7
-# H3o6J31eqV1UmCXYhQlNoW9FOmRC1amlquBmh7w4EKYEytqdmdOBavAD5Xq4vLPx
-# NP6kyA+B2YTtk/xM27TghtbwFGKnu9Vwnm7dFcpLxans4ONt2OxDQOMA5NwgcUv/
-# YTpjhq9qoz6ivG55NRJGNvUXsM3w2o7dR6Xh4MuEGrTSrOWGg2A5EcLH1XqQtkF5
-# cZnAPM8W/9HUp8ggornWnFVQ9/6Mga+ermy5wy5XrmQpN+x3u6tit7xlHk1Hc+4X
-# Y4a4ie3BPXG2PhJhmZAn4ebNSBwNHh8z7WTT9X9OFERepGSytZVeEP7hgyptSLcu
-# hpwWeR4QdBb7dV++4p3PsAUQVHFpwkSbrRTv4EiJ0Lcz9P1HPGFoHiFAQQIDAQAB
-# o4IBeDCCAXQwDAYDVR0TAQH/BAIwADA9BgNVHR8ENjA0MDKgMKAuhixodHRwOi8v
-# Y2NzY2EyMDIxLmNybC5jZXJ0dW0ucGwvY2NzY2EyMDIxLmNybDBzBggrBgEFBQcB
-# AQRnMGUwLAYIKwYBBQUHMAGGIGh0dHA6Ly9jY3NjYTIwMjEub2NzcC1jZXJ0dW0u
-# Y29tMDUGCCsGAQUFBzAChilodHRwOi8vcmVwb3NpdG9yeS5jZXJ0dW0ucGwvY2Nz
-# Y2EyMDIxLmNlcjAfBgNVHSMEGDAWgBTddF1MANt7n6B0yrFu9zzAMsBwzTAdBgNV
-# HQ4EFgQUO6KtBpOBgmrlANVAnyiQC6W6lJwwSwYDVR0gBEQwQjAIBgZngQwBBAEw
-# NgYLKoRoAYb2dwIFAQQwJzAlBggrBgEFBQcCARYZaHR0cHM6Ly93d3cuY2VydHVt
-# LnBsL0NQUzATBgNVHSUEDDAKBggrBgEFBQcDAzAOBgNVHQ8BAf8EBAMCB4AwDQYJ
-# KoZIhvcNAQELBQADggIBAEQsN8wgPMdWVkwHPPTN+jKpdns5AKVFjcn00psf2NGV
-# VgWWNQBIQc9lEuTBWb54IK6Ga3hxQRZfnPNo5HGl73YLmFgdFQrFzZ1lnaMdIcyh
-# 8LTWv6+XNWfoyCM9wCp4zMIDPOs8LKSMQqA/wRgqiACWnOS4a6fyd5GUIAm4Cuap
-# tpFYr90l4Dn/wAdXOdY32UhgzmSuxpUbhD8gVJUaBNVmQaRqeU8y49MxiVrUKJXd
-# e1BCrtR9awXbqembc7Nqvmi60tYKlD27hlpKtj6eGPjkht0hHEsgzU0Fxw7ZJghY
-# G2wXfpF2ziN893ak9Mi/1dmCNmorGOnybKYfT6ff6YTCDDNkod4egcMZdOSv+/Qv
-# +HAeIgEvrxE9QsGlzTwbRtbm6gwYYcVBs/SsVUdBn/TSB35MMxRhHE5iC3aUTkDb
-# ceo/XP3uFhVL4g2JZHpFfCSu2TQrrzRn2sn07jfMvzeHArCOJgBW1gPqR3WrJ4hU
-# xL06Rbg1gs9tU5HGGz9KNQMfQFQ70Wz7UIhezGcFcRfkIfSkMmQYYpsc7rfzj+z0
-# ThfDVzzJr2dMOFsMlfj1T6l22GBq9XQx0A4lcc5Fl9pRxbOuHHWFqIBD/BCEhwni
-# OCySzqENd2N+oz8znKooSISStnkNaYXt6xblJF2dx9Dn89FK7d1IquNxOwt0tI5d
-# MIIGgzCCBGugAwIBAgIRAJ6cBPZVqLSnAm1JjGx4jaowDQYJKoZIhvcNAQEMBQAw
-# VjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5B
-# LjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBMB4XDTI1MDEw
-# OTA4NDA0M1oXDTM2MDEwNzA4NDA0M1owUDELMAkGA1UEBhMCUEwxITAfBgNVBAoM
-# GEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEeMBwGA1UEAwwVQ2VydHVtIFRpbWVz
-# dGFtcCAyMDI1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxylfZ/is
-# K92QReVAi1jkPzXW25QL0HhjI3wov24m0+9YT5MCleFL0LdTLjsKGlAmLbC4cPI6
-# 5jpqM9h6ByisxKYktwNawN7LF1GTJ0q24olaQ4/uTLZ210lRCSm3HLh25sHI5d/T
-# eFu9s3HKAv53igLsDtQyfvUjvmJB53EYlfeYnVocUQHA2L+O4XPRhBWbUxcUFy26
-# y+DezfdAai5Xt2ss583HBD0PhOh+qdNMxPR1Kfvt22UxeD38j0Zygi3OXswMxKqm
-# 21ORf57o8evU9ZptNo5bZRV50zBdb5WpHkF1mKRiI7a0e1j+7SDGZ5O/J62En3gK
-# fJXvv1v+fqq+7akGbn1vYp77EU3H5Oz/ppyoyS7km8KoMXpbwga8s/a+dW09OetW
-# kdnPo6BcoKlu5+BTwpzCzo+NF+KLe8D9rvJC0Q1R24bB6uUhi6q/A2xateMLNgC0
-# t7WGthhogO8F+/a0uaAzJ0mP8ZiTuXLqbkr6qcpczu483CzsFoqgq6tOQF6edUka
-# 4/cUbfCnWVqQ3VoVphPDBYhbZkNAKjgyyQZ9YUAMdxbw/6bXuqRNQYpdATlQtkp2
-# 3qv9zcpQ8Lw3QIP9AmUSbECGsnR7MCcMmAZWFA8mkCtslEue4aG52Mf70rTL0wfe
-# oouIxld1JGYdxr8HQwrGZGyV2lPAExf8+g8CAwEAAaOCAVAwggFMMHUGCCsGAQUF
-# BwEBBGkwZzA7BggrBgEFBQcwAoYvaHR0cDovL3N1YmNhLnJlcG9zaXRvcnkuY2Vy
-# dHVtLnBsL2N0c2NhMjAyMS5jZXIwKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
-# Y3NwLWNlcnR1bS5jb20wHwYDVR0jBBgwFoAUvlQCL79AbHNDzqwJJU6eQ0Qa7uAw
-# DAYDVR0TAQH/BAIwADA5BgNVHR8EMjAwMC6gLKAqhihodHRwOi8vc3ViY2EuY3Js
-# LmNlcnR1bS5wbC9jdHNjYTIwMjEuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMI
-# MA4GA1UdDwEB/wQEAwIHgDAiBgNVHSAEGzAZMAgGBmeBDAEEAjANBgsqhGgBhvZ3
-# AgUBCzAdBgNVHQ4EFgQUgYwGoChT/AA/236eSsEfIuyyEokwDQYJKoZIhvcNAQEM
-# BQADggIBAJkPGQwb6wVD52i/OwGHOCZZnx9WT+creuTLc2LvH25rC93d3L2LPhJ2
-# 7X7vX9sDHoc0sr3nd0XOfWtODvDTe6ZcOD14O9cH0hODERTNRLqi+t86vbk45v/b
-# QO969WgnVppKayqdGi6GaJVDdKhnL6/fkBvFSCVTHLkqhXhL0ayxCitsVZDEnU02
-# w4bHlIyOLzfga15uc+ORAN2g6UomULqDXeERZw83XW4H3AkD2mNlMl6szQY57s+g
-# Mh5xcyrTZQnr5DAYIeHSA7f9AxhgzmkxAFmbVBKiuQJR3dDwZ3eNC56IOFAE1Nwb
-# ehh33g5lhBxU4xyrJp/UPMIho/dOm1YC/N+bXxB/RIGA5JaqzlMVsQ39XDgO3bP6
-# /KSHNr4y0PbTkpJvVl1W503ixt0Oe3604Ar0zm3f6n91MxPe50zTlO7zjGRKONQI
-# JobhGxrMkCAzP1enyUF9UZ88yTaKn005FM1KD9rZTR5zbIxaNmFfucmXKGmsJjVp
-# ke08sFFxtv7xYCWhtG3xKKHXnl6ewOCOB2gw6X0Wu8qYCRD3k8B7gUSaY/Tftcba
-# 4vugcxz8LAAL1CZufDxqFbLXhwF8L6YODVYL1JNwSm5e8RbpVlNSh6h/7JO09AhQ
-# UOaIbij5hX9aKgD+ADvWt2INsATMBINczzoesW1F7JM7PYkmvchsMIIGuTCCBKGg
-# AwIBAgIRAJmjgAomVTtlq9xuhKaz6jkwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNV
-# BAYTAlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYD
-# VQQLEx5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0Nl
-# cnR1bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMThaFw0zNjA1
-# MTgwNTMyMThaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBT
-# eXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBD
-# QTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJ0jzwQwIzvBRiznM3M+
-# Y116dbq+XE26vest+L7k5n5TeJkgH4Cyk74IL9uP61olRsxsU/WBAElTMNQI/HsE
-# 0uCJ3VPLO1UufnY0qDHG7yCnJOvoSNbIbMpT+Cci75scCx7UsKK1fcJo4TXetu4d
-# u2vEXa09Tx/bndCBfp47zJNsamzUyD7J1rcNxOw5g6FJg0ImIv7nCeNn3B6gZG28
-# WAwe0mDqLrvU49chyKIc7gvCjan3GH+2eP4mYJASflBTQ3HOs6JGdriSMVoD1lzB
-# JobtYDF4L/GhlLEXWgrVQ9m0pW37KuwYqpY42grp/kSYE4BUQrbLgBMNKRvfhQPs
-# kDfZ/5GbTCyvlqPN+0OEDmYGKlVkOMenDO/xtMrMINRJS5SY+jWCi8PRHAVxO0xd
-# x8m2bWL4/ZQ1dp0/JhUpHEpABMc3eKax8GI1F03mSJVV6o/nmmKqDE6TK34eTAgD
-# iBuZJzeEPyR7rq30yOVw2DvetlmWssewAhX+cnSaaBKMEj9O2GgYkPJ16Q5Da1AP
-# YO6n/6wpCm1qUOW6Ln1J6tVImDyAB5Xs3+JriasaiJ7P5KpXeiVV/HIsW3ej85A6
-# cGaOEpQA2gotiUqZSkoQUjQ9+hPxDVb/Lqz0tMjp6RuLSKARsVQgETwoNQZ8jCeK
-# wSQHDkpwFndfCceZ/OfCUqjxAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/
-# MB0GA1UdDgQWBBTddF1MANt7n6B0yrFu9zzAMsBwzTAfBgNVHSMEGDAWgBS2oVQ5
-# AsOgP46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
-# BQUHAwMwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3Ru
-# Y2EyLmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJj
-# YS5vY3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5
-# LmNlcnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsG
-# AQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQAD
-# ggIBAHWIWA/lj1AomlOfEOxD/PQ7bcmahmJ9l0Q4SZC+j/v09CD2csX8Yl7pmJQE
-# TIMEcy0VErSZePdC/eAvSxhd7488x/Cat4ke+AUZZDtfCd8yHZgikGuS8mePCHyA
-# iU2VSXgoQ1MrkMuqxg8S1FALDtHqnizYS1bIMOv8znyJjZQESp9RT+6NH024/IqT
-# RsRwSLrYkbFq4VjNn/KV3Xd8dpmyQiirZdrONoPSlCRxCIi54vQcqKiFLpeBm5S0
-# IoDtLoIe21kSw5tAnWPazS6sgN2oXvFpcVVpMcq0C4x/CLSNe0XckmmGsl9z4UUg
-# uAJtf+5gE8GVsEg/ge3jHGTYaZ/MyfujE8hOmKBAUkVa7NMxRSB1EdPFpNIpEn/p
-# SHuSL+kWN/2xQBJaDFPr1AX0qLgkXmcEi6PFnaw5T17UdIInA58rTu3mefNuzUts
-# e4AgYmxEmJDodf8NbVcU6VdjWtz0e58WFZT7tST6EWQmx/OoHPelE77lojq7lpsj
-# hDCzhhp4kfsfszxf9g2hoCtltXhCX6NqsqwTT7xe8LgMkH4hVy8L1h2pqGLT2aNC
-# x7h/F95/QvsTeGGjY7dssMzq/rSshFQKLZ8lPb8hFTmiGDJNyHga5hZ59IGynk08
-# mHhBFM/0MLeBzlAQq1utNjQprztZ5vv/NJy8ua9AGbwkMWkOMIIGuTCCBKGgAwIB
-# AgIRAOf/acc7Nc5LkSbYdHxopYcwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNVBAYT
-# AlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQL
-# Ex5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0NlcnR1
-# bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMDdaFw0zNjA1MTgw
-# NTMyMDdaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBTeXN0
-# ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAyMSBDQTCC
-# AiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAOkSHwQ17bldesWmlUG+imV/
-# TnfRbSV102aO2/hhKH9/t4NAoVoipzu0ePujH67y8iwlmWuhqRR4xLeLdPxolEL5
-# 5CzgUXQaq+Qzr5Zk7ySbNl/GZloFiYwuzwWS2AVgLPLCZd5DV8QTF+V57Y6lsdWT
-# rrl5dEeMfsxhkjM2eOXabwfLy6UH2ZHzAv9bS/SmMo1PobSx+vHWST7c4aiwVRvv
-# JY2dWRYpTipLEu/XqQnqhUngFJtnjExqTokt4HyzOsr2/AYOm8YOcoJQxgvc26+L
-# AfXHiBkbQkBdTfHak4DP3UlYolICZHL+XSzSXlsRgqiWD4MypWGU4A13xiHmaRBZ
-# owS8FET+QAbMiqBaHDM3Y6wohW07yZ/mw9ZKu/KmVIAEBhrXesxifPB+DTyeWNke
-# CGq4IlgJr/Ecr1px6/1QPtj66yvXl3uauzPPGEXUk6vUym6nZyE1IGXI45uGVI7X
-# qvCt99WuD9LNop9Kd1LmzBGGvxucOo0lj1M3IRi8FimAX3krunSDguC5HgD75nWc
-# UgdZVjm/R81VmaDPEP25Wj+C1reicY5CPckLGBjHQqsJe7jJz1CJXBMUtZs10cVK
-# MEK3n/xD2ku5GFWhx0K6eFwe50xLUIZD9GfT7s/5/MyBZ1Ep8Q6H+GMuudDwF0mJ
-# itk3G8g6EzZprfMQMc3DAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/MB0G
-# A1UdDgQWBBS+VAIvv0Bsc0POrAklTp5DRBru4DAfBgNVHSMEGDAWgBS2oVQ5AsOg
-# P46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUH
-# AwgwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3RuY2Ey
-# LmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
-# Y3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5LmNl
-# cnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsGAQUF
-# BwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQADggIB
-# ALiTWXfJTBX9lAcIoKd6oCzwQZOfARQkt0OmiQ390yEqMrStHmpfycggfPGlBHdM
-# DDYhHDVTGyvY+WIbdsIWpJ1BNRt9pOrpXe8HMR5sOu71AWOqUqfEIXaHWOEs0UWm
-# Vs8mJb4lKclOHV8oSoR0p3GCX2tVO+XF8Qnt7E6fbkwZt3/AY/C5KYzFElU7TCeq
-# BLuSagmM0X3Op56EVIMM/xlWRaDgRna0hLQze5mYHJGv7UuTCOO3wC1bzeZWdlPJ
-# Ow5v4U1/AljsNLgWZaGRFuBwdF62t6hOKs86v+jPIMqFPwxNJN/ou22DqzpP+7Ty
-# YNbDocrThlEN9D2xvvtBXyYqA7jhYY/fW9edUqhZUmkUGM++Mvz9lyT/nBdfaKqM
-# 5otK0U5H8hCSL4SGfjOVyBWbbZlUIE8X6XycDBRRKEK0q5JTsaZksoKabFAyRKJY
-# gtObwS1UPoDGcmGirwSeGMQTJSh+WR5EXZaEWJVA6ZZPBlGvjgjFYaQ0kLq1Oitb
-# muXZmX7Z70ks9h/elK0A8wOg8oiNVd3o1bb59ms1QF4OjZ45rkWfsGuz8ctB9/le
-# CuKzkx5Rt1WAOsXy7E7pws+9k+jrePrZKw2DnmlNaT19QgX2I+hFtvhC6uOhj/Cg
-# jVEA4q1i1OJzpoAmre7zdEg+kZcFIkrDHgokA5mcIMK1MYIGpDCCBqACAQEwajBW
-# MQswCQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEu
-# MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
-# Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
-# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgCCoNswCrnM/dqfMiP80xm/+U
-# hQUph97yE9y+bxG5MGswDQYJKoZIhvcNAQEBBQAEggGAeUDBtZWfoRYsOR5DjCwd
-# Jjbmt0PWC0Ic29683plf2PdlmnpIzs4B+e+9ACM52sOmfayYFpxgJj/r1TiSvu5c
-# VczSQOGkzl7LBikTJdJGDmP2cTcBxUbmUGf5ZzB87WhbyJeP6to9A+UErHQnaHoY
-# b2Y+hSW7xLWW27G8n6H/HnayhlEfNE7SaDzHJBmNZevHoujhGgMuYpj1uXK10GEL
-# IzTZPdd4sQSYVXhdgadtB4X4CAZUepSCGbXuWUZz25j7vsrJ3tkOb1JsHqO2+z0y
-# kxNpEASaE6Gydw8I9/nR7Vi4jE2PR+HGyFcpMIeML0iOaXdPVD1G97M3C6Kb4AgR
-# t0LzttAFnDxzFWjEDfNyQUhoK5NfT/cLsKjiJ9/YjWUa7NlPzrrwlTxc56FQvIGN
-# Tym5/m0q6+UksnWgDfgmH/1HFUl5Mh5mW1NlUeIXuRtWYOPTuegahMQe+Bj4M3kj
-# FYN4F/hTueDnYxyXrkllhGggRawJwISws6duKYGx6V1foYIEBDCCBAAGCSqGSIb3
-# DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
-# byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
-# ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
-# GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTAy
-# MTUxOTE1MTdaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDAWLKA9jcpkECWe0NTJ
-# tMiKJ6fgIGcZI5gG7zhqBkM6QYPecFxFDrcShBmhe9Rl8b4wgaAGCyqGSIb3DQEJ
-# EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
-# CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
-# IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAJcQb0veklHUYH0fPlDn9SW8MGEDvEQ7
-# cRLzcTC8v0lwxGuKxLa/7sZ8QnnMsTJBzgzt4urG/bRsjiRXSrTpdAnPo+jM7KHs
-# 5tvyCNEnLiiiMO+JNz9hFJgpksdd97CiRbfM26w5pSHHZz77bQlqIe0LqI1D0sTt
-# aUWlPi9Hn5/yXKfYXN7tjmdqW8e5YuRtY5kMaf+qPaH4kKFQI4uPTz+Iv7J36RzG
-# s0UtqeWB4Z2mhG/R4RQLrwy4ubroGdGp1KwybGYR0CaJ1uPS5r2Q9sOwerp1whMf
-# OhkGREGUp4BdpP345SlgfjX3n0oVuhVTpzQ/1BLddzGTOyI9Ugbk+wA68ounIlIW
-# WsRjP+PP6v5oRDcDSoJXwOxsj/OnM3rFMmPdxgP2yL7Adj2EFIonGGoFYpU/uJd6
-# OF2igq7zlW5//5VfJyW9NmO7eH5KoGyWgX+ST3SnEb6xf8PBG/o8gUW6XxeMq9IV
-# Pml/G1c9vWMCrOCmUmgIH8bi0ys5BgEmMP4Jw7B4ZTUJXkaYC+xFq1etjJCgpnCa
-# h+jFTkdwK1o3f3wkjZNFm/ZwPcCOAUYXXVoqhh6yJhjLv821ZWnKK7m2duNz3ROh
-# FkifVCP4rHFPYiaevc0ATmabGVMNDVforE6yL+4CmIdox0airwKvzDOms///tc3P
-# mJbh6E3aLT2C
-# SIG # End signature block
