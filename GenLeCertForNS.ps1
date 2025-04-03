@@ -2957,7 +2957,7 @@ try {
                 try {
                     $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword))
                 } catch {
-                    $PreLogLines += "E;CONFIGFILE;Could not read the SMTPCredential. ERROR:$($_.Exception.Message)"
+                    $PreLogLines += "W;CONFIGFILE;Could not read the SMTPCredential. ERROR:$($_.Exception.Message)"
                 }
                 if ($Parameters.certrequests.Count -gt 0) {
                     $Parameters.certrequests | ForEach-Object {
@@ -3037,7 +3037,7 @@ if ($AutoRun) {
             try {
                 $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
             } catch {
-                $PreLogLines += "E;PARAMETERS;Could not read the SMTPCredentialPassword. ERROR:$($_.Exception.Message)"
+                $PreLogLines += "W;PARAMETERS;Could not read the SMTPCredentialPassword. ERROR:$($_.Exception.Message)"
             }
         } else {
             $SMTPCredentialPassword = [SecureString]::new()
@@ -3054,7 +3054,7 @@ if ($AutoRun) {
             $SaveConfig = $true
         }
     } catch {
-        $PreLogLines += "E;PARAMETERS;Could not read the SMTPCredential, setting EmptyCredential. ERROR:$($_.Exception.Message)"
+        $PreLogLines += "W;PARAMETERS;Could not read the SMTPCredential, setting EmptyCredential. ERROR:$($_.Exception.Message)"
         $SMTPCredential = [PSCredential]::Empty
     }
     $Global:LogLevel = $Parameters.settings.LogLevel
