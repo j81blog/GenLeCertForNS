@@ -56,7 +56,7 @@ GenLeCertForNS.ps1 [...] -LogLevel 'Debug' -LogFile 'C:\Log\LetsEncryptScriptLog
 
 ## Create specific user permissions (optional)
 
-This command will create a Command Policy (*-CPName 'LetsEncrypt'*) with the minimum set of permissions, you need to run this once to create (or when you want to change something).
+This command will create a Command Policy (*-NSCPName 'LetsEncrypt'*) with the minimum set of permissions, you need to run this once to create (or when you want to change something).
 
 Be sure to run the script with the same parameters as you would when generating a certificate. Use for example the same values for the following parameters *-SvcName* (***Default: 'svc_letsencrypt_cert_dummy'***), *-LbName* (***Default: 'lb_letsencrypt_cert'***), *-RspName* (***Default: 'rsp_letsencrypt'***), *-RsaName* (***Default: 'rsa_letsencrypt'***), *-CspName* (***Default: 'csp_NSCertCsp'***)
 Next time you want to generate certificates you can specify the new user *-Username 'le-user' -Password 'LEP@ssw0rd'*
@@ -70,7 +70,7 @@ $params = @{
     CsVipName = 'cs_domain.com_http'
     ApiUsername = 'le-user'
     ApiPassword = 'LEP@ssw0rd'
-    CPName = 'LetsEncrypt'
+    NSCPName = 'LetsEncrypt'
     Username = 'nsroot'
     Password = 'LEP@ssw0rd'
     ManagementURL = 'https://citrixadc.domain.local'
@@ -81,7 +81,7 @@ GenLeCertForNS.ps1 @params
 or as one line
 
 ```PowerShell
-GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -CsVipName 'cs_domain.com_http' -ApiUsername 'le-user' -ApiPassword 'LEP@ssw0rd' -CPName 'LetsEncrypt' -Username 'nsroot' -Password 'LEP@ssw0rd' -ManagementURL 'https://citrixadc.domain.local'
+GenLeCertForNS.ps1 -CreateUserPermissions -CreateApiUser -CsVipName 'cs_domain.com_http' -ApiUsername 'le-user' -ApiPassword 'LEP@ssw0rd' -NSCPName 'LetsEncrypt' -Username 'nsroot' -Password 'LEP@ssw0rd' -ManagementURL 'https://citrixadc.domain.local'
 ```
 
 ## Create a SAN certificate (no manual actions)
