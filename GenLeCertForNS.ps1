@@ -3110,8 +3110,8 @@ if ($AutoRun) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name FriendlyName -Value $FriendlyName
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CsVipName -Value @($CsVipName)
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name UseLbVip -Value $([bool]::Parse($UseLbVip))
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name EnableVipBefore -Value $EnableVipBefore
-        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableVipAfter -Value $DisableVipAfter
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name EnableVipBefore -Value $([bool]::Parse($EnableVipBefore))
+        Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name DisableVipAfter -Value $([bool]::Parse($DisableVipAfter))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertKeyNameToUpdate -Value $CertKeyNameToUpdate
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name RemovePrevious -Value $([bool]::Parse($RemovePrevious))
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CertDir -Value $CertDir
@@ -3458,10 +3458,10 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan "$($NSCPName)-(Basics|LEBkEd|LEFtEd) "
     Write-DisplayText -Line "CS VIP Name"
     $csVipExtraActionsString = ""
-    if ($EnableVipBefore) {
+    if ($EnableVipBefore -eq $true) {
         $csVipExtraActionsString = $csVipExtraActionsString += '|enable'
     }
-    if ($DisableVipAfter) {
+    if ($DisableVipAfter -eq $true) {
         $csVipExtraActionsString = $csVipExtraActionsString += '|disable'
     }
 
@@ -4094,7 +4094,7 @@ if ($CertificateActions) {
                         try {
                             Write-ToLogFile -I -C ADC-CS-Validation -M "Verifying Content Switch $loopCounter of $($CertRequest.CsVipName.Count)."
                             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
-                            if ($CertRequest.EnableVipBefore -and ($response.csvserver.curstate -like "OUT OF SERVICE")) {
+                            if ($CertRequest.EnableVipBefore -eq $true -and ($response.csvserver.curstate -like "OUT OF SERVICE")) {
                                 Write-DisplayText -Line "State"
                                 Write-DisplayText "$($response.csvserver.curstate), needs to be enabled first (EnableVipBefore was set)"
                                 Write-ToLogFile -E -C ADC-CS-Validation -M "The CS Vip is disabled, enabling it now because of parameter EnableVipBefore is set."
@@ -5889,7 +5889,7 @@ if ($CleanADC) {
     Invoke-ADCCleanup -Full
 }
 
-if ($CertRequest.DisableVipAfter) {
+if ($CertRequest.DisableVipAfter -eq $true) {
     Write-DisplayText -Title "Post CSVip Action"
     Write-DisplayText -Line "Action"
     Write-DisplayText -ForeGroundColor Cyan "Required, DisableVipAfter was set"
