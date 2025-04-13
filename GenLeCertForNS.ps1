@@ -5213,8 +5213,23 @@ if ($CertificateActions) {
                     $CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
                     $CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
                     Copy-Item $PACertificate.CertFile -Destination $CertificateFullPath -Force
+                    if (-Not [String]::IsNullOrEmpty($CertificateFullPath) -and (Test-Path -Path "$CertificateFullPath" -ErrorAction SilentlyContinue)) {
+                        Write-ToLogFile -D -C CertFinalization -M "Certificate file copied successfully."
+                    } else {
+                        Write-ToLogFile -E -C CertFinalization -M "Certificate file not copied!"
+                    }
                     Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
+                    if (-Not [String]::IsNullOrEmpty($CertificateKeyFullPath) -and (Test-Path "$CertificateKeyFullPath" -ErrorAction SilentlyContinue)) {
+                        Write-ToLogFile -D -C CertFinalization -M "Key file copied successfully."
+                    } else {
+                        Write-ToLogFile -E -C CertFinalization -M "Key file not copied!"
+                    }
                     Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
+                    if (-Not [String]::IsNullOrEmpty($CertificatePfxWithChainFullPath) -and (Test-Path "$CertificatePfxWithChainFullPath" -ErrorAction SilentlyContinue)) {
+                        Write-ToLogFile -D -C CertFinalization -M "Pfx file copied successfully."
+                    } else {
+                        Write-ToLogFile -E -C CertFinalization -M "Pfx file not copied!"
+                    }
                     $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
                     $NewCertificates = Export-PfxCertificate -PFXData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
                     Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
@@ -5222,7 +5237,6 @@ if ($CertificateActions) {
                         $CertRequest.ForceCertRenew = $false
                         Write-ToLogFile -D -C CertFinalization -M "ForceCertRenew was reset to `"false`""
                     }
-
                 } else {
                     Write-ToLogFile -E -C CertFinalization -M "Could not test Certificate directory."
                 }
@@ -5300,7 +5314,7 @@ if ($CertificateActions) {
                                     Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                                 }
                             } catch {
-                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine (before-unlink) linked details"
                             }
                             $payload = @{"certkey" = "$CertificateCertKeyNameEscaped"; }
                             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
@@ -5311,7 +5325,7 @@ if ($CertificateActions) {
                                     Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                                 }
                             } catch {
-                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
+                                Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine (after-unlink) linked details"
                             }
                         } catch {
                             Write-ToLogFile -D -C ADC-CertUpload -M "Certificate was not linked."
@@ -5430,7 +5444,7 @@ if ($CertificateActions) {
                     try {
                         $payload = @{"certkey" = "$CertificateCertKeyNameEscaped"; "linkcertkeyname" = "$IntermediateCACertKeyName"; }
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link -ErrorAction Stop
-                        Write-ToLogFile -I -C ADC-CertUpload -M "Link successfully."
+                        Write-ToLogFile -I -C ADC-CertUpload -M "Link successfull."
                         Write-ToLogFile -D -C ADC-CertUpload -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     } catch {
                         Write-DisplayText -Blank
@@ -5448,7 +5462,7 @@ if ($CertificateActions) {
                             Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                         }
                     } catch {
-                        Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine linked details"
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Could not determine (after-link) linked details"
                     }
                     Write-DisplayText -ForeGroundColor Green " Ready"
 
@@ -5487,7 +5501,12 @@ if ($CertificateActions) {
                         Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving expiration details, $($_.Exception.Message)"
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     }
-                    $FinalCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$(Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName)"
+                    try {
+                        $FinalCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($CertificateFullPath)"
+                    } catch {
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving certificate details, $($_.Exception.Message)"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    }
                     try {
                         $renewAfterDays = 0
                         if ($CertRequest.CertExpires -match '[0-9-]{8,10}T[0-9:]{6,8}Z') {
@@ -6113,8 +6132,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAPc5yBcZ1UE5m3
-# rQYFVXm3Cd2SydmlRJmtAcPPmxBmJaCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCARLRFBn9dygGLV
+# DS4pin90JWDGlsJEj6sL+0omtbpJW6CCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -6290,36 +6309,36 @@ TerminateScript 0
 # MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
 # Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg+GYANo/YmIHb1XFKWP2xToDA
-# OnacUK0tPo5JFhCH3N8wDQYJKoZIhvcNAQEBBQAEggGAZyxHY7nM7HGQTG/vvToz
-# DhNLeKuq6EO3DZx4nstunGWyYu7O0FGfpdNtvkZUMVGaCTDL7bwFHeL7588DyxXs
-# BPQM+rBRzTJG5mRG6M5UWHxf788cHSEThn03Lxpe+9FIPmYZUSNPQBHK93e9TBTv
-# kXeqqYfDU0F5tzA9m6vwlCl/5pxDAlq/FeuG8yUHxkLooKOl/6D1gfIxD3Zfo0jN
-# J6XPABLuVup0fOvR1tRlmU/6A4Xx1TwNOp5y4V0yiSSQ+O5lWKG0l16bi6b0xrpd
-# HThxDbD1xbUTXiLKAoEk6Aly50D06j+KazCg7ehqLL1sTLfvvnvB0yq1CFs+wC+Z
-# lPVQpwRoM+QTgy5/IBV0WcoYIEqdqk/T65Ij6Wdt8Ep4n+8dV0lN68rE9oj0Cqkq
-# kLMRzMR5tXJb16fFvQDVIo+KF5KNOUIx3E8ksYy3zOq5ZkZWgn0fsNPucGlkxuIP
-# D4MXwZEcQ4M5Qxk+xfvFOTiOsLh5KVY6JHMO0xwhl9AzoYIEBDCCBAAGCSqGSIb3
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgw01TGGm/I12Lsq0QbR+9SA8K
+# qu9ARFRI6xpXqyKw/yowDQYJKoZIhvcNAQEBBQAEggGAD9mMAmODp947y6kESL3t
+# MXQgoq6PjNFLXrISiqj9LnKsm2h10TSvZVkmC++GPRsQacQPPaBsjDBwugTbmGHp
+# H1T70RN6HAPLep5zx9K51mrACP1/GLghR9SfnXim8RfIxDYVo5Ro0TWCJCAXqrHk
+# 5H0rD96utMsPQ/9lWqTZGq4E1loWHTIc7fdnzU+n/Qgca0vCTFHLXG9ML5dxNpvu
+# yTC8mvnZKskyo1utsoHZa/bh5nlN+hFAFnS3txMxTxqgaLqcFSgADIfZLmuL6lw6
+# KaA5f1uEm1hqeUt5XxNE4lkWBM3LjsAK17EB1SfJvRp/ITS2bSPVuZOv86PUX4sr
+# ntEbCQdgqoQXKPQliyE6swpFmW4/5/2QzTMCe6PzeCDl2xeuBij5FlNj8SGuPO+W
+# WDGKi8zLahI2n+AjfBjAFKUwhVdPc7MK/ObnNIRPJDWUGn5uv378F56CuVKUSTo9
+# bp4Ss1PfX0B8EyXdK2ez6wfTNb7rMPciVNMw8AIj0qrEoYIEBDCCBAAGCSqGSIb3
 # DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
 # byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
 # ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
 # GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA0
-# MDMxOTMwMTlaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDA1a8oU8GMa5YH11mFY
-# xg4D+POW/EMxbyX6n1fk37ZYks5NCVOZBer0I5RIulAQ20UwgaAGCyqGSIb3DQEJ
+# MTMxOTE3NDRaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDDTeeHKD7UM3OMhuSoZ
+# 2sny7UbNZ9nvVlgm4qwEpuZrVcO3aedTRkfo+zwaNwvRul4wgaAGCyqGSIb3DQEJ
 # EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
 # CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
 # IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAFiLkfoyHZDxWJzfYj0Iu9rftv1VnP+7
-# tdZA5uSZKy/3tVGSMKDOuNnAjMLD42/fJHeD+ztitT0E9phgMM9QxYj7kGy/POP/
-# mgvyfJmvXz+QJcy80shdqxazggQJFjmDBQviyiYf3jQ1ZA8MXXyQNJvGg/b7THLq
-# B9Yzzc+RaJc4ZxQVGDiFLmsih2ZvJq3IK9wkn6PHiNSXaKd9fA3vmPnJCgnqe4Ka
-# 0NSwmr1eWj8zFHltegn/BpB5bjRad2aOqELqdA3S+sePHgdFNPxU4x8qBvd9yDHu
-# Z02qKRFLf8shQw+WMS9Onyzg3pRs+Im6SaDrW4Gb8aqkN0sowBPiiqg8Gb4X2dLN
-# ajO6ycsi1UBZ7o1JU5u8Efpf+5J2tm/dG/V1ZPUfOI8GTtWA73JIubNl7jxw6qYY
-# lgKlSRzCaJtf3od+PhpOFWUMZHfGkRRtC8z+5Jz3Yu+7PVXX8KsaSBviXwvCAnCU
-# nBktaGtMXcqXwMAIjCftojkG81nLf+IkI7ikALDyD5kG9deIBWhAI14zPADkftSu
-# FcA0r8nVAV65h9GBce/oIw9II1mT1O8BUrZ4+lGZy3S0vIczhPefBEmdWSWkgPEr
-# gnrLlgO8zC2wxvBup519M+5/PFmBHie+xXBWhO/rrjoA6tVrLNXxUCwrjfsqtaHX
-# 4ZmN8wnG1tkc
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAFVgjzxoHii1CE6yki6baeM7eyGEMjuW
+# /hDcTZ9LCYh/2q+hUryuzXC8m/ufCauZK5Z4hkG6vwsf56l+R1BpfPD/Gg+b+zY4
+# QGRpf5XFT3udJgGMH0jL4w77jZuNnX5qEFHP9zHAvsUHdPazpeLyOwe4AXbXklvw
+# PToezeuQXwxRhE8q5g7TwT5ftewga5ZlUBa2lFP2/y8+6+OFlSMRrVD7ZI4HX0Wk
+# 4co5LCCii54g3NJY4REebjhi2Ay1lpXpcTryVQjJc/QJqzpigld2IdAy3AFX0YB4
+# IHo7V/g9n2axlZCeGlP6FCs75gQ542tYNn0EhREVmJO55aHcFlS6n/GmfDbVCldm
+# aMqGd1ARJ+Vlv+mE3kMnaMpmfZR++/ZqZRZAtQdRMkk4gURpEShv0/74wMGU96A7
+# 7t9ecoeMCYv/5AHDQu6/S8ZfZCZWXyjQrW3rzTWN8rVJ3GMvyS40sGfHt63p7pup
+# wnHgVBD1/0+XP/H/jwTv170KhDPCau6sBZ0Swgmpf7s36loXlevt4dXwerEynSPC
+# aYxIgvhh76gkZJ20E32j+pE/74sab2ZsGnw1W3sN0q80AZZXeQN9AcQiIquLQd7C
+# WdbIX+aauT5GnhW0uOiolLdWBwjTc10ULLxIjd80QSox6AaXj18NC315pmVsASMm
+# 0UinjBAqmbDZ
 # SIG # End signature block
