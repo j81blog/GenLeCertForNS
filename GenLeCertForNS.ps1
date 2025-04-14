@@ -2718,7 +2718,7 @@ if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
 if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and ($UseLbVip.ToBool() -eq $false) -and $CsVipName.Count -lt 1) {
     Write-Error -Exception ([System.Management.Automation.ParameterBindingException]::New("The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-UseLbVip`" parameter.")) -ErrorAction Stop
 }
-$psVersionInfo = $PSVersionTable.PSVersion
+[Version]$psVersionInfo = $PSVersionTable.PSVersion
 $psEditionInfo = if ($PSVersionTable.ContainsKey('PSEdition')) { $PSVersionTable.PSEdition } else { 'Desktop' }
 
 #Define the variable that will contain sensitive words like passwords that should not be logged
@@ -2900,7 +2900,7 @@ try {
         Throw "Config File NOT found! This is required when specifying the AutoRun parameter!"
     }
     Write-DisplayText -Line "PowerShell Version"
-    Write-DisplayText -ForeGroundColor Cyan "$($psVersionInfo.Major).$($psVersionInfo.Minor).$($psVersionInfo.Build).$($psVersionInfo.Revision) ($psEditionInfo)"
+    Write-DisplayText -ForeGroundColor Cyan "$($PSVersionTable.PSVersion.ToString()) ($psEditionInfo)"
     Write-DisplayText -Line "PowerShell Edition"
     Write-DisplayText -ForeGroundColor Cyan "$psEditionInfo"
 
@@ -3175,7 +3175,7 @@ if ($Parameters.settings.DisableLogging) {
 ScriptBase: $ScriptRoot
 Script Version: $ScriptVersion
 PoSH ACME Version: $PoshACMEVersion
-PowerShell Version: $($psVersionInfo.Major).$($psVersionInfo.Minor).$($psVersionInfo.Build)
+PowerShell Version: $($($PSVersionTable.PSVersion.ToString()))
 Edition: $psEditionInfo
 PSBoundParameters:
 $($PSBoundParameters | Out-String)
@@ -3488,6 +3488,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -Line "Responder Policy Name"
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RspName)
 
+    #Max length 991 each
     $CmdSpec = @{
         Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ssl\s+certChain)|(^show\s+ssl\s+certChain\s+.*)|(^add\s+ssl\s+certificateChain)|(^add\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certificateChain)|(^show\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certLink)|(^show\s+ssl\s+certLink\s+.*)"
         LEBkEd = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
@@ -5226,12 +5227,34 @@ if ($CertificateActions) {
                     }
                     Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
                     if (-Not [String]::IsNullOrEmpty($CertificatePfxWithChainFullPath) -and (Test-Path "$CertificatePfxWithChainFullPath" -ErrorAction SilentlyContinue)) {
-                        Write-ToLogFile -D -C CertFinalization -M "Pfx file copied successfully."
+                        Write-ToLogFile -D -C CertFinalization -M "Pfx file (with full chain) copied successfully."
                     } else {
-                        Write-ToLogFile -E -C CertFinalization -M "Pfx file not copied!"
+                        Write-ToLogFile -E -C CertFinalization -M "Pfx file (with full chain) not copied!"
                     }
-                    $certificate = Get-PfxData -FilePath $CertificatePfxWithChainFullPath -Password $PfxPassword
-                    $NewCertificates = Export-PfxCertificate -PFXData $certificate -FilePath $CertificatePfxFullPath -Password $PfxPassword -ChainOption EndEntityCertOnly -Force
+                    $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable -bor `
+                        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKeySet
+                    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 `
+                    ($CertificatePfxWithChainFullPath, $pfxPassword, $flags)
+                    if (-not $cert.HasPrivateKey) {
+                        Write-ToLogFile -E -C CertFinalization -M "Certificate does not have a private key!"
+                        $CertificatePfxFullPath = $CertificatePfxWithChainFullPath
+                        Write-ToLogFile -D -C CertFinalization -M "Using the Pfx file (with full chain) `"$CertificatePfxFullPath`"."
+                    } else {
+                        Write-ToLogFile -D -C CertFinalization -M "Exporting the certificate (withou chain) to `"$CertificatePfxFullPath`"."
+                        $collection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+                        $null = $collection.Add($cert)
+                        $pfxBytes = $collection.Export(
+                            [System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx,
+                            $((New-Object System.Management.Automation.PSCredential(" ", ($PfxPassword))).GetNetworkCredential().Password)
+                        )
+                        Write-ToLogFile -D -C CertFinalization -M "Saving the certificate to `"$CertificatePfxFullPath`"."
+                        [System.IO.File]::WriteAllBytes($CertificatePfxFullPath, $pfxBytes)
+                        if (-Not [String]::IsNullOrEmpty($CertificatePfxFullPath) -and (Test-Path "$CertificatePfxFullPath" -ErrorAction SilentlyContinue)) {
+                            Write-ToLogFile -D -C CertFinalization -M "Pfx file created successfully."
+                        } else {
+                            Write-ToLogFile -E -C CertFinalization -M "Pfx file not created!"
+                        }
+                    }
                     Write-ToLogFile -I -C CertFinalization -M "Certificates Finished."
                     if ($CertRequest.ForceCertRenew) {
                         $CertRequest.ForceCertRenew = $false
@@ -5241,7 +5264,6 @@ if ($CertificateActions) {
                     Write-ToLogFile -E -C CertFinalization -M "Could not test Certificate directory."
                 }
             }
-
             #endregion CertFinalization
 
             #region ADC-CertUpload
@@ -5392,7 +5414,8 @@ if ($CertificateActions) {
                                     Write-ToLogFile -I -C ADC-CertUpload -M "Certificate updated successfully!"
                                 } catch {
                                     Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
-                                    Throw "Certificate update failed!"
+                                    Invoke-RegisterError 1 "Certificate update failed!"
+                                    Continue
                                 }
                             }
                             if ($CertRequest.RemovePrevious) {
@@ -6132,8 +6155,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDWoHtOU2VUPff6
-# qWO28TwG4La5vdI8d1t+lci24noTDqCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA8xvUDDtTS9Ctw
+# EGMebhT7WAwc9u6cuVorduIHOpBcoaCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -6309,36 +6332,36 @@ TerminateScript 0
 # MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
 # Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg/kXm5PYYKjmxdvKVKeOmx571
-# meptynL4KD8ISlrAbKwwDQYJKoZIhvcNAQEBBQAEggGAb73oZ7aXPZ9Tnl804IPY
-# n80anqDvfmVAEmkCKLJEmopx6THgeAVKgGK4m0yn4RFoNkR3whdHUfj6WFdbh3C9
-# tFqm9v/ijfV/fZWuVxVcTdCv7ldyPDzxnKRMNKBParIL7mCXUAG1iuY/Lplh9IJP
-# odgielz1Y0PNpir0nUYZ0mGsstjWN0S8/hij9xePbo4j/OAMvmrcbnIQPKKvonGw
-# JaVRBsqujRP0tx9yp74Y3hHHlSsrQZdFF+ztbIrssBPeBSIluGvR2hCL38e6paxl
-# 6UyiXYQixjaNkRB6qGjfilhKhd3y1SDo29PqnDk7pqEVMKoPc7zUEOOJiRRCr/uV
-# 83tikmQc1FPTPZKIx34EmwMqCz7OBpzzGKFSBHIq2Gmc2MF+D6YiQukgqz/5Slxr
-# a5j1brZPdx9pfpxLtSMK6DWSIafPY7gDKa/ezi7tAs29p2b9O2pxon+wcmVOiLqV
-# AiAkFi7F0qIfjQk364VCg7OlH+AlB+s+J6VlO6PGTr9AoYIEBDCCBAAGCSqGSIb3
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgaqYKXHQf7f1VceQ7oEMj4Pg8
+# HlC1l96/g/AxDv4huTkwDQYJKoZIhvcNAQEBBQAEggGAP9H5DFJGSwDXdi+Z8tFh
+# ebaM5zDR6m80Z4TtoyVJBko7oMmQ9vtvC6DSXAJwTDbZOBnzIfSr8dSqzySlvdEa
+# teYvtxupFSEfAo6P4u65H2nufD7ERpxSnNC0XBZnGYkVZDmaGxbMaDrtVCg4Ti/o
+# U1S8hu45uWemfBei7Qqj/1AxoXN2NRrC1RWrubpsPDXMNUd5nmLrXWaO3kxDnfMr
+# grsKc01ELb2FCx8CMVTiltyfOf7QZnRoZQankfLQ3w6gRROyA13cHOFX/Kqdf6YJ
+# 3PuCptRirOSxdRxMn5Ogg6t/OhYJd4VDVuBu2gP+4nuPzUaxE+ufFZx0O0ldGAO+
+# FmQgVLhS8Vm33FY+nDFlEwCpVsCsswOafj+tspd6VQO/on2DMK81NLCq0RPay1l7
+# uuiHPZQh7a4WlX70g9+oKdiQVjSPII4pxJj9JtpEhy7CEsMwMxD7xzw3fo4eI48B
+# xhsXFocYXqSgKe2ougAoFIwGW8gQWVNesaXOeOt71nZ5oYIEBDCCBAAGCSqGSIb3
 # DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
 # byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
 # ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
 # GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA0
-# MTMxOTU3MjhaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBXfdIz/HGzHwFLCkAN
-# 6KYf7Tepp3vpwCxHKuVtZTYKCGUxkUmK81nQfU1wcG9Cl8YwgaAGCyqGSIb3DQEJ
+# MTQxNzQ4MjZaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDCQrQyC1YK5BPkIr60t
+# ZlyMgjAgYewPOmOhmMFeTvKL+/6OrgOOQ/ajD8949agS9xIwgaAGCyqGSIb3DQEJ
 # EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
 # CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
 # IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAMCnOzditoba753BbVK1ADK5w9Qowrlo
-# 6xCJmJbZHWJqWkhy1z9opsa+Q6NIxEPEO7frq4JmsojTqF1UtzXmRZiSK12LpNfU
-# ILthwFFRkfj1K4VHVgRK+JV3Y9/hd3ZS3I36Zf95kyY5r6CszRTv+l0zBHof2Dw0
-# uj/8lM6f4fuwkLp+PgP/c9D2RG/BrBX/9+/QSgORoZE6i8ZYMcD3Az0lx4KNkkSI
-# xmAtS40o6m1HUTo5XQJtLTktBMT3wjjQF995wP4zV6ps+4dxYdim3q8CFMHCq6VP
-# +5//GzxLn5awcfrFWTN1VZhq7EcE+Bn3U17PVkTYRNySonPCPALZYylBXB3CMAz6
-# RLNXPVVIvxPSf0Kh2mDZTFWNbkQQbyXCRfCgB7e59y3TNCbnq0I0mrzkh2VanVgh
-# aUdnaCvfPmsDTeXgEvn9ULMaJOl5lEUqCi4opbJAxxtvckgT1Wjv94uJiSyNaTjK
-# 87iY2ZnRqAGKaWZA9eok9edIhBpDj7mWBpp03ssG+uFckola25lKiKLuDvlIMsl+
-# TPtPTCiM9IhEiBu20osXIWjXnUEktH+HXdiSWu9UFTqF7lgXbimTbeKDGPR5esuQ
-# 64bR7Quvjt1RsK8yEvU7iEpXCZ5Lne68J5RqrgBmxeA4uyFl0XHi5Qom2ThlLtHO
-# RxxCShdlTu7M
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICADYZC7wdI/LsXHzl6781YSEnZwLSvKfD
+# fs8E/C5nmpPr/iqmCy0lX0wfQpMW9292Jg7GRqXZSkDeO94eOWl8bgfRSAqSjpcr
+# i194OxMWExi7aJBLSKjDzGWr0MsuZPY7PL0M263xXyktEVd3fvhXZpExJ+zgLbJZ
+# E3UxdvKlmx32zaoREMX8nZhfioOuO8xt4muupdsjVr2erEMvmocNsnnBJ5UlmnoL
+# lN+vGPxSqRwH/EgKlevSlio7skFFA4XM7rVpsw/fbnShbdLq1A0svXI8bnuz2EE2
+# PUrBn5K1uyUNPsuU1Xs/rzhOUYeh4nTp5NNja7CTr8Y5x7Bl4Rq8NNILdkvm3gZv
+# mVJeQLOkj9aiQ9fR9A3fy6Y6I6UY8H3dzs1ZiaUkEP4rMr9/Ky2PdE29Ewywn61l
+# YsI1omaDelRI7+E4huBnntba232CXIAI41awNCbsO+BkfxMTs7G/AmtCprkdxIhk
+# v6JxHgfxJPCYIvGAxKmE4m+0AEKjnqK6YM7m8igGmidGpBv4lJHHANvs4N2GD1Ia
+# 4ktKzM8W9IG/7zWnagclmV5eRejzplGAIIMVA5MfG7tH7RN6QpIz5XYmrqrjcVvr
+# Z0qI447Z3+0bqjm6Ghy+gqYgyzUO5+kpiT3FPxCrrilJfhwcX1tZdoxip+B611Qg
+# Rjrlbxl+YBrp
 # SIG # End signature block
