@@ -358,7 +358,6 @@ param(
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [alias("NSCertNameToUpdate")]
-    [ValidateLength(1, 31)]
     [String]$CertKeyNameToUpdate,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -369,6 +368,7 @@ param(
     [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
     [Parameter(ParameterSetName = "CleanExpiredCerts", Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
+    [ValidatePattern('^(?:[a-zA-Z]:\\|\\\\[^\\\/]+\\[^\\\/]+)(?:[^\\\/:*?"<>|\r\n]+\\?)*$')]
     [String]$CertDir,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -1208,26 +1208,28 @@ function Invoke-ADCRestApi {
         $response = Invoke-RestMethod @restParams
 
         if ($response) {
-            if ($response.severity -eq 'ERROR') {
-                if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Got an ERROR response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)" }
-                throw "Error. See log"
-            } else {
-                if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)" }
-                if ($Method -eq "GET") {
-                    if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
-                        return $response | Select-Object -ExpandProperty $Type -ErrorAction SilentlyContinue
-                    } else {
-                        return $response
-                    }
+            if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Invoke-ADCRestApi -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)" }
+            if ($Method -eq "GET") {
+                if ($Clean -and (-not ([String]::IsNullOrEmpty($Type)))) {
+                    return $response | Select-Object -ExpandProperty $Type -ErrorAction SilentlyContinue
+                } else {
+                    return $response
                 }
             }
         }
     } catch [Exception] {
+        $errorDetails = $_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue
         if ($Type -eq 'reboot' -and $restError[0].Message -eq 'The underlying connection was closed: The connection was closed unexpectedly.') {
             if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot." }
         } else {
-            if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" }
-            throw $_
+            if (-Not [String]::IsNullOrEmpty($($errorDetails.message))) {
+                $errorMessage = '{0} [{2}]: {1}' -f $errorDetails.severity, $errorDetails.message, $errorDetails.errorcode
+                if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. NetScaler message: $errorMessage" }
+                throw $errorMessage
+            } else {
+                if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" }
+                throw $_
+            }
         }
     }
 }
@@ -1313,7 +1315,15 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
             if ($Script:LoggingEnabled) { Write-ToLogFile -D -C Connect-ADC -M "Response: $($response | Select-Object message,severity,errorcode | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)" }
         }
     } catch [Exception] {
-        throw $_
+        $errorDetails = $_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if (-Not [String]::IsNullOrEmpty($($errorDetails.message))) {
+            $errorMessage = '{0} [{2}]: {1}' -f $errorDetails.severity, $errorDetails.message, $errorDetails.errorcode
+            if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. NetScaler message: $errorMessage" }
+            throw $errorMessage
+        } else {
+            if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. Exception Message: $($_.Exception.Message)" }
+            throw $_
+        }
     }
     $session = [PSObject]@{
         ManagementURL = $ManagementURL.ToString().TrimEnd('/')
@@ -1355,7 +1365,7 @@ function Invoke-ADCGetHanode {
         .DESCRIPTION
             Get High Availability configuration object(s)
         .PARAMETER id
-           Number that uniquely identifies the node. For self node, it will always be 0. Peer node values can .
+            Number that uniquely identifies the node. For self node, it will always be 0. Peer node values can .
         .PARAMETER GetAll
             Retrieve all hanode object(s)
         .PARAMETER Count
@@ -4247,9 +4257,9 @@ if ($CertificateActions) {
                         $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
                         Write-ToLogFile -I -C Registration -M "New registration successful."
                     } catch {
-                        Write-ToLogFile -E -C Registration -M "Error New registration failed! Exception Message: $($_.Exception.Message)"
+                        Write-ToLogFile -E -C Registration -M "New registration failed! Exception Message: $($_.Exception.Message)"
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                        Write-DisplayText -ForeGroundColor Red "`nError New registration failed!"
+                        Write-DisplayText -ForeGroundColor Red "`nERROR: New registration failed!"
                     }
                 }
                 try {
@@ -5148,66 +5158,69 @@ if ($CertificateActions) {
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
                     Write-ToLogFile -D -C CertFinalization -M $($ChainFile | Select-Object DnsNameList, Subject, @{ Name = 'NotBefore'; Expression = { $_.NotBefore.ToString('yyyy-MM-dd HH:mm:ss') } }, @{ Name = 'NotAfter'; Expression = { $_.NotAfter.ToString('yyyy-MM-dd HH:mm:ss') } }, SerialNumber, Thumbprint, Issuer | ConvertTo-Json -WarningAction SilentlyContinue -Compress -Depth 8)
-                    $IntermediateCACertName = $ChainFile.Subject.Split(",")[0].Replace('CN=', $null).Replace("'", $null).Replace('(', $null).Replace(')', $null)
-                    $IntermediateCACertKeyName = $IntermediateCACertName
-                    if ($IntermediateCACertKeyName.length -gt 26) {
-                        $IntermediateCACertKeyName = $IntermediateCACertKeyName -Replace '(?sm)\W', $null
-                        Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate to long, new name: `"$IntermediateCACertKeyName`"."
-                    }
-                    if ($IntermediateCACertKeyName.length -gt 26) {
-                        $IntermediateCACertKeyName = "$($IntermediateCACertKeyName.subString(0,26))"
-                        Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate STILL to long, new name: `"$IntermediateCACertKeyName`"."
-                    }
-                    $IntermediateCAFileName = "$($IntermediateCACertKeyName)-$($ChainFile.NotAfter.ToString('yyyy')).crt"
-                    $IntermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $IntermediateCAFileName
+                    $intermediateCACertName = $ChainFile.Subject.Split(",")[0].Replace('CN=', $null).Replace("'", $null).Replace('(', $null).Replace(')', $null)
+                    $intermediateCACertKeyName = $intermediateCACertName
+                    #ToDo: Remove old code when no issues with the longer name
+                    #if ($intermediateCACertKeyName.length -gt 26) {
+                    #    $intermediateCACertKeyName = $intermediateCACertKeyName -Replace '(?sm)\W', $null
+                    #    Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate to long, new name: `"$intermediateCACertKeyName`"."
+                    #}
+                    #if ($intermediateCACertKeyName.length -gt 26) {
+                    #    $intermediateCACertKeyName = "$($intermediateCACertKeyName.subString(0,26))"
+                    #    Write-ToLogFile -D -C CertFinalization -M "Intermediate certificate STILL to long, new name: `"$intermediateCACertKeyName`"."
+                    #}
+                    $intermediateCAFileName = "$($intermediateCACertKeyName)-$($ChainFile.NotAfter.ToString('yyyy')).crt"
+                    $intermediateCAFullPath = Join-Path -Path $CertificateDirectory -ChildPath $intermediateCAFileName
 
-                    Write-ToLogFile -D -C CertFinalization -M "Intermediate: `"$IntermediateCAFileName`"."
-                    Copy-Item $PACertificate.ChainFile -Destination $IntermediateCAFullPath -Force
+                    Write-ToLogFile -D -C CertFinalization -M "Intermediate: `"$intermediateCAFileName`"."
+                    Copy-Item $PACertificate.ChainFile -Destination $intermediateCAFullPath -Force
                     if ($Production) {
-                        if ($CertificateName.length -ge 31) {
-                            $CertificateName = "$($CertificateName.subString(0,31))"
-                            Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
-                        } else {
-                            $CertificateName = "$CertificateName"
-                            Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
-                        }
-                        if ($CertificateAlias.length -ge 59) {
-                            $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
-                            $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
-                            $CertificatePfxFileName = "$($CertificateAlias.subString(0,59)).pfx"
-                            $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
-                        } else {
-                            $CertificateFileName = "$($CertificateAlias).crt"
-                            $CertificateKeyFileName = "$($CertificateAlias).key"
-                            $CertificatePfxFileName = "$($CertificateAlias).pfx"
-                            $CertificatePemFileName = "$($CertificateAlias).pem"
-                        }
+                        #ToDo: Remove old code when no issues with the longer name
+                        #if ($CertificateName.length -ge 31) {
+                        #    $CertificateName = "$($CertificateName.subString(0,31))"
+                        #    Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        #} else {
+                        $CertificateName = "$CertificateName"
+                        Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) characters)"
+                        #}
+                        #if ($CertificateAlias.length -ge 59) {
+                        #    $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
+                        #    $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
+                        #    $CertificatePfxFileName = "$($CertificateAlias.subString(0,59)).pfx"
+                        #    $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
+                        #} else {
+                        $CertificateFileName = "$($CertificateAlias).crt"
+                        $CertificateKeyFileName = "$($CertificateAlias).key"
+                        $CertificatePfxFileName = "$($CertificateAlias).pfx"
+                        $CertificatePemFileName = "$($CertificateAlias).pem"
+                        #}
                         $CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
                     } else {
-                        if ($CertificateName.length -ge 27) {
-                            $CertificateName = "TST-$($CertificateName.subString(0,27))"
-                            Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
-                        } else {
-                            $CertificateName = "TST-$($CertificateName)"
-                            Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) max 31)"
-                        }
-                        if ($CertificateAlias.length -ge 55) {
-                            $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
-                            $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
-                            $CertificatePfxFileName = "TST-$($CertificateAlias.subString(0,55)).pfx"
-                            $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
-                        } else {
-                            $CertificateFileName = "TST-$($CertificateAlias).crt"
-                            $CertificateKeyFileName = "TST-$($CertificateAlias).key"
-                            $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
-                            $CertificatePemFileName = "TST-$($CertificateAlias).pem"
-                        }
+                        #ToDo: Remove old code when no issues with the longer name
+                        #if ($CertificateName.length -ge 27) {
+                        #    $CertificateName = "TST-$($CertificateName.subString(0,27))"
+                        #    Write-ToLogFile -D -C CertFinalization -M "CertificateName (new name): `"$CertificateName`" ($($CertificateName.length) max 31)"
+                        #} else {
+                        $CertificateName = "TST-$($CertificateName)"
+                        Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) characters)"
+                        #}
+                        #if ($CertificateAlias.length -ge 55) {
+                        #    $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
+                        #    $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
+                        #    $CertificatePfxFileName = "TST-$($CertificateAlias.subString(0,55)).pfx"
+                        #    $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
+                        #} else {
+                        $CertificateFileName = "TST-$($CertificateAlias).crt"
+                        $CertificateKeyFileName = "TST-$($CertificateAlias).key"
+                        $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
+                        $CertificatePemFileName = "TST-$($CertificateAlias).pem"
+                        #}
                         $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
                     }
-                    Write-ToLogFile -D -C CertFinalization -M "Crt: `"$CertificateFileName`"($($CertificateFileName.length) max 63)"
-                    Write-ToLogFile -D -C CertFinalization -M "Key: `"$CertificateKeyFileName`"($($CertificateKeyFileName.length) max 63)"
-                    Write-ToLogFile -D -C CertFinalization -M "Pfx: `"$CertificatePfxFileName`"($($CertificatePfxFileName.length) max 63)"
-                    Write-ToLogFile -D -C CertFinalization -M "Pem: `"$CertificatePemFileName`"($($CertificatePemFileName.length) max 63)"
+                    Write-ToLogFile -D -C CertFinalization -M "Crt: `"$CertificateFileName`"($($CertificateFileName.length) characters)"
+                    Write-ToLogFile -D -C CertFinalization -M "Key: `"$CertificateKeyFileName`"($($CertificateKeyFileName.length) characters)"
+                    Write-ToLogFile -D -C CertFinalization -M "Pfx: `"$CertificatePfxFileName`"($($CertificatePfxFileName.length) characters)"
+                    Write-ToLogFile -D -C CertFinalization -M "Pem: `"$CertificatePemFileName`"($($CertificatePemFileName.length) characters)"
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     $CertificateFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateFileName
                     $CertificateKeyFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificateKeyFileName
@@ -5266,6 +5279,50 @@ if ($CertificateActions) {
             }
             #endregion CertFinalization
 
+            #region UpdateGlobalVPNCertBinding-Removal
+
+            if (($CertRequest.ValidationMethod -in "http", "dns") -and $CertRequest.UpdateGlobalVPNCertBinding -and ($SessionRequestObject.ExitCode -eq 0)) {
+                $updateGlobalVPNCertBindingActionRequired = $false
+                try {
+                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding-Removal" -M "Retrieving current SSL Certificate Binding for VPN Global"
+                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    if ($response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type vpnglobal_sslcertkey_binding | Select-Object -ExpandProperty vpnglobal_sslcertkey_binding -ErrorAction SilentlyContinue) {
+                        Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding-Removal" -M "Response: $($response | ConvertTo-Json -Compress)"
+                        if ($currentBinding = $response | Where-Object { $_.certkeyname -ieq $($CertRequest.CertKeyNameToUpdate) } ) {
+                            Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding-Removal" -M "Current Binding: $($currentBinding | ConvertTo-Json -Compress)"
+                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding-Removal" -M "Unbinding current certificate"
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            $arguments = @{ certkeyname = $($CertRequest.CertKeyNameToUpdate) }
+                            Write-DisplayText -ForeGroundColor Yellow "*"
+                            Write-DisplayText -Line "Unbinding certificate"
+                            try {
+                                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type vpnglobal_sslcertkey_binding -Arguments $arguments
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding-Removal" -M "Successfully unbound certificate"
+                                $updateGlobalVPNCertBindingActionRequired = $true
+                                Write-DisplayText -ForeGroundColor Green "Unbound (VPN Global certificate) successfully"
+                            } catch {
+                                Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding-Removal" -M "Failed to unbind certificate"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
+                            }
+                            Write-DisplayText -Line "Status"
+                        } else {
+                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding-Removal" -M "Bindings found, but not the one we are looking for"
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        }
+                    } else {
+                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding-Removal" -M "No current binding found"
+                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                    }
+                } catch {
+                    Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding-Removal" -M "Caught an error, $($_.Exception.Message)"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Invoke-RegisterError 1 "Caught an error, $($_.Exception.Message)"
+                }
+            }
+
+            #endregion UpdateGlobalVPNCertBinding-Removal
+
             #region ADC-CertUpload
 
             if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
@@ -5285,31 +5342,103 @@ if ($CertificateActions) {
                     $ADCIntermediateCA.sslcertkey | Select-Object certkey, serial, clientcertnotbefore, clientcertnotafter, issuer, subject, cert | ForEach-Object {
                         Write-ToLogFile -D -C ADC-CertUpload -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     }
-                    Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists."
+                    Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA `"$intermediateCACertKeyName`" already exists."
+                    $intermediateFileExists = $false
+                    $intermediateFileLocation = "/nsconfig/ssl/"
                     if ([String]::IsNullOrEmpty($($ADCIntermediateCA.sslcertkey.certkey))) {
+                        Write-ToLogFile -D -C ADC-CertUpload -M "Checking if IntermediateCA file exists on the ADC."
                         try {
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Uploading `"$IntermediateCAFileName`" to the ADC."
-                            if ('PSEdition' -notin $PSVersionTable.Keys -or $PSVersionTable.PSEdition -eq 'Desktop') {
-                                $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -Encoding "Byte"))
-                            } else {
-                                $IntermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $IntermediateCAFullPath -AsByteStream))
+                            $Arguments = @{"filename" = "$intermediateCAFileName"; "filelocation" = "$intermediateFileLocation" }
+                            try {
+                                $files = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $arguments
+                            } catch {
+                                $files = @{"systemfile" = @() }
                             }
-                            $payload = @{"filename" = "$IntermediateCAFileName"; "filecontent" = "$IntermediateCABase64"; "filelocation" = "/nsconfig/ssl/"; "fileencoding" = "BASE64"; }
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Succeeded, Add the certificate to the ADC config."
-                            $payload = @{"certkey" = "$IntermediateCACertKeyName"; "cert" = "/nsconfig/ssl/$($IntermediateCAFileName)"; }
-                            $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
-                            Write-ToLogFile -I -C ADC-CertUpload -M "Certificate added."
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            if ($files.systemfile.count -eq 1) {
+                                Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, trying to read it's properties."
+                                $intermediateCertificateBytes = [Convert]::FromBase64String($files.systemfile[0].filecontent)
+                                $intermediateCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($intermediateCertificateBytes)
+                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                if ($intermediateCertificate.SerialNumber -ieq $ChainFile.SerialNumber -or "$($intermediateCertificate.SerialNumber)".TrimStart("00") -ieq $ChainFile.SerialNumber) {
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, and is the same as the one we are trying to upload."
+                                    $intermediateCACertKeyName = $files.systemfile[0].filename
+                                    $intermediateFileLocation = "$($files.systemfile[0].filelocation.TrimEnd("/"))/"
+                                    Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCACertKeyName: `"$($intermediateFileLocation)$($intermediateCACertKeyName)`""
+                                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                    $intermediateFileExists = $true
+                                } else {
+                                    Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, but is not the same as the one we are trying to upload."
+                                    Write-ToLogFile -D -C ADC-CertUpload -M "Trying new name with serialnumber in the name."
+                                    $intermediateCACertKeyName = "$($intermediateCACertKeyName)-$($ChainFile.SerialNumber)"
+                                    $Arguments = @{"filename" = "$intermediateCAFileName"; "filelocation" = "$intermediateFileLocation" }
+                                    try {
+                                        $files = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $arguments
+                                    } catch {
+                                        $files = @{"systemfile" = @() }
+                                    }
+                                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                    if ($files.systemfile.count -eq 1) {
+                                        $intermediateCertificateBytes = [Convert]::FromBase64String($files.systemfile[0].filecontent)
+                                        $intermediateCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($intermediateCertificateBytes)
+                                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                        if ($intermediateCertificate.SerialNumber -ieq $ChainFile.SerialNumber -or "$($intermediateCertificate.SerialNumber)".TrimStart("00") -ieq $ChainFile.SerialNumber) {
+                                            Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, and is the same as the one we are trying to upload."
+                                            $intermediateCACertKeyName = $files.systemfile[0].filename
+                                            $intermediateFileLocation = "$($files.systemfile[0].filelocation.TrimEnd("/"))/"
+                                            Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCACertKeyName: `"$($intermediateFileLocation)$($intermediateCACertKeyName)`""
+                                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                            $intermediateFileExists = $true
+                                        } else {
+                                            Write-ToLogFile -E -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, but is not the same as the one we are trying to upload. Manual action may be required."
+                                            Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCACertKeyName: `"$intermediateCACertKeyName`""
+                                            Write-DisplayText -ForeGroundColor Red " ERROR: IntermediateCA file already exists on the ADC, but is not the same as the one we are trying to upload. Manual action may be required."
+                                        }
+                                    } else {
+                                        Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file does not exist on the ADC."
+                                    }
+                                }
+                            } else {
+                                Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file does not exist on the ADC."
+                            }
                         } catch {
                             Write-DisplayText -Blank
-                            Write-Warning "Could not upload or get the Intermediate CA `"$($IntermediateCACertName)`",`r`n         manual action may be required"
-                            Write-ToLogFile -W -C ADC-CertUpload -M "Could not upload or get the Intermediate CA ($($IntermediateCACertName)), manual action may be required."
+                            Write-ToLogFile -E -C ADC-CertUpload -M "Could not determine if IntermediateCA file exists on the ADC."
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-Warning "Could not determine if IntermediateCA file exists on the ADC."
                             Write-DisplayText -Blank
                             Write-DisplayText -Line "Status"
                         }
+                        if ($intermediateFileExists) {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, skipping upload."
+                            Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                            $intermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
+                        } else {
+                            Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA does not exist, start uploading."
+                            try {
+                                Write-ToLogFile -I -C ADC-CertUpload -M "Uploading `"$intermediateCAFileName`" to the ADC."
+                                if ('PSEdition' -notin $PSVersionTable.Keys -or $PSVersionTable.PSEdition -eq 'Desktop') {
+                                    $intermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $intermediateCAFullPath -Encoding "Byte"))
+                                } else {
+                                    $intermediateCABase64 = [System.Convert]::ToBase64String($(Get-Content $intermediateCAFullPath -AsByteStream))
+                                }
+                                $payload = @{"filename" = "$intermediateCAFileName"; "filecontent" = "$intermediateCABase64"; "filelocation" = "$intermediateFileLocation"; "fileencoding" = "BASE64"; }
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type systemfile -Payload $payload
+                                Write-ToLogFile -I -C ADC-CertUpload -M "Succeeded, Add the certificate to the ADC config."
+                                $payload = @{"certkey" = "$intermediateCACertKeyName"; "cert" = "$($intermediateFileLocation)$($intermediateCAFileName)"; }
+                                $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload
+                                Write-ToLogFile -I -C ADC-CertUpload -M "Certificate added."
+                            } catch {
+                                Write-DisplayText -Blank
+                                Write-Warning "Could not upload or get the Intermediate CA `"$($intermediateCACertName)`",`r`n         manual action may be required"
+                                Write-ToLogFile -W -C ADC-CertUpload -M "Could not upload or get the Intermediate CA ($($intermediateCACertName)), manual action may be required."
+                                Write-DisplayText -Blank
+                                Write-DisplayText -Line "Status"
+                            }
+                        }
                     } else {
-                        $IntermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
-                        Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$IntermediateCACertKeyName`" (Serial:$($ADCIntermediateCA.sslcertkey.serial)) for later use."
+                        $intermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
+                        Write-ToLogFile -D -C ADC-CertUpload -M "IntermediateCA exists, saving existing name `"$intermediateCACertKeyName`" (Serial:$($ADCIntermediateCA.sslcertkey.serial)) for later use."
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     if ([String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
@@ -5463,16 +5592,16 @@ if ($CertificateActions) {
                         Write-DisplayText -Line "Status"
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$IntermediateCACertKeyName`""
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Link `"$CertificateCertKeyName`" to `"$intermediateCACertKeyName`""
                     try {
-                        $payload = @{"certkey" = "$CertificateCertKeyNameEscaped"; "linkcertkeyname" = "$IntermediateCACertKeyName"; }
+                        $payload = @{"certkey" = "$CertificateCertKeyNameEscaped"; "linkcertkeyname" = "$intermediateCACertKeyName"; }
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action link -ErrorAction Stop
                         Write-ToLogFile -I -C ADC-CertUpload -M "Link successfull."
                         Write-ToLogFile -D -C ADC-CertUpload -M "Response: $($response | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     } catch {
                         Write-DisplayText -Blank
-                        Write-Warning -Message "Could not link the certificate`"$CertificateCertKeyName`"`r`n         to Intermediate `"$IntermediateCACertKeyName`""
-                        Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$IntermediateCACertKeyName`"."
+                        Write-Warning -Message "Could not link the certificate`"$CertificateCertKeyName`"`r`n         to Intermediate `"$intermediateCACertKeyName`""
+                        Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$intermediateCACertKeyName`"."
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -Blank
                         Write-DisplayText -Line "Status"
@@ -5556,9 +5685,9 @@ if ($CertificateActions) {
                     Write-DisplayText -Line "Certkey Name"
                     Write-DisplayText -ForeGroundColor Cyan $CertificateCertKeyName
                     Write-DisplayText -Line "Intermediate"
-                    Write-DisplayText -ForeGroundColor Cyan "$($IntermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))]"
+                    Write-DisplayText -ForeGroundColor Cyan "$($intermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))]"
                     Write-DisplayText -Line "Intermediate Certkey Name"
-                    Write-DisplayText -ForeGroundColor Cyan $IntermediateCACertKeyName
+                    Write-DisplayText -ForeGroundColor Cyan $intermediateCACertKeyName
                     Write-DisplayText -Line "Cert Dir"
                     Write-DisplayText -ForeGroundColor Cyan $CertificateDirectory
                     Write-DisplayText -Line "CRT Filename"
@@ -5574,8 +5703,8 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C ADC-CertUpload -M "Keysize: $($CertRequest.KeyLength)"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Cert Dir: $CertificateDirectory"
                     Write-ToLogFile -I -C ADC-CertUpload -M "Certkey Name: $CertificateCertKeyName"
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Intermediate: $($IntermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))]"
-                    Write-ToLogFile -I -C ADC-CertUpload -M "Intermediate Certkey Name: $IntermediateCACertKeyName"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Intermediate: $($intermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))]"
+                    Write-ToLogFile -I -C ADC-CertUpload -M "Intermediate Certkey Name: $intermediateCACertKeyName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "CRT Filename: $CertificateFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "KEY Filename: $CertificateKeyFileName"
                     Write-ToLogFile -I -C ADC-CertUpload -M "PFX Filename: $CertificatePfxFileName"
@@ -5588,7 +5717,7 @@ if ($CertificateActions) {
                         $mailDataItem.Text += "Valid for: $expireDays days ($($CertRequest.CertExpires))`r`n"
                         $mailDataItem.Text += "Renew after: $renewAfterDays days ($($CertRequest.RenewAfter))`r`n"
                         $mailDataItem.Text += "Public Key Size: $($FinalCertificate.PublicKey.key.KeySize)`r`n"
-                        $mailDataItem.Text += "Issued by CA: $($IntermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $IntermediateCACertKeyName)"
+                        $mailDataItem.Text += "Issued by CA: $($intermediateCACertName)  [$($ChainFile.NotAfter.ToString('yyyy-MM-dd'))] - (ADC SSL Certkey Name: $intermediateCACertKeyName)"
                         $mailDataItem.Code = "OK"
                     } catch {
                         Write-ToLogFile -D -C ADC-CertUpload-Mail -M "Error while gathering data for mail, Error: $($_.Exception.Message)"
@@ -5609,66 +5738,98 @@ if ($CertificateActions) {
                             } else {
                                 Write-DisplayText -ForeGroundColor Cyan $($CertRequest.CertKeyNameToUpdate)
                             }
-                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Retrieving current SSL Certificate Binding for VPN Global"
-                            Write-DisplayText -Line "Check Current Binding"
-                            if ($response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type vpnglobal_sslcertkey_binding | Select-Object -ExpandProperty vpnglobal_sslcertkey_binding -ErrorAction SilentlyContinue) {
-                                Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Response: $($response | ConvertTo-Json -Compress)"
-                                if ($currentBinding = $response | Where-Object { $_.certkeyname -ieq $($CertRequest.CertKeyNameToUpdate) } ) {
-                                    Write-DisplayText -ForeGroundColor Cyan "Current Bindings found"
-                                    Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Current Binding: $($currentBinding | ConvertTo-Json -Compress)"
-                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Unbinding current certificate"
-                                    Write-DisplayText -Line "Unbinding Current Cert"
-                                    $arguments = @{ certkeyname = $($CertRequest.CertKeyNameToUpdate) }
-                                    try {
-                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type vpnglobal_sslcertkey_binding -Arguments $arguments
-                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully unbound certificate"
-                                        Write-DisplayText -ForeGroundColor Green "Successfully unbound certificate"
-                                    } catch {
-                                        Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to unbind certificate"
-                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                                        Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
+                            if ($updateGlobalVPNCertBindingActionRequired -eq $true) {
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Retrieving current SSL Certificate Binding for VPN Global"
+                                Write-DisplayText -Line "Check Current Binding"
+                                if ($response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type vpnglobal_sslcertkey_binding | Select-Object -ExpandProperty vpnglobal_sslcertkey_binding -ErrorAction SilentlyContinue) {
+                                    Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Response: $($response | ConvertTo-Json -Compress)"
+                                    if ($currentBinding = $response | Where-Object { $_.certkeyname -ieq $($CertRequest.CertKeyNameToUpdate) } ) {
+                                        Write-DisplayText -ForeGroundColor Cyan "Current Bindings found"
+                                        Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Current Binding: $($currentBinding | ConvertTo-Json -Compress)"
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Unbinding current certificate"
+                                        Write-DisplayText -Line "Unbinding Current Cert"
+                                        $arguments = @{ certkeyname = $($CertRequest.CertKeyNameToUpdate) }
+                                        try {
+                                            $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type vpnglobal_sslcertkey_binding -Arguments $arguments
+                                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully unbound certificate"
+                                            Write-DisplayText -ForeGroundColor Green "Successfully unbound certificate"
+                                        } catch {
+                                            Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to unbind certificate"
+                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                            Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
+                                        }
+                                    } else {
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Bindings found, but not the one we are looking for"
+                                        Write-DisplayText -ForeGroundColor Cyan "Bindings found, but not the one we are looking for"
                                     }
                                 } else {
-                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Bindings found, but not the one we are looking for"
-                                    Write-DisplayText -ForeGroundColor Cyan "Bindings found, but not the one we are looking for"
+                                    if ($updateGlobalVPNCertBindingActionRequired -eq $true) {
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Binding was removed earlier, no current binding found"
+                                        Write-DisplayText -ForeGroundColor Cyan "Binding was removed earlier, no current binding found"
+                                    } else {
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "No current binding found"
+                                        Write-DisplayText -ForeGroundColor Cyan "No current binding found"
+                                    }
                                 }
-                            } else {
-                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "No current binding found"
-                                Write-DisplayText -ForeGroundColor Cyan "No current binding found"
-                            }
-                            try {
-                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Binding new certificate"
-                                $payload = @{
-                                    certkeyname = $($CertRequest.CertKeyNameToUpdate)
+                                try {
+                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Binding new certificate"
+                                    $payload = @{
+                                        certkeyname = $($CertRequest.CertKeyNameToUpdate)
+                                    }
+                                    Write-DisplayText -Line "Binding New Certificate"
+                                    $result = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type vpnglobal_sslcertkey_binding -Payload $payload
+                                    Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully bound certificate"
+                                    Write-DisplayText -ForeGroundColor Green "Successfully bound certificate"
+                                } catch {
+                                    Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind certificate"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-DisplayText -ForeGroundColor Red "Failed to bind certificate"
                                 }
+                                $MailData += "SSLVPN (Global) Certificate binding updated: $($CertRequest.CertKeyNameToUpdate)"
+
                                 Write-DisplayText -Line "Include CA"
                                 if ($CertRequest.GlobalVPNCertBindingIncludeCA) {
-                                    $payload.cacert = $IntermediateCACertKeyName
-                                    Write-DisplayText -ForeGroundColor Cyan "Include CA: $($IntermediateCACertKeyName)"
+                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type vpnglobal_sslcertkey_binding | Select-Object -ExpandProperty vpnglobal_sslcertkey_binding -ErrorAction SilentlyContinue
+                                    $vpnglobalCACertBinding = $response | Where-Object { $_.cacert -ieq $intermediateCACertKeyName }
+                                    if ($vpnglobalCACertBinding) {
+                                        Write-DisplayText -ForeGroundColor Cyan "Already included CA: $($vpnglobalCACertBinding.cacert) ($($vpnglobalCACertBinding.crlcheck))"
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Already included CA: $($vpnglobalCACertBinding.cacert) ($($vpnglobalCACertBinding.crlcheck))"
+                                    } else {
+                                        Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "No CA binding found, will try to bind CA now, adding CA: $($intermediateCACertKeyName)"
+                                        $payload = @{
+                                            cacert = $intermediateCACertKeyName
+                                        }
+                                        Write-DisplayText -ForeGroundColor Cyan "$($intermediateCACertKeyName)"
+                                        Write-DisplayText -Line "Certificate validity check"
+                                        if ($CertRequest.GlobalVPNCertBindingOcspCheck.ToLower() -in 'mandatory', 'optional') {
+                                            $payload.ocspcheck = $CertRequest.GlobalVPNCertBindingOcspCheck.ToLower()
+                                            Write-DisplayText -ForeGroundColor Cyan "OCSP Check: $($CertRequest.GlobalVPNCertBindingOcspCheck)"
+                                        } elseif ($CertRequest.GlobalVPNCertBindingCrlCheck.ToLower() -in 'mandatory', 'optional') {
+                                            $payload.crlcheck = $CertRequest.GlobalVPNCertBindingCrlCheck.ToLower()
+                                            Write-DisplayText -ForeGroundColor Cyan "CRL Check: $($CertRequest.GlobalVPNCertBindingCrlCheck)"
+                                        } else {
+                                            Write-DisplayText -ForeGroundColor Cyan "No OCSP or CRL Check"
+                                        }
+                                        Write-DisplayText -Line "Binding CA"
+                                        try {
+                                            Write-ToLogFile -D -C "UpdateGlobalVPNCertBinding" -M "Binding CA with the following payload: $($payload | ConvertTo-Json -Compress)"
+                                            $result = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type vpnglobal_sslcertkey_binding -Payload $payload
+                                            Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully bound CA"
+                                            Write-DisplayText -ForeGroundColor Green "Successfully bound CA"
+                                        } catch {
+                                            Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind CA"
+                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                            Write-DisplayText -ForeGroundColor Red "Failed to bind CA"
+                                        }
+                                    }
                                 } else {
                                     Write-DisplayText -ForeGroundColor Cyan "No CA included"
                                 }
-                                Write-DisplayText -Line "Certificate validity check"
-                                if ($CertRequest.GlobalVPNCertBindingOcspCheck.ToLower() -in 'mandatory', 'optional') {
-                                    $payload.ocspcheck = $CertRequest.GlobalVPNCertBindingOcspCheck.ToLower()
-                                    Write-DisplayText -ForeGroundColor Cyan "OCSP Check: $($CertRequest.GlobalVPNCertBindingOcspCheck)"
-                                } elseif ($CertRequest.GlobalVPNCertBindingCrlCheck.ToLower() -in 'mandatory', 'optional') {
-                                    $payload.crlcheck = $CertRequest.GlobalVPNCertBindingCrlCheck.ToLower()
-                                    Write-DisplayText -ForeGroundColor Cyan "CRL Check: $($CertRequest.GlobalVPNCertBindingCrlCheck)"
-                                } else {
-                                    Write-DisplayText -ForeGroundColor Cyan "No OCSP or CRL Check"
-                                }
-
-                                Write-DisplayText -Line "Binding New Certificate"
-                                $result = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type vpnglobal_sslcertkey_binding -Payload $payload
-                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "Successfully bound certificate"
-                                Write-DisplayText -ForeGroundColor Green "Successfully bound certificate"
-                            } catch {
-                                Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind certificate"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                                Write-DisplayText -ForeGroundColor Red "Failed to bind certificate"
+                            } else {
+                                Write-DisplayText -Line "Action required"
+                                Write-ToLogFile -I -C "UpdateGlobalVPNCertBinding" -M "No action required, certificate was not bound globally before. Will not be bound now."
+                                Write-DisplayText -ForeGroundColor Green "No action required, certificate was not bound globally before. Will not be bound now."
                             }
-                            $MailData += "NSIDP (Global) Certificate binding updated: $($CertRequest.CertKeyNameToUpdate)"
                         } catch {
                             Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Caught an error, $($_.Exception.Message)"
                             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
@@ -5973,13 +6134,13 @@ if ($RemoveTestCertificates) {
     Write-ToLogFile -I -C RemoveTestCerts -M "Start removing the test certificates."
     Write-ToLogFile -I -C RemoveTestCerts -M "Trying to login into the Citrix ADC."
     $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-    $IntermediateCACertKeyName = "Fake LE Intermediate X1"
-    $IntermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
+    $intermediateCACertKeyName = "Fake LE Intermediate X1"
+    $intermediateCASerial = "8be12a0e5944ed3c546431f097614fe5"
     Write-ToLogFile -I -C RemoveTestCerts -M "Retrieving existing certificates."
     $CertDetails = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey
-    Write-ToLogFile -D -C RemoveTestCerts -M "Checking if IntermediateCA `"$IntermediateCACertKeyName`" already exists."
-    $IntermediateCADetails = $CertDetails.sslcertkey | Where-Object { $_.serial -eq $IntermediateCASerial }
-    $LinkedCertificates = $CertDetails.sslcertkey | Where-Object { $_.linkcertkeyname -eq $IntermediateCADetails.certkey }
+    Write-ToLogFile -D -C RemoveTestCerts -M "Checking if IntermediateCA `"$intermediateCACertKeyName`" already exists."
+    $intermediateCADetails = $CertDetails.sslcertkey | Where-Object { $_.serial -eq $intermediateCASerial }
+    $LinkedCertificates = $CertDetails.sslcertkey | Where-Object { $_.linkcertkeyname -eq $intermediateCADetails.certkey }
     Write-ToLogFile -D -C RemoveTestCerts -M "The following certificates were found:"
     $LinkedCertificates | Select-Object certkey, linkcertkeyname, serial | ForEach-Object {
         Write-ToLogFile -D -C RemoveTestCerts -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
@@ -5999,7 +6160,7 @@ if ($RemoveTestCertificates) {
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
     }
-    $FakeCerts = $CertDetails.sslcertkey | Where-Object { $_.issuer -match $IntermediateCACertKeyName }
+    $FakeCerts = $CertDetails.sslcertkey | Where-Object { $_.issuer -match $intermediateCACertKeyName }
     Write-ToLogFile -D -C RemoveTestCerts -M "Test Cert data:"
     $FakeCerts | ForEach-Object {
         Write-ToLogFile -D -C RemoveTestCerts -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
@@ -6155,8 +6316,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA8xvUDDtTS9Ctw
-# EGMebhT7WAwc9u6cuVorduIHOpBcoaCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBSNek9XHC01zoh
+# nMauUrpVLl221526rZe4wWeTv7VCpKCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -6332,36 +6493,36 @@ TerminateScript 0
 # MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
 # Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgaqYKXHQf7f1VceQ7oEMj4Pg8
-# HlC1l96/g/AxDv4huTkwDQYJKoZIhvcNAQEBBQAEggGAP9H5DFJGSwDXdi+Z8tFh
-# ebaM5zDR6m80Z4TtoyVJBko7oMmQ9vtvC6DSXAJwTDbZOBnzIfSr8dSqzySlvdEa
-# teYvtxupFSEfAo6P4u65H2nufD7ERpxSnNC0XBZnGYkVZDmaGxbMaDrtVCg4Ti/o
-# U1S8hu45uWemfBei7Qqj/1AxoXN2NRrC1RWrubpsPDXMNUd5nmLrXWaO3kxDnfMr
-# grsKc01ELb2FCx8CMVTiltyfOf7QZnRoZQankfLQ3w6gRROyA13cHOFX/Kqdf6YJ
-# 3PuCptRirOSxdRxMn5Ogg6t/OhYJd4VDVuBu2gP+4nuPzUaxE+ufFZx0O0ldGAO+
-# FmQgVLhS8Vm33FY+nDFlEwCpVsCsswOafj+tspd6VQO/on2DMK81NLCq0RPay1l7
-# uuiHPZQh7a4WlX70g9+oKdiQVjSPII4pxJj9JtpEhy7CEsMwMxD7xzw3fo4eI48B
-# xhsXFocYXqSgKe2ougAoFIwGW8gQWVNesaXOeOt71nZ5oYIEBDCCBAAGCSqGSIb3
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgojDLGcTQ8A5pg6KinF39gxdZ
+# JI7kskb9bxJHaT/JOLwwDQYJKoZIhvcNAQEBBQAEggGAIgsn4N5trlj3Pk4EUYbN
+# YR9Dx4TdVYX6/opf8vIFsVaHf5d2XeX/59PXuMxlN6t5CG1BbomUkXsP66AUrbu1
+# hhZ+Xfjk8afRgQHAozSA31g3lZqFuK5rHQvzEMM61psM3iVY86v1L8GPMxmZY/A5
+# bzr8GjxajwMT1wlIoT0jIs+FWibmOtYLmEpTlxUtNbtdiG/0BqcD3iMW8WCG/aTe
+# 32M0j6wXO1pW2Fvs9ey4FvLDkvvNrNPSOjn7NJQdfvrXd5vxSFixAqiGAEkFpBLb
+# tfjbrKbyGdR55vR7rswpzXVDu01SvxrHA+voHfWB2ovzfOvRJexLrYGdiNNGp7EA
+# 8234KLAnID4JAx/w4MeXd1cI5J0h21UXIeQDn8FpESaTRQAvBOR1FGV/8fn/wvnI
+# D+JgEnBvCzC8f8phbNjUYcmGiOXD2kONIjARa6Mb18+1febQgfKr3GwyDjs3/WLV
+# PZwq9mW/QU7+Pr+AUYEqzN7WVOORkKYg9d1O9NNNoYIuoYIEBDCCBAAGCSqGSIb3
 # DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
 # byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
 # ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
 # GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA0
-# MTQxNzQ4MjZaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDCQrQyC1YK5BPkIr60t
-# ZlyMgjAgYewPOmOhmMFeTvKL+/6OrgOOQ/ajD8949agS9xIwgaAGCyqGSIb3DQEJ
+# MjMyMDUzMTRaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBTkXk7n1DdfEWSRfb5
+# lhiV0ftlSCCSv/MHBUhGkhXhs/YC0O+m962AheawIUAQW+EwgaAGCyqGSIb3DQEJ
 # EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
 # CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
 # IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICADYZC7wdI/LsXHzl6781YSEnZwLSvKfD
-# fs8E/C5nmpPr/iqmCy0lX0wfQpMW9292Jg7GRqXZSkDeO94eOWl8bgfRSAqSjpcr
-# i194OxMWExi7aJBLSKjDzGWr0MsuZPY7PL0M263xXyktEVd3fvhXZpExJ+zgLbJZ
-# E3UxdvKlmx32zaoREMX8nZhfioOuO8xt4muupdsjVr2erEMvmocNsnnBJ5UlmnoL
-# lN+vGPxSqRwH/EgKlevSlio7skFFA4XM7rVpsw/fbnShbdLq1A0svXI8bnuz2EE2
-# PUrBn5K1uyUNPsuU1Xs/rzhOUYeh4nTp5NNja7CTr8Y5x7Bl4Rq8NNILdkvm3gZv
-# mVJeQLOkj9aiQ9fR9A3fy6Y6I6UY8H3dzs1ZiaUkEP4rMr9/Ky2PdE29Ewywn61l
-# YsI1omaDelRI7+E4huBnntba232CXIAI41awNCbsO+BkfxMTs7G/AmtCprkdxIhk
-# v6JxHgfxJPCYIvGAxKmE4m+0AEKjnqK6YM7m8igGmidGpBv4lJHHANvs4N2GD1Ia
-# 4ktKzM8W9IG/7zWnagclmV5eRejzplGAIIMVA5MfG7tH7RN6QpIz5XYmrqrjcVvr
-# Z0qI447Z3+0bqjm6Ghy+gqYgyzUO5+kpiT3FPxCrrilJfhwcX1tZdoxip+B611Qg
-# Rjrlbxl+YBrp
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICADNB8V3Wq7OTUfLYHYoaICVYZRyVmqwS
+# 1GnMZ3fA9hhHYRudS8XjPpUeUrP9eABKSDwsZAaGgBU1WAYnw+PKrQfsqSLfrXU0
+# pnLYOJvjvRugmQGTBQQtT2IFHORXoDGoMz1cAIJYh1pDAXGh7GiaZ3j773auFtwB
+# M85IMSW+I+oRu9Yb09WLRqZBIB8yfqI3pmHcSs224BdDpbHKCMQ3DtsqtHN4439C
+# nNb+ApN5+EKQyR/xSyMeYYeCQ9SQKXQ/gUGKzxMYNjtPIQPwNd0Pqg477Zzdvsia
+# 2d4TdmbSXafpDlebLVZ1fgW7dr21IUSKFiy1TXSCjPBum8dXpYVFie4odHZvx9XQ
+# aSwOo7dKQIKrWDA9Op8Ej6DJQrN4w2GCJVLeEytvl8IIU52S6Y1veQvfVm2HQDeF
+# af3SC7CmsRS8UoPXVQUvqkIpNeYDvfH35X7uH51zPEBcClvybIxKBCEo3uqYsfTd
+# OB1KMXQcdQGAlUv27QSTGlZONe8wqNX3u/z0cRv8zGOlgxyzGo5s9yI1ZFhzcauq
+# AH80DOUjdcMrZBqHbp/ZXojZPH9z8hn48tu4pKS/dbWz08cz3IRDbEaRnuYu2t1k
+# QQ6OMUP2wScrGvCJzMVlpkg1LmxqcrDuPniOfmMbijevelLQpZJoQBFuQqKkKLGe
+# o+Xv41Khqvu3
 # SIG # End signature block
