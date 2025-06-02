@@ -689,92 +689,145 @@ $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7
 function Write-ToLogFile {
     <#
 .SYNOPSIS
-    Write messages to a log file.
-.DESCRIPTION
-    Write info to a log file.
-.PARAMETER Message
-    The message you want to have written to the log file.
-.PARAMETER Block
-    If you have a (large) block of data you want to have written without Date/Component tags, you can specify this parameter.
-.PARAMETER E
-    Define the Message as an Error message.
-.PARAMETER W
-    Define the Message as a Warning message.
-.PARAMETER I
-    Define the Message as an Informational message.
-    Default value: This is the default value for all messages if not otherwise specified.
-.PARAMETER D
-    Define the Message as a Debug Message
-.PARAMETER Component
-    If you want to have a Component name in your log file, you can specify this parameter.
-    Default value: Name of calling script
-.PARAMETER DateFormat
-    The date/time stamp used in the LogFile.
-    Default value: "yyyy-MM-dd HH:mm:ss:ffff"
-.PARAMETER NoDate
-    If NoDate is defined, no date string will be added to the log file.
-    Default value: False
-.PARAMETER Show
-    Show the Log Entry only to console.
-.PARAMETER LogFile
-    The FileName of your log file.
-    You can also define a (Global) variable in your script $LogFile, the function will use this path instead (if not specified with the command).
-    Default value: <ScriptRoot>\Log.txt or if $PSScriptRoot is not available .\Log.txt
-.PARAMETER Delimiter
-    Define your Custom Delimiter of the log file.
-    Default value: <TAB>
-.PARAMETER LogLevel
-    The Log level you want to have specified.
-    With LogLevel: Error; Only Error (E) data will be written or shown.
-    With LogLevel: Warning; Only Error (E) and Warning (W) data will be written or shown.
-    With LogLevel: Info; Only Error (E), Warning (W) and Info (I) data will be written or shown.
-    With LogLevel: Debug; All, Error (E), Warning (W), Info (I) and Debug (D) data will be written or shown.
-    With LogLevel: None; Nothing will be written to disk or screen.
-    You can also define a (Global) variable in your script $LogLevel, the function will use this level instead (if not specified with the command)
-    Default value: Info
-.PARAMETER NoLogHeader
-    Specify parameter if you don't want the log file to start with a header.
-    Default value: False
-.PARAMETER WriteHeader
-    Only Write header with info to the log file.
-.PARAMETER ExtraHeaderInfo
-    Specify a string with info you want to add to the log header.
-.PARAMETER NewLog
-    Force to start a new log, previous log will be removed.
-.EXAMPLE
-    Write-ToLogFile "This message will be written to a log file"
-    To write a message to a log file just specify the following command, it will be a default informational message.
-.EXAMPLE
-    Write-ToLogFile -E "This message will be written to a log file"
-    To write a message to a log file just specify the following command, it will be a error message type.
-.EXAMPLE
-    Write-ToLogFile "This message will be written to a log file" -NewLog
-    To start a new log file (previous log file will be removed)
-.EXAMPLE
-    Write-ToLogFile "This message will be written to a log file"
-    If you have the variable $LogFile defined in your script, the Write-ToLogFile function will use that LofFile path to write to.
-    E.g. $LogFile = "C:\Path\LogFile.txt"
-.NOTES
-    Function Name : Write-ToLogFile
-    Version       : v0.2.6
-    Author        : John Billekens
-    Requires      : PowerShell v5.1 and up
-.LINK
-    https://blog.j81.nl
-#>
-    #requires -version 5.1
+    Logs messages or large blocks of data to a specified logfile with support for log rotation,
+    sensitive data masking, customizable headers, and multi-level log filtering.
 
+.DESCRIPTION
+    Writes detailed log entries to a file or displays them on the console. The function supports:
+      • Multiple message types: Error, Warning, Informational, Debug.
+      • Writing large blocks of text.
+      • Log rotation based on file size.
+      • Sensitive data replacement.
+      • Customizable header information with metadata.
+      • Global/default variable overrides for LogFile, LogLevel, and sensitive words.
+
+.PARAMETER Message
+    One or more string messages to log. If multiple messages are provided and the -SeparateMessages
+    switch is used, each message is written on a new line.
+
+.PARAMETER SeparateMessages
+    When set, writes each message from the Message parameter on a separate line in the log file.
+
+.PARAMETER Block
+    A block of data (can be non-string) to log without including date or component tags.
+    Use the BlockIndent switch to indent each line of the block if desired.
+
+.PARAMETER BlockIndent
+    When logging a block, indent every line to visually separate the block content.
+
+.PARAMETER E
+    Indicates the Message is an error type. Only logs if the current LogLevel permits errors.
+
+.PARAMETER W
+    Indicates the Message is a warning type. Only logs if the current LogLevel permits warnings.
+
+.PARAMETER I
+    Indicates the Message is informational. This is the default if no other type is specified.
+
+.PARAMETER D
+    Indicates the Message or Block is for debug purposes. Only logs if LogLevel is set to Debug.
+
+.PARAMETER Component
+    Specifies a component name to include in the log entry.
+    Default: The calling script's name or "LOG" if unavailable.
+
+.PARAMETER NoDate
+    When set, no timestamp is prepended to the log entry.
+
+.PARAMETER DateFormat
+    Defines the date/time format to be used in the log entry.
+    Default: "yyyy-MM-dd HH:mm:ss:ffff"
+
+.PARAMETER Show
+    Displays the generated log entry to the console instead of writing it to a file.
+
+.PARAMETER LogFile
+    Specifies the path to the log file. If a global or script-level $LogFile variable exists,
+    that value is used unless overridden.
+    Default: "<ScriptRoot>\Log.txt" or ".\Log.txt" where PSScriptRoot is unavailable.
+
+.PARAMETER Delimiter
+    Custom delimiter used in formatting the log file.
+    Default: TAB character
+
+.PARAMETER LogLevel
+    Defines the minimum log level to process. Accepted values are:
+      • None: No logging.
+      • Error: Only errors.
+      • Warning: Errors and warnings.
+      • Info: Errors, warnings, and informational entries.
+      • Debug: All types.
+    Global or script-level $LogLevel variables are also considered.
+    Default: Info
+
+.PARAMETER NoLogHeader
+    When specified, does not add a header to a new logfile.
+
+.PARAMETER WriteHeader
+    Forces writing only the log header (with metadata) to the log file.
+
+.PARAMETER ExtraHeaderInfo
+    Adds additional user-defined information to the log header.
+
+.PARAMETER NewLog
+    Forces creation of a new logfile by removing any pre-existing file at the LogFile path.
+
+.PARAMETER ReplaceSensitive
+    An array of strings specifying sensitive words to be replaced in the log entry.
+    Global or script-level values can also be used.
+
+.PARAMETER SensitiveMask
+    The string used to replace any detected sensitive data.
+    Default: "**SENSITIVE**"
+
+.PARAMETER Encoding
+    Specifies the file encoding to use when writing to the log file.
+    Accepted values: Unicode, UTF8, UTF7, UTF32, ASCII, BigEndianUnicode, Default.
+    Default: UTF8
+
+.PARAMETER MaxLogSize
+    Maximum allowed file size in bytes before log rotation occurs.
+
+.PARAMETER LogHistoryCount
+    The number of rotated log files to keep. Older files beyond this count will be removed.
+
+.EXAMPLE
+    Write-ToLogFile "This is an informational log message."
+    Logs a single informational message to the default log file.
+
+.EXAMPLE
+    Write-ToLogFile -E "This is an error log entry." -LogFile "C:\Logs\AppError.txt"
+    Logs an error message to a specific log file.
+
+.EXAMPLE
+    Write-ToLogFile -Block (Get-Content "C:\Temp\Report.txt") -BlockIndent
+    Logs the content of a file as a block with each line indented.
+
+.NOTES
+    Function Name  : Write-ToLogFile
+    Version      : v2.1
+    Author       : John Billekens Consultancy (Updated)
+    Requirements : PowerShell v3 or later
+    More Info    : https://blog.j81.nl
+#>
     [CmdletBinding(DefaultParameterSetName = "Info")]
     Param (
-        [Parameter(ParameterSetName = "Error", Mandatory = $true, Position = 0)]
-        [Parameter(ParameterSetName = "Warning", Mandatory = $true, Position = 0)]
-        [Parameter(ParameterSetName = "Info", Mandatory = $true, Position = 0)]
-        [Parameter(ParameterSetName = "Debug", Mandatory = $true, Position = 0)]
+        [Parameter(ParameterSetName = "Error", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "Warning", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "Info", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "Debug", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
         [ValidateNotNullOrEmpty()]
         [Alias("M")]
         [string[]]$Message,
 
-        [Parameter(ParameterSetName = "Block", Mandatory = $true)]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Alias("Separate", "SM")]
+        [switch]$SeparateMessages,
+
+        [Parameter(ParameterSetName = "Block", Mandatory = $true, ValueFromPipeline = $true)]
         [Alias("B")]
         [object[]]$Block,
 
@@ -783,16 +836,20 @@ function Write-ToLogFile {
         [Switch]$BlockIndent,
 
         [Parameter(ParameterSetName = "Error")]
+        [Alias("Err")]
         [Switch]$E,
 
         [Parameter(ParameterSetName = "Warning")]
+        [Alias("Warning", "Warn")]
         [Switch]$W,
 
         [Parameter(ParameterSetName = "Info")]
+        [Alias("Info", "Information", "Inf")]
         [Switch]$I,
 
         [Parameter(ParameterSetName = "Block")]
         [Parameter(ParameterSetName = "Debug")]
+        [Alias("Dbg")]
         [Switch]$D,
 
         [Parameter(ParameterSetName = "Error")]
@@ -800,12 +857,13 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
         [Alias("C")]
-        [String]$Component = $(try { $(Split-Path -Path $($MyInvocation.ScriptName) -Leaf) } catch { "LOG" }),
+        [String]$Component,
 
         [Parameter(ParameterSetName = "Error")]
         [Parameter(ParameterSetName = "Warning")]
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
+        [ValidateNotNullOrEmpty()]
         [Alias("ND")]
         [Switch]$NoDate,
 
@@ -825,6 +883,12 @@ function Write-ToLogFile {
         [Alias("S")]
         [Switch]$Show,
 
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
         [String]$LogFile = "Log.txt",
 
         [Parameter(ParameterSetName = "Error")]
@@ -838,7 +902,7 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
         [Parameter(ParameterSetName = "Block")]
-        [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $false)]
+        [ValidateSet("Error", "Warning", "Info", "Debug", "None", IgnoreCase = $true)]
         [String]$LogLevel,
 
         [Parameter(ParameterSetName = "Error")]
@@ -853,9 +917,21 @@ function Write-ToLogFile {
         [Alias("H", "Head")]
         [Switch]$WriteHeader,
 
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
         [Alias("HI")]
         [String]$ExtraHeaderInfo = $null,
 
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
         [Alias("NL")]
         [Switch]$NewLog,
 
@@ -864,193 +940,395 @@ function Write-ToLogFile {
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
         [Parameter(ParameterSetName = "Block")]
-        [String[]]$ReplaceSensitive = $Script:replaceSensitiveWords,
+        [String[]]$ReplaceSensitive = @(),
 
         [Parameter(ParameterSetName = "Error")]
         [Parameter(ParameterSetName = "Warning")]
         [Parameter(ParameterSetName = "Info")]
         [Parameter(ParameterSetName = "Debug")]
         [Parameter(ParameterSetName = "Block")]
-        [String]$ReplaceSensitiveWith = "**MASKED**"
+        [String]$SensitiveMask = "**SENSITIVE**",
+
+
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
+        [ValidateSet("Unicode", "UTF8", "UTF7", "UTF32", "ASCII", "BigEndianUnicode", "Default")]
+        [String]$Encoding = "UTF8",
+
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
+        [int]$MaxLogSize,
+
+        [Parameter(ParameterSetName = "Head")]
+        [Parameter(ParameterSetName = "Error")]
+        [Parameter(ParameterSetName = "Warning")]
+        [Parameter(ParameterSetName = "Info")]
+        [Parameter(ParameterSetName = "Debug")]
+        [Parameter(ParameterSetName = "Block")]
+        [int]$LogHistoryCount
     )
-    $RootPath = $(if ($psISE) { Split-Path -Path $psISE.CurrentFile.FullPath } else { $(if ($global:PSScriptRoot.Length -gt 0) { $global:PSScriptRoot } else { $global:pwd.Path }) })
-    if ($ReplaceSensitive.Count -gt 0) {
-        $regex = ($ReplaceSensitive | ForEach-Object { [regex]::Escape($_) }) -join '|'
+
+    begin {
+        Write-Verbose "Initializing message and block collections"
+        $messageCollection = [System.Collections.Generic.List[string]]::new()
+        $blockCollection = [System.Collections.Generic.List[object]]::new()
     }
 
-    # Set Message Type to Informational if nothing is defined.
-    if ((-Not $I) -and (-Not $W) -and (-Not $E) -and (-Not $D) -and (-Not $Block) -and (-Not $WriteHeader)) {
-        $I = $true
-    }
-    #Check if a log file is defined in a Script. If defined, get value.
-    try {
-        $LogFileVar = Get-Variable -Scope Global -Name LogFile -ValueOnly -ErrorAction SilentlyContinue
-        if (-Not [String]::IsNullOrWhiteSpace($LogFileVar)) {
-            $LogFile = $LogFileVar
-        }
-        $LogFileVar = Get-Variable -Scope Script -Name LogFile -ValueOnly -ErrorAction SilentlyContinue
-        if (-Not [String]::IsNullOrWhiteSpace($LogFileVar)) {
-            $LogFile = $LogFileVar
-        }
-    } catch {
-        #Continue, no script variable found for LogFile
-    }
-    #Check if a LogLevel is defined in a script. If defined, get value.
-    try {
-        if ([String]::IsNullOrEmpty($LogLevel) -and (-Not $WriteHeader)) {
-            $LogLevelVar = Get-Variable -Scope Global -Name LogLevel -ValueOnly -ErrorAction Stop
-            $LogLevel = $LogLevelVar
-        }
-    } catch {
-        if ([String]::IsNullOrEmpty($LogLevel)) {
-            $LogLevel = "Info"
-        }
-    }
-    if (-Not ($LogLevel -eq "None")) {
-        #Check if LogFile parameter is empty
-        if ([String]::IsNullOrWhiteSpace($LogFile)) {
-            if (-Not $Show) {
-                Write-Warning "Messages not written to log file, LogFile path is empty!"
-            }
-            #Only Show Entries to Console
-            $Show = $true
-        } else {
-            #If Not Run in a Script "$PSScriptRoot" wil only contain "\" this will be changed to the current directory
-            $ParentPath = Split-Path -Path $LogFile -Parent -ErrorAction SilentlyContinue
-            if (([String]::IsNullOrEmpty($ParentPath)) -Or ($ParentPath -eq "\")) {
-                $LogFile = $(Join-Path -Path $RootPath -ChildPath $(Split-Path -Path $LogFile -Leaf))
-            }
-        }
-        Write-Verbose "LogFile: $LogFile"
-        #Define Log Header
-        if (-Not $Show) {
-            if (
-                (-Not ($NoLogHeader -eq $true) -and (-Not (Test-Path -Path $LogFile -ErrorAction SilentlyContinue))) -Or
-                (-Not ($NoLogHeader -eq $true) -and ($NewLog)) -Or
-                ($WriteHeader)) {
-                $LogHeader = @"
-**********************
-LogFile: $LogFile
-Start time: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-Username: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)
-RunAs Admin: $((New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
-Machine: $($Env:COMPUTERNAME) ($([System.Environment]::OSVersion.VersionString))
-PSCulture: $($PSCulture)
-PSVersion: $($PSVersionTable.PSVersion)
-PSEdition: $($PSVersionTable.PSEdition)
-PSCompatibleVersions: $($PSVersionTable.PSCompatibleVersions -join ', ')
-BuildVersion: $($PSVersionTable.BuildVersion)
-PSCommandPath: $($PSCommandPath)
-LanguageMode: $($ExecutionContext.SessionState.LanguageMode)
-"@
-                if (-Not [String]::IsNullOrEmpty($ExtraHeaderInfo)) {
-                    $LogHeader += "`r`n"
-                    $LogHeader += $ExtraHeaderInfo.TrimEnd("`r`n")
+    process {
+        Write-Verbose "Processing [$($PSCmdlet.ParameterSetName)] parameter set"
+        switch ($PSCmdlet.ParameterSetName) {
+            { $_ -in "Error", "Warning", "Info", "Debug" } {
+                if ($Message) {
+                    Write-Verbose "Adding $($Message.Count) message(s) to collection"
+                    $messageCollection.AddRange($Message)
                 }
-                $LogHeader += "`r`n`r`n**********************`r`n`r`n"
-
-            } else {
-                $LogHeader = $null
+            }
+            "Block" {
+                if ($Block) {
+                    Write-Verbose "Adding $($Block.Count) block item(s) to collection"
+                    $blockCollection.AddRange($Block)
+                }
             }
         }
-    } else {
-        Write-Verbose "LogLevel is set to None!"
     }
-    #Define date string to start log message with. If NoDate is defined no date string will be added to the log file.
-    if (-Not ($LogLevel -eq "None")) {
-        if (-Not ($NoDate) -and (-Not $Block) -and (-Not $WriteHeader)) {
-            $DateString = "{0}{1}" -f $(Get-Date -Format $DateFormat), $Delimiter
+
+    end {
+        # Use collections if they have items
+        if ($messageCollection.Count -gt 0) {
+            $Message = $messageCollection
+            Write-Verbose "Using collected messages ($($Message.Count) items)"
+        }
+        if ($blockCollection.Count -gt 0) {
+            $Block = $blockCollection
+            Write-Verbose "Using collected block items ($($Block.Count) items)"
+        }
+
+        # Component initialization
+        if (-not $PSBoundParameters.ContainsKey('Component')) {
+            if ($MyInvocation.ScriptName) {
+                $Component = [System.IO.Path]::GetFileName($MyInvocation.ScriptName)
+                Write-Verbose "Component set from script name: $Component"
+            } else {
+                $Component = "LOG"
+                Write-Verbose "Component defaulted to LOG"
+            }
+        }
+
+        # Root path determination
+        $RootPath = if ($PSScriptRoot) {
+            $PSScriptRoot
+        } elseif ($psISE) {
+            Split-Path -Path $psISE.CurrentFile.FullPath
+        } else {
+            $pwd.Path
+        }
+        Write-Verbose "Root path: $RootPath"
+
+        # Check for global log file variable
+        foreach ($scope in @('Global', 'Script')) {
+            try {
+                $LogFileVar = Get-Variable -Scope $scope -Name LogFile -ValueOnly -ErrorAction SilentlyContinue
+                if (-not [String]::IsNullOrWhiteSpace($LogFileVar)) {
+                    $LogFile = $LogFileVar
+                    Write-Verbose "LogFile set from $scope scope: $LogFile"
+                    break
+                }
+            } catch {
+                Write-Verbose "No LogFile variable found in $scope scope"
+            }
+        }
+
+        # Check for global log level
+        if ([String]::IsNullOrEmpty($LogLevel) -and (-not $WriteHeader)) {
+            foreach ($scope in @('Global', 'Script')) {
+                try {
+                    $LogLevelVar = Get-Variable -Scope $scope -Name LogLevel -ValueOnly -ErrorAction SilentlyContinue
+                    if (-not [String]::IsNullOrEmpty($LogLevelVar)) {
+                        $LogLevel = $LogLevelVar
+                        Write-Verbose "LogLevel set from $scope scope: $LogLevel"
+                        break
+                    }
+                } catch {
+                    Write-Verbose "No LogLevel variable found in $scope scope"
+                }
+            }
+            if ([String]::IsNullOrEmpty($LogLevel)) {
+                $LogLevel = "Info"
+                Write-Verbose "LogLevel defaulted to Info"
+            }
+        }
+
+        # Check for global sensitive words
+        foreach ($scope in @('Global', 'Script')) {
+            try {
+                $sensitiveVar = Get-Variable -Scope $scope -Name ReplaceSensitive -ValueOnly -ErrorAction SilentlyContinue
+                if ($sensitiveVar -and $sensitiveVar.Count -gt 0) {
+                    $ReplaceSensitive = $sensitiveVar
+                    Write-Verbose "ReplaceSensitive set from $scope scope ($($sensitiveVar.Count) words)"
+                    break
+                }
+            } catch {
+                Write-Verbose "No ReplaceSensitive variable found in $scope scope"
+            }
+        }
+
+        # Regex caching for sensitive words
+        if ($ReplaceSensitive.Count -gt 0) {
+            if (-not $script:sensitiveRegex -or $script:sensitiveWords -ne $ReplaceSensitive) {
+                $WholeWordOnly = $true
+                Write-Verbose "Building regex for $($ReplaceSensitive.Count) sensitive words"
+                $script:sensitiveWords = $ReplaceSensitive
+                $escaped = $ReplaceSensitive | ForEach-Object { [regex]::Escape($_) }
+
+                $escaped = $ReplaceSensitive |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ -ne "" } |
+                    Sort-Object Length -Descending |
+                    ForEach-Object {
+                        $escaped = [regex]::Escape($_)
+                        if ($WholeWordOnly) {
+                            "\b$escaped\b"  # wrap in word boundaries
+                        } else {
+                            $escaped
+                        }
+                    }
+
+                $pattern = ($escaped -join '|')
+                $script:sensitiveRegex = [regex]::new($pattern, 'IgnoreCase')
+            }
+            $regex = $script:sensitiveRegex
+        }
+
+        # Resolve log file path
+        if (-not [String]::IsNullOrWhiteSpace($LogFile)) {
+            $ParentPath = Split-Path -Path $LogFile -Parent -ErrorAction SilentlyContinue
+            if ([String]::IsNullOrEmpty($ParentPath) -or ($ParentPath -eq "\")) {
+                $LogFile = Join-Path -Path $RootPath -ChildPath (Split-Path -Path $LogFile -Leaf)
+                Write-Verbose "Resolved log path: $LogFile"
+            }
+        }
+
+        # Warn about default log name
+        if ($LogFile -like "*\Log.txt" -or $LogFile -like "Log.txt") {
+            Write-Warning "Default log file name (Log.txt) in use. Consider specifying a unique name."
+        }
+
+        # Log rotation
+        if (-not [String]::IsNullOrWhiteSpace($LogFile) -and
+            $MaxLogSize -gt 0 -and
+            (Test-Path -Path $LogFile -ErrorAction SilentlyContinue)) {
+
+            $logFileItem = Get-Item -Path $LogFile
+            if ($logFileItem.Length -ge $MaxLogSize) {
+                $logDir = $logFileItem.DirectoryName
+                $logBaseName = $logFileItem.BaseName
+                $logExtension = $logFileItem.Extension
+                $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+                $newLogName = "${logBaseName}_${timestamp}${logExtension}"
+                $newLogPath = Join-Path -Path $logDir -ChildPath $newLogName
+
+                Write-Verbose "Rotating log (size: $($logFileItem.Length) > max: $MaxLogSize)"
+                Move-Item -Path $LogFile -Destination $newLogPath -Force
+
+                if ($LogHistoryCount -gt 0) {
+                    $oldLogs = Get-ChildItem -Path $logDir -Filter "${logBaseName}_*${logExtension}" |
+                        Sort-Object -Property CreationTime -Descending |
+                        Select-Object -Skip $LogHistoryCount
+
+                    if ($oldLogs) {
+                        Write-Verbose "Removing $($oldLogs.Count) old log file(s)"
+                        $oldLogs | Remove-Item -Force
+                    }
+                }
+            }
+        }
+
+        # Define log header
+        $LogHeader = $null
+        $writeHeader = $false
+        if (-not ($LogLevel -eq "None") -and -not $Show) {
+            $writeHeader = (-not $NoLogHeader) -and (
+                (-not (Test-Path -Path $LogFile -ErrorAction SilentlyContinue)) -or
+                $NewLog -or
+                $WriteHeader
+            )
+
+            if ($writeHeader) {
+                Write-Verbose "Generating log header"
+                $headerInfo = @{
+                    LogFile              = $LogFile
+                    StartTime            = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                    Username             = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                    IsAdmin              = (New-Object Security.Principal.WindowsPrincipal(
+                            [Security.Principal.WindowsIdentity]::GetCurrent()
+                        )).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+                    Machine              = "$($Env:COMPUTERNAME) ($([System.Environment]::OSVersion.VersionString))"
+                    PSCulture            = $PSCulture
+                    PSVersion            = $PSVersionTable.PSVersion
+                    PSEdition            = $PSVersionTable.PSEdition
+                    PSCompatibleVersions = $PSVersionTable.PSCompatibleVersions -join ', '
+                    BuildVersion         = $PSVersionTable.BuildVersion
+                    PSCommandPath        = $PSCommandPath
+                    LanguageMode         = $ExecutionContext.SessionState.LanguageMode
+                }
+
+                $LogHeader = "**********************`r`n"
+                $LogHeader += "LogFile: $($headerInfo.LogFile)`r`n"
+                $LogHeader += "Start time: $($headerInfo.StartTime)`r`n"
+                $LogHeader += "Username: $($headerInfo.Username)`r`n"
+                $LogHeader += "RunAs Admin: $($headerInfo.IsAdmin)`r`n"
+                $LogHeader += "Machine: $($headerInfo.Machine)`r`n"
+                $LogHeader += "PSCulture: $($headerInfo.PSCulture)`r`n"
+                $LogHeader += "PSVersion: $($headerInfo.PSVersion)`r`n"
+                $LogHeader += "PSEdition: $($headerInfo.PSEdition)`r`n"
+                $LogHeader += "PSCompatibleVersions: $($headerInfo.PSCompatibleVersions)`r`n"
+                $LogHeader += "BuildVersion: $($headerInfo.BuildVersion)`r`n"
+                $LogHeader += "PSCommandPath: $($headerInfo.PSCommandPath)`r`n"
+                $LogHeader += "LanguageMode: $($headerInfo.LanguageMode)`r`n"
+
+                if (-not [String]::IsNullOrEmpty($ExtraHeaderInfo)) {
+                    $LogHeader += "$($ExtraHeaderInfo.TrimEnd("`r`n"))`r`n"
+                }
+                $LogHeader += "`r`n**********************`r`n`r`n"
+            }
+        }
+
+        # Handle new log creation
+        if ($NewLog -and (Test-Path -Path $LogFile -ErrorAction SilentlyContinue)) {
+            Write-Verbose "Removing existing log file (NewLog requested)"
+            Remove-Item -Path $LogFile -Force -ErrorAction SilentlyContinue
+        }
+
+        # Set default message type
+        if (-not $I -and -not $W -and -not $E -and -not $D -and -not $Block -and -not $WriteHeader) {
+            Write-Verbose "Defaulting to Info message type"
+            $I = $true
+        }
+
+        # Date string handling
+        if (-not ($LogLevel -eq "None") -and -not $NoDate -and -not $Block -and -not $WriteHeader) {
+            $DateString = "{0}{1}" -f (Get-Date -Format $DateFormat), $Delimiter
         } else {
             $DateString = $null
         }
-        if (-Not [String]::IsNullOrEmpty($Component) -and (-Not $Block) -and (-Not $WriteHeader)) {
+
+        # Component formatting
+        if (-not [String]::IsNullOrEmpty($Component) -and -not $Block -and -not $WriteHeader) {
             $Component = " {0}[{1}]{0}" -f $Delimiter, $Component.ToUpper()
         } else {
-            $Component = "{0}{0}" -f $Delimiter
+            $Component = $null
         }
-        #Define the log sting for the Message Type
-        if ($Block -Or $WriteHeader) {
-            $WriteLog = $true
-            if ($D -and ($LogLevel -ne "Debug")) {
-                $WriteLog = $false
-            }
-        } elseif ($E -and (($LogLevel -eq "Error") -Or ($LogLevel -eq "Warning") -Or ($LogLevel -eq "Info") -Or ($LogLevel -eq "Debug"))) {
-            Write-Verbose -Message "LogType: [Error], LogLevel: [$LogLevel]"
-            $MessageType = "ERROR"
-            $WriteLog = $true
-        } elseif ($W -and (($LogLevel -eq "Warning") -Or ($LogLevel -eq "Info") -Or ($LogLevel -eq "Debug"))) {
-            Write-Verbose -Message "LogType: [Warning], LogLevel: [$LogLevel]"
-            $MessageType = "WARN "
-            $WriteLog = $true
-        } elseif ($I -and (($LogLevel -eq "Info") -Or ($LogLevel -eq "Debug"))) {
-            Write-Verbose -Message "LogType: [Info], LogLevel: [$LogLevel]"
-            $MessageType = "INFO "
-            $WriteLog = $true
-        } elseif ($D -and ($LogLevel -eq "Debug")) {
-            Write-Verbose -Message "LogType: [Debug], LogLevel: [$LogLevel]"
-            $MessageType = "DEBUG"
-            $WriteLog = $true
-        } else {
-            Write-Verbose -Message "No Log entry is made LogType: [Error: $E, Warning: $W, Info: $I, Debug: $D] LogLevel: [$LogLevel]"
-            $WriteLog = $false
-        }
-    } else {
+
+        # Determine message type and logging eligibility
         $WriteLog = $false
-    }
-    #Write the line(s) of text to a file.
-    if ($WriteLog) {
+        $MessageType = $null
+
         if ($WriteHeader) {
-            $LogString = $LogHeader
+            $WriteLog = $true
+            Write-Verbose "Writing header to log"
         } elseif ($Block) {
-            if ($BlockIndent) {
-                $BlockLineStart = "{0}{0}{0}" -f $Delimiter
-            } else {
-                $BlockLineStart = ""
+            $WriteLog = $true
+            if ($D -and ($LogLevel -ine "Debug")) {
+                $WriteLog = $false
+                Write-Verbose "Skipping debug block due to log level"
             }
-            if ($Block -is [System.String]) {
-                $LogString = "{0]{1}" -f $BlockLineStart, $Block.Replace("`r`n", "`r`n$BlockLineStart")
-            } else {
-                $LogString = "{0}{1}" -f $BlockLineStart, $($Block | Out-String).Replace("`r`n", "`r`n$BlockLineStart")
-            }
-            $LogString = "$($LogString.TrimEnd("$BlockLineStart").TrimEnd("`r`n"))`r`n"
         } else {
-            $LogString = "{0}{1}{2}{3}" -f $DateString, $MessageType, $Component, $($Message | Out-String)
+            switch ($true) {
+                $E {
+                    $MessageType = "ERROR"
+                    $WriteLog = $LogLevel -iin @("Error", "Debug")
+                }
+                $W {
+                    $MessageType = "WARN "
+                    $WriteLog = $LogLevel -iin @("Error", "Warning", "Debug")
+                }
+                $I {
+                    $MessageType = "INFO "
+                    $WriteLog = $LogLevel -iin @("Error", "Warning", "Info", "Debug")
+                }
+                $D {
+                    $MessageType = "DEBUG"
+                    $WriteLog = $LogLevel -ieq "Debug"
+                }
+            }
+            if ($WriteLog) {
+                Write-Verbose "Logging [$MessageType] message"
+            }
         }
-        if ($Show) {
-            if ($ReplaceSensitive.Count -gt 0) {
-                $LogString = $LogString -replace $regex, $ReplaceSensitiveWith
-            }
-            "$($LogString.TrimEnd("`r`n"))"
-            Write-Verbose -Message "Data shown in console, not written to file!"
-        } else {
-            if (($LogHeader) -and (-Not $WriteHeader)) {
-                $LogString = "{0}{1}" -f $LogHeader, $LogString
-            }
-            if ($ReplaceSensitive.Count -gt 0) {
-                $LogString = $LogString -replace $regex, $ReplaceSensitiveWith
-            }
-            try {
-                if ($NewLog) {
-                    try {
-                        Remove-Item -Path $LogFile -Force -ErrorAction Stop
-                        Write-Verbose -Message "Old log file removed"
-                    } catch {
-                        Write-Verbose -Message "Could not remove old log file, trying to append"
+
+        # Generate log content
+        if ($WriteLog) {
+            if ($WriteHeader) {
+                $LogString = $LogHeader
+            } elseif ($Block) {
+                $BlockLineStart = if ($BlockIndent) { "$Delimiter$Delimiter$Delimiter" } else { "" }
+
+                $content = if ($Block -is [string]) { $Block } else { $Block | Out-String }
+
+                $LogString = $content -replace "(?m)^", $BlockLineStart -replace "`r`n$"
+                $LogString += "`r`n"
+            } else {
+                if ($SeparateMessages.ToBool() -eq $true) {
+                    $lines = $Message | ForEach-Object {
+                        "$DateString$MessageType$Component$_"
                     }
+
+                    $LogString = $lines -join "`r`n"
+                    $LogString += "`r`n"
+                } else {
+                    $logMessage = if ($Message.Count -gt 1) {
+                        $Message -join "`r`n"
+                    } else {
+                        $Message[0]
+                    }
+                    $LogString = "$DateString$MessageType$Component$logMessage`r`n"
                 }
-                try {
-                    [System.IO.File]::AppendAllText($LogFile, $LogString, [System.Text.Encoding]::Unicode)
-                    Write-Verbose -Message "Data written to LogFile:`r`n         `"$LogFile`""
-                } catch {
-                    Write-Verbose -Message "Error while writing to log"
-                }
-            } catch {
-                #If file cannot be written, give an error
-                Write-Error -Category WriteError -Message "Could not write to file `"$LogFile`""
             }
+
+            # Apply sensitive data replacement
+            if ($regex -and $ReplaceSensitive.Count -gt 0) {
+                Write-Verbose "Applying sensitive data replacement"
+                $LogString = $regex.Replace($LogString, $SensitiveMask)
+            }
+
+            # Output to console or file
+            if ($Show) {
+                $LogString.TrimEnd("`r`n")
+                Write-Verbose "Displayed log content in console"
+            } else {
+                if ($LogHeader -and $writeHeader -and -not $WriteHeader) {
+                    $LogString = $LogHeader + $LogString
+                }
+
+                # Select encoding
+                $enc = switch ($Encoding) {
+                    "Unicode" { [System.Text.Encoding]::Unicode }
+                    "UTF8" { [System.Text.Encoding]::UTF8 }
+                    "UTF7" { [System.Text.Encoding]::UTF7 }
+                    "UTF32" { [System.Text.Encoding]::UTF32 }
+                    "ASCII" { [System.Text.Encoding]::ASCII }
+                    "BigEndianUnicode" { [System.Text.Encoding]::BigEndianUnicode }
+                    default { [System.Text.Encoding]::Default }
+                }
+
+                try {
+                    [System.IO.File]::AppendAllText($LogFile, $LogString, $enc)
+                    Write-Verbose "Logged $($LogString.Length) characters to $LogFile"
+                } catch {
+                    Write-Error "Log write failed: $($_.Exception.Message)"
+                }
+            }
+        } else {
+            Write-Verbose "No log entry created (log level or parameter constraints)"
         }
-    } else {
-        Write-Verbose -Message "Data not written to file!"
     }
 }
 
@@ -2804,7 +3082,7 @@ if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.Paramet
 $psEditionInfo = if ($PSVersionTable.ContainsKey('PSEdition')) { $PSVersionTable.PSEdition } else { 'Desktop' }
 
 #Define the variable that will contain sensitive words like passwords that should not be logged
-$Script:replaceSensitiveWords = [String[]]@()
+$Script:ReplaceSensitive = [String[]]@()
 
 $PreLogLines = @()
 
@@ -2945,12 +3223,12 @@ if (-Not [String]::IsNullOrEmpty($DNSParams)) {
 try {
     if ((-Not $AutoRun) -and (-Not $CleanAllExpiredCertsOnDisk)) {
         if (($Password -is [String]) -and ($Password.Length -gt 0)) {
-            $Script:replaceSensitiveWords += @($Password)
+            $Script:ReplaceSensitive += @($Password)
             [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
         }
         if ((($Password.Length -gt 0) -and ($Username.Length -gt 0))) {
             [PSCredential]$Credential = New-Object System.Management.Automation.PSCredential ($Username, $Password)
-            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
+            $Script:ReplaceSensitive += @($Credential.GetNetworkCredential().Password)
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
             if ([string]::IsNullOrEmpty($Username)) {
@@ -2958,17 +3236,17 @@ try {
             } else {
                 $Credential = Get-Credential -UserName $Username -Message "Citrix ADC Credentials"
             }
-            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
+            $Script:ReplaceSensitive += @($Credential.GetNetworkCredential().Password)
         }
         if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
             throw "No valid credential found, -Username & -Password or -Credential not specified!"
         } else {
             $ADCCredentialUsername = $Credential.Username
             $ADCCredentialPassword = $Credential.Password
-            $Script:replaceSensitiveWords += @($Credential.GetNetworkCredential().Password)
+            $Script:ReplaceSensitive += @($Credential.GetNetworkCredential().Password)
         }
         if (($PfxPassword -is [String]) -and ($PfxPassword.Length -gt 0)) {
-            $Script:replaceSensitiveWords += @($PfxPassword)
+            $Script:ReplaceSensitive += @($PfxPassword)
             [SecureString]$PfxPassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
         }
     }
@@ -3032,19 +3310,19 @@ try {
                 } catch { }
 
                 try {
-                    $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword))
+                    $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword) -AsClearText)
                 } catch {
                     $PreLogLines += "E;CONFIGFILE;Could not read the ADCCredential. ERROR: $($_.Exception.Message)"
                 }
                 try {
-                    $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword))
+                    $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword) -AsClearText)
                 } catch {
                     $PreLogLines += "W;CONFIGFILE;Could not read the SMTPCredential. ERROR:$($_.Exception.Message)"
                 }
                 if ($Parameters.certrequests.Count -gt 0) {
                     $Parameters.certrequests | ForEach-Object {
                         try {
-                            $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $_.PfxPassword)
+                            $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $_.PfxPassword -AsClearText)
                         } catch {
                             $PreLogLines += "E;CONFIGFILE;Could not read the PfxPassword. ERROR:$($_.Exception.Message)"
                         }
@@ -3099,7 +3377,7 @@ if ($AutoRun) {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
         $ADCCredentialUsername = $Parameters.settings.ADCCredentialUsername
         $ADCCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword)
-        $Script:replaceSensitiveWords += @($ADCCredentialPassword)
+        $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword) -AsClearText)
         $Credential = New-Object -TypeName PSCredential -ArgumentList $ADCCredentialUsername, $ADCCredentialPassword
         $PreLogLines += "D;PARAMETERS;ADCCredential ready. Username:$($Credential.UserName)"
         if (-Not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
@@ -3117,7 +3395,7 @@ if ($AutoRun) {
         $SMTPCredentialPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.SMTPCredentialPassword)
         if ($SMTPCredentialPassword.Length -gt 0) {
             try {
-                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
+                $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword -AsClearText)
             } catch {
                 $PreLogLines += "W;PARAMETERS;Could not read the SMTPCredentialPassword. ERROR:$($_.Exception.Message)"
             }
@@ -3151,7 +3429,7 @@ if ($AutoRun) {
     $SMTPCredentialUsername = $SMTPCredential.Username
     $SMTPCredentialPassword = $SMTPCredential.Password
     if ($SMTPCredentialPassword.Length -gt 0) {
-        $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword)
+        $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $SMTPCredentialPassword -AsClearText)
     }
     if ($SMTPTo -like "*,*") {
         [String[]]$SMTPTo = $SMTPTo.Split(",") | ForEach-Object { $_.Trim() }
@@ -3228,8 +3506,12 @@ if ($AutoRun) {
     $PreLogLines += "I;PARAMETERS;Finished."
 }
 
+if (-Not [string]::IsNullOrEmpty($ApiPassword)) {
+    $Script:ReplaceSensitive += @($ApiPassword)
+}
+
 # Get only the unique sensitive words
-$Script:replaceSensitiveWords = @($Script:replaceSensitiveWords | Select-Object -Unique)
+$Script:ReplaceSensitive = @($Script:ReplaceSensitive | Select-Object -Unique | Sort-Object Length -Descending)
 
 if ($Parameters.settings.DisableLogging) {
     $Script:LoggingEnabled = $false
@@ -3571,16 +3853,21 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.RspName)
 
     #Max length 991 each
-    $CmdSpec = @{
-        Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ssl\s+certChain)|(^show\s+ssl\s+certChain\s+.*)|(^add\s+ssl\s+certificateChain)|(^add\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certificateChain)|(^show\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certLink)|(^show\s+ssl\s+certLink\s+.*)"
+    $cmdSpec = [ordered]@{
+        Basics = "(^show\s+ns\s+license)|(^show\s+ns\s+license\s+.*)|(^(create|show)\s+system\s+backup)|(^(create|show)\s+system\s+backup\s+.*)|(^convert\s+ssl\s+pkcs12)|(^show\s+ns\s+feature)|(^show\s+ns\s+feature\s+.*)|(^show\s+responder\s+action)|(^show\s+responder\s+policy)|(^(show|add|rm)\s+system\s+file.*-fileLocation.*nsconfig.*ssl.*)|(^show\s+ssl\s+certKey)|(^(add|link|unlink|update)\s+ssl\s+certKey\s+.*)|(^show\s+HA\s+node)|(^show\s+HA\s+node\s+.*)|(^(save|show)\s+ns\s+config)|(^(save|show)\s+ns\s+config\s+.*)|(^show\s+ns\s+trafficDomain)|(^show\s+ns\s+trafficDomain\s+.*)|(^show\s+ssl\s+certChain)|(^show\s+ssl\s+certChain\s+.*)|(^add\s+ssl\s+certificateChain)|(^add\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certificateChain)|(^show\s+ssl\s+certificateChain\s+.*)|(^show\s+ssl\s+certLink)|(^show\s+ssl\s+certLink\s+.*)"
         LEBkEd = "(^show\s+ns\s+version)|(^\S+\s+Service\s+$($Parameters.settings.SvcName).*)|(^\S+\s+lb\s+vserver\s+$($Parameters.settings.LbName).*)|(^\S+\s+responder\s+action\s+$($Parameters.settings.RsaName).*)|(^\S+\s+responder\s+policy\s+$($Parameters.settings.RspName).*)"
         LEFtEd = "(^show\s+ns\s+version)$CSVipString"
     }
+    $cmdSpecPriority = @{
+        Basics = 10
+        LEBkEd = 20
+        LEFtEd = 30
+    }
     if ($UseNetScalerDNS) {
-        $CmdSpec["LEFtEd"] += "|(^\S+\s+dns\s+txtRec)|(^\S+\s+dns\s+txtRec\s+.*)"
+        $cmdSpec["LEFtEd"] += "|(^\S+\s+dns\s+txtRec)|(^\S+\s+dns\s+txtRec\s+.*)"
     }
     if ($UpdateGlobalVPNCertBinding) {
-        $CmdSpec["LEBkEd"] += "|(^\S+\s+vpn\s+global)|(^\S+\s+vpn\s+global\s+.*)"
+        $cmdSpec["LEBkEd"] += "|(^\S+\s+vpn\s+global)|(^\S+\s+vpn\s+global\s+.*)"
     }
 
     #ToDo Partition "|(^(show|switch)\s+ns\s+partition)|(^(show|switch)\s+ns\s+partition\s+.*)"
@@ -3588,7 +3875,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     #if ($otherPartitions.Count -gt 0 ) {
     #
     #}
-    ForEach ($item in $($CmdSpec.GetEnumerator())) {
+    ForEach ($item in $($cmdSpec.GetEnumerator())) {
         Write-DisplayText -Line "Command Spec $($item.Name)"
         try {
             $policyName = "$($NSCPName)-$($item.Name)"
@@ -3731,15 +4018,18 @@ if ($CreateApiUser) {
         Write-DisplayText -ForeGroundColor Cyan "$($policyName)-(Basics|LEBkEd|LEFtEd) "
         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
         $bindingsToRemove = [String[]]($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -notin "$($policyName)-Basics", "$($policyName)-LEBkEd", "$($policyName)-LEFtEd" })
+        foreach ($cmdSpecItem in $($cmdSpec.GetEnumerator())) {
+            $bindingsToRemove += $response.systemuser_systemcmdpolicy_binding | Where-Object { $_.policyname -eq "$($policyName)-$($cmdSpecItem.Name)" -and $_.priority -ne $cmdSpecPriority[$cmdSpecItem.Name] } | Select-Object -ExpandProperty policyname
+        }
         if ($bindingsToRemove.Count -gt 0) {
-            Write-ToLogFile -I -C ApiUser -M "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
-            Write-Warning -Message "Unauthorized CmdSpec policies found ($($response.systemuser_systemcmdpolicy_binding.policyname -join ", "))"
+            Write-ToLogFile -I -C ApiUser -M "Unauthorized, legacy or wrongly bound CmdSpec policies found ($($bindingsToRemove -join ", "))"
+            Write-Warning -Message "Unauthorized, legacy or wrongly bound CmdSpec policies found ($($bindingsToRemove -join ", "))"
             foreach ($binding in $bindingsToRemove) {
-                Write-ToLogFile -D -C ApiUser -M "Remove the binding for `"$Binding`""
+                Write-ToLogFile -D -C ApiUser -M "Remove the binding for `"$binding`""
                 Write-DisplayText -Line "Binding"
-                Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$Binding] "
+                Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$($binding)] "
                 try {
-                    $Arguments = @{ policyname = $Binding }
+                    $Arguments = @{ policyname = $binding }
                     Write-ToLogFile -D -C ApiUser -M "Deleting: $($Arguments | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername -Arguments $Arguments -ErrorAction Stop
                     Write-DisplayText -ForeGroundColor Green "Removed"
@@ -3751,19 +4041,16 @@ if ($CreateApiUser) {
             }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
         }
-        ForEach ($item in $($CmdSpec.GetEnumerator())) {
-            $itemPolicyName = "$($policyName)-$($item.Name)"
+        ForEach ($cmdSpecItem in $($cmdSpec.GetEnumerator())) {
+            $itemPolicyName = "$($policyName)-$($cmdSpecItem.Name)"
             Write-DisplayText -Line "User Policy Binding"
-            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$itemPolicyName] "
-            if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -eq $itemPolicyName }) {
+            Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$itemPolicyName => $($cmdSpecPriority[$cmdSpecItem.Name])] "
+            if ($response.systemuser_systemcmdpolicy_binding.policyname | Where-Object { $_ -ieq $itemPolicyName }) {
                 Write-DisplayText -ForeGroundColor Green "Present"
                 Write-ToLogFile -I -C ApiUser -M "A bindings for `"$itemPolicyName`" already present"
             } else {
                 Write-ToLogFile -I -C ApiUser -M "Creating a new binding for `"$itemPolicyName`""
-                if ($itemPolicyName -like "*basic") { $prio = 10 }
-                if ($itemPolicyName -like "*LEBkEd") { $prio = 20 }
-                if ($itemPolicyName -like "*LEFtEd") { $prio = 30 }
-                $payload = @{ username = $ApiUsername; policyname = $itemPolicyName; priority = $prio }
+                $payload = @{ username = $ApiUsername; policyname = $itemPolicyName; priority = $cmdSpecPriority[$cmdSpecItem.Name] }
                 Write-ToLogFile -D -C ApiUser -M "Putting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser_systemcmdpolicy_binding -Payload $payload
                 Write-DisplayText -ForeGroundColor Green "Bound"
@@ -4375,7 +4662,7 @@ if ($CertificateActions) {
                     $CertRequest.FriendlyName = $CertRequest.CN
                 }
                 if ($CertRequest.ForceCertRenew) {
-                    Write-DisplayText -Line "Removing previous cert"
+                    Write-DisplayText -Line "Cleaning cert storage"
                     try {
                         $CertStoragePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Posh-ACME" -ErrorAction Stop
                         $CertStoragePath = Join-Path -Path $CertStoragePath -ChildPath ([uri]$PARegistration.location).Authority -ErrorAction Stop
@@ -4423,7 +4710,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C Order -M "New PfxPassword generated"
                 }
                 Invoke-AddUpdateParameter -Object $CertRequest -Name PfxPassword -Value $PfxPassword
-                $Script:replaceSensitiveWords += @(ConvertFrom-EncryptedPassword -Object $PfxPassword)
+                $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $PfxPassword)
                 Write-DisplayText -Line "Order"
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 try {
@@ -5621,28 +5908,54 @@ if ($CertificateActions) {
                             }
                             if ($CertRequest.RemovePrevious) {
                                 try {
+                                    Write-DisplayText -ForeGroundColor Yellow "*"
                                     Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was specified, retrieving files."
-                                    $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.cert)"; filelocation = "/nsconfig/ssl/" }
-                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
-                                    $PreviousCertFileName = $response.systemfile.filename
-                                    Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousCertFileName: `"$PreviousCertFileName`""
-                                    $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.key)"; filelocation = "/nsconfig/ssl/" }
-                                    $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
-                                    $PreviousKeyFileName = $response.systemfile.filename
-                                    Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousKeyFileName: `"$PreviousKeyFileName`""
-                                    $Arguments = @{ filelocation = "/nsconfig/ssl/" }
-                                    if (-Not [String]::IsNullOrEmpty($PreviousCertFileName)) {
-                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousCertFileName`""
-                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousCertFileName -Arguments $Arguments
-                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
-                                    }
-                                    Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                                    if ((-Not [String]::IsNullOrEmpty($PreviousKeyFileName)) -And ($PreviousCertFileName -ne $PreviousKeyFileName)) {
-                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousKeyFileName`""
-                                        $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousKeyFileName -Arguments $Arguments
-                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
+                                    Write-DisplayText -Line "Removing previous cert"
+                                    if ([String]::IsNullOrEmpty($ExistingCertificateDetails.sslcertkey.cert)) {
+                                        Write-DisplayText -ForeGroundColor Red "ERROR: Could not retrieve previous certificate details, cannot remove previous files."
                                     } else {
-                                        Write-ToLogFile -I -C ADC-RemovePrevious -M "Same file, `"/nsconfig/ssl/$PreviousKeyFileName`" was already removed."
+                                        $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.cert)"; filelocation = "/nsconfig/ssl/" }
+                                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
+                                        $PreviousCertFileName = $response.systemfile.filename
+                                        Write-DisplayText -ForeGroundColor Cyan -NoNewLine "$PreviousCertFileName"
+                                        Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousCertFileName: `"$PreviousCertFileName`""
+                                        $Arguments = @{ filename = "$($ExistingCertificateDetails.sslcertkey.key)"; filelocation = "/nsconfig/ssl/" }
+                                        $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemfile -Arguments $Arguments
+                                        $PreviousKeyFileName = $response.systemfile.filename
+                                        Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousKeyFileName: `"$PreviousKeyFileName`""
+                                        $Arguments = @{ filelocation = "/nsconfig/ssl/" }
+                                        if (-Not [String]::IsNullOrEmpty($PreviousCertFileName)) {
+                                            Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousCertFileName`""
+                                            try {
+                                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine " *"
+                                                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousCertFileName -Arguments $Arguments
+                                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                                Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
+                                                Write-DisplayText -ForeGroundColor Green " Removed"
+                                            } catch {
+                                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous certificate file, $($_.Exception.Message)"
+                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                                Write-DisplayText -ForeGroundColor Red "Failed to remove"
+                                            }
+                                        }
+                                        if ((-Not [String]::IsNullOrEmpty($PreviousKeyFileName)) -And ($PreviousCertFileName -ne $PreviousKeyFileName)) {
+                                            Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousKeyFileName`""
+                                            try {
+                                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine " *"
+                                                $null = Invoke-ADCRestApi -Session $ADCSession -Method DELETE -Type systemfile -Resource $PreviousKeyFileName -Arguments $Arguments
+                                                Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                                                Write-ToLogFile -I -C ADC-RemovePrevious -M "Success"
+                                                Write-DisplayText -ForeGroundColor Green " Removed"
+                                            } catch {
+                                                Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous certificate file, $($_.Exception.Message)"
+                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                                Write-DisplayText -ForeGroundColor Red "Failed to remove"
+                                            }
+                                        } else {
+                                            Write-ToLogFile -I -C ADC-RemovePrevious -M "Same file, `"/nsconfig/ssl/$PreviousKeyFileName`" was already removed."
+                                        }
+                                        Write-DisplayText -Line "Status"
+                                        Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                                     }
                                 } catch {
                                     Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
@@ -6388,8 +6701,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBSNek9XHC01zoh
-# nMauUrpVLl221526rZe4wWeTv7VCpKCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAG9E/yS9C3yL8a
+# DpvD7OUx4Q3lT0bRa4NuMkC+7uLUc6CCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -6565,36 +6878,36 @@ TerminateScript 0
 # MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
 # Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgojDLGcTQ8A5pg6KinF39gxdZ
-# JI7kskb9bxJHaT/JOLwwDQYJKoZIhvcNAQEBBQAEggGAIgsn4N5trlj3Pk4EUYbN
-# YR9Dx4TdVYX6/opf8vIFsVaHf5d2XeX/59PXuMxlN6t5CG1BbomUkXsP66AUrbu1
-# hhZ+Xfjk8afRgQHAozSA31g3lZqFuK5rHQvzEMM61psM3iVY86v1L8GPMxmZY/A5
-# bzr8GjxajwMT1wlIoT0jIs+FWibmOtYLmEpTlxUtNbtdiG/0BqcD3iMW8WCG/aTe
-# 32M0j6wXO1pW2Fvs9ey4FvLDkvvNrNPSOjn7NJQdfvrXd5vxSFixAqiGAEkFpBLb
-# tfjbrKbyGdR55vR7rswpzXVDu01SvxrHA+voHfWB2ovzfOvRJexLrYGdiNNGp7EA
-# 8234KLAnID4JAx/w4MeXd1cI5J0h21UXIeQDn8FpESaTRQAvBOR1FGV/8fn/wvnI
-# D+JgEnBvCzC8f8phbNjUYcmGiOXD2kONIjARa6Mb18+1febQgfKr3GwyDjs3/WLV
-# PZwq9mW/QU7+Pr+AUYEqzN7WVOORkKYg9d1O9NNNoYIuoYIEBDCCBAAGCSqGSIb3
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgpkLxH7qWVRYsXqaN9xkK+WoQ
+# qpE0BTQNEPKx5hS7howwDQYJKoZIhvcNAQEBBQAEggGAIySvr5c16c3WgiIb6b25
+# mj8GHbwRPCmnfTNkigZM02LWVeH55pqS/fdhHfCDvCici0GI+1b63RadmMxwUm9s
+# KRuEIlB1K2m58atUJ1iZA0djVswVi7QPjeQ79oKkk2UKWXwE4DyHtKyFim1ZGVJ+
+# OH8kl6C6evlIemuW5lxw6TSCZwjj9oCDSWB3BaUJbODmeBNiBYus5xS+HNeQZGIX
+# 4nLV04t9/Ga0YTmJ1FgXhvm5xbI3SXJJbAh8UdB5GTIfgmHxRGmuC6sn9RrFdHUF
+# g9li9fhZPGN3AH2Sri60tcQq5RLmi2bc0j5ISHTIKouXDiC1zlpCbNJaXTJVdnCl
+# y2k6qUFvrmukqp7zRW9lkL1JtdD/JCfoi/MDytXS8+rVt9KnejJNnFKIX5VcV9SZ
+# YRwwzlxMEBqy1or2aaYmKJXtoLreZhgKEVycaU43JpmG/mb2LWHUcVvxypyYFEdz
+# n83Zb7C1Bees8yIfsbFFGZ0khdXWpUczklFexqpshcCaoYIEBDCCBAAGCSqGSIb3
 # DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
 # byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
 # ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
-# GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA0
-# MjMyMDUzMTRaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBTkXk7n1DdfEWSRfb5
-# lhiV0ftlSCCSv/MHBUhGkhXhs/YC0O+m962AheawIUAQW+EwgaAGCyqGSIb3DQEJ
+# GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA2
+# MDIyMDU2MzZaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBXn262fJb48UAjN5pm
+# zpSdvBRX+AdKsC1CCrqW2lDu0nhwzd1iuMADPrFCfFgCV+owgaAGCyqGSIb3DQEJ
 # EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
 # CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
 # IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICADNB8V3Wq7OTUfLYHYoaICVYZRyVmqwS
-# 1GnMZ3fA9hhHYRudS8XjPpUeUrP9eABKSDwsZAaGgBU1WAYnw+PKrQfsqSLfrXU0
-# pnLYOJvjvRugmQGTBQQtT2IFHORXoDGoMz1cAIJYh1pDAXGh7GiaZ3j773auFtwB
-# M85IMSW+I+oRu9Yb09WLRqZBIB8yfqI3pmHcSs224BdDpbHKCMQ3DtsqtHN4439C
-# nNb+ApN5+EKQyR/xSyMeYYeCQ9SQKXQ/gUGKzxMYNjtPIQPwNd0Pqg477Zzdvsia
-# 2d4TdmbSXafpDlebLVZ1fgW7dr21IUSKFiy1TXSCjPBum8dXpYVFie4odHZvx9XQ
-# aSwOo7dKQIKrWDA9Op8Ej6DJQrN4w2GCJVLeEytvl8IIU52S6Y1veQvfVm2HQDeF
-# af3SC7CmsRS8UoPXVQUvqkIpNeYDvfH35X7uH51zPEBcClvybIxKBCEo3uqYsfTd
-# OB1KMXQcdQGAlUv27QSTGlZONe8wqNX3u/z0cRv8zGOlgxyzGo5s9yI1ZFhzcauq
-# AH80DOUjdcMrZBqHbp/ZXojZPH9z8hn48tu4pKS/dbWz08cz3IRDbEaRnuYu2t1k
-# QQ6OMUP2wScrGvCJzMVlpkg1LmxqcrDuPniOfmMbijevelLQpZJoQBFuQqKkKLGe
-# o+Xv41Khqvu3
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAKzFOUqYc0YeGeptaqEleu0pP+7ftmTD
+# m8L/prC+uMmf/Zo5R19P0xlq2cd3BNjZ0zGAcHjEGsjqZPaplV0yy3YxONFUKd8m
+# dWs9a3dX6JDfq5mbU+d5NKIe3LZ1eA9UHRlZ9bW709RPw8AKUqEs0b57onXk7jGx
+# ctfCwXcINSYbOh7E1WnRw84zJX/elEK41wHOlPrqaD7Cj9CQl//3lN2tAqYTZrAn
+# RCx3gBWWjZGaXWFr5Yp1Rak7eQCdhRyXDH6rNcl+KWr9qF43fOeqHBKFzj87k7sx
+# eaehKwauu7BBhVFH+XikbOkBoBQ0xyWtpC9do790cZo1bNMOmWkr9S301hbtoWtH
+# TUtBISjc30X65NkuYAql842wNlwgws+8S/8V02/CH6rwhwT417mct1uy3C4NMZD3
+# anAfex3N+TfgFVVo7qQAPWl2Q7hF2HBqAGpPeeRdpayD8dyMnzs8y1Fv7cvzXOLD
+# d5NAfzd+uGxllw63/qXqSfx9pY7O0IzzPKKuBBDY6tB8x/b8bWmmIDEt/K+w2wgf
+# 6MQjNyVjxojGpYlAenggaOu6z2yyiZfwXAskuSfn785YhJLqC2Jp6X4i7YBpUvJ9
+# W6LLCYq9ryyGtzWnkFlwH0cODKJEkiqwdV5Nnkfla1ExuvLuxHPb8H8+03x63VJt
+# x7E84d1o0XSY
 # SIG # End signature block
