@@ -2502,85 +2502,157 @@ function Invoke-CheckDNS {
 
 function ConvertTo-EncryptedPassword {
     [CmdletBinding()]
+    [OutputType([PSCustomObject], [string])]
     param (
         [Parameter(Position = 0, ValueFromPipeline = $true)]
-        [Object]$Object
+        [Object]$Object,
+
+        [Switch]$AsJson,
+
+        [Switch]$IncludeUserName
     )
     process {
         try {
+            $username = ""
             $IsEncrypted = $false
-            if ([String]::IsNullOrEmpty($Object) -Or ($Object.Length -eq 0)) {
+
+            if ([String]::IsNullOrEmpty($Object) -or ($Object.Length -eq 0)) {
                 $encrypted = "<null>"
                 $IsEncrypted = $true
             } elseif ($Object -is [SecureString]) {
-                $encrypted = ConvertFrom-SecureString -k (0..15) $Object
+                $encrypted = ConvertFrom-SecureString -Key (0..15) $Object
                 $IsEncrypted = $true
             } elseif ($Object -is [String]) {
-                $encrypted = ConvertFrom-SecureString -k (0..15) (ConvertTo-SecureString $Object -AsPlainText -Force)
+                $encrypted = ConvertFrom-SecureString -Key (0..15) (ConvertTo-SecureString $Object -AsPlainText -Force)
                 $IsEncrypted = $true
             } elseif ($Object -is [System.Management.Automation.PSCredential]) {
-                if (([String]::IsNullOrEmpty($($Object.GetNetworkCredential().Password))) -or ($Object.Password.Length -eq 0)) {
+                $plainText = $Object.GetNetworkCredential().Password
+                if ([String]::IsNullOrEmpty($plainText)) {
                     $encrypted = "<null>"
                     $IsEncrypted = $true
                 } else {
-                    $encrypted = ConvertFrom-SecureString -k (0..15) $Object.Password
+                    $encrypted = ConvertFrom-SecureString -Key (0..15) $Object.Password
                     $IsEncrypted = $true
                 }
+                $username = $Object.UserName
             } else {
-                Throw "The object type is unknown, must be String, SecureString or a PSCredential type."
+                throw "Unsupported object type '$($Object.GetType().FullName)'. Must be String, SecureString, or PSCredential."
             }
         } catch {
-            $encrypted = "<null>"
-            Throw "Could not convert the passed Object"
+            throw "Could not convert the provided object to an encrypted password. $_"
         }
+
         $result = [PSCustomObject]@{
             Password    = $encrypted
             IsEncrypted = $IsEncrypted
         }
+
+        if ($IncludeUserName) {
+            $result | Add-Member -MemberType NoteProperty -Name UserName -Value $username
+        }
+
+        if ($AsJson) {
+            $result = $result | ConvertTo-Json -Compress -Depth 5 -ErrorAction SilentlyContinue
+        }
+
         return $result
     }
 }
+
 function ConvertFrom-EncryptedPassword {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = "SecureString")]
+    [OutputType([PSCustomObject], [string], [SecureString], [PSCredential])]
     param (
-        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "SecureString", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "ClearText", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [Parameter(ParameterSetName = "Credential", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
         [PSCustomObject]$Object,
 
-        [Switch]$AsClearText
+        [Parameter(ParameterSetName = "ClearText")]
+        [Switch]$AsClearText,
+
+        [Parameter(ParameterSetName = "Credential")]
+        [Switch]$AsCredential
     )
     process {
         try {
-            if (($Object.Password -eq "<null>") -Or ([String]::IsNullOrEmpty($Object.Password))) {
+            if (($object | Get-Member -Name Password -MemberType NoteProperty) -and ($object | Get-Member -Name IsEncrypted -MemberType NoteProperty)) {
+                #Encrypted password object
+            } elseif ($Object -is [string] -and (-not [String]::IsNullOrEmpty($Object))) {
+                $tryConvert = $Object | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if (-not [String]::IsNullOrEmpty($tryConvert)) {
+                    $Object = $tryConvert
+                }
+            }
+
+            if (-not $Object.Password -or $Object.Password -eq "<null>") {
                 if ($AsClearText) {
-                    [String]$decodedString = ""
+                    return ""
                 } else {
-                    [SecureString]$decodedString = [SecureString]::new()
+                    return [SecureString]::new()
+                }
+            }
+
+            if ($Object.IsEncrypted) {
+                if ($AsClearText) {
+                    return (New-Object System.Management.Automation.PSCredential(" ", (ConvertTo-SecureString -Key (0..15) $Object.Password))).GetNetworkCredential().Password
+                } elseif ($AsCredential) {
+                    $username = $Object.UserName
+                    return New-Object System.Management.Automation.PSCredential($username, (ConvertTo-SecureString -Key (0..15) $Object.Password))
+                } else {
+                    return (New-Object System.Management.Automation.PSCredential(" ", (ConvertTo-SecureString -Key (0..15) $Object.Password))).Password
                 }
             } else {
-                if ($Object.IsEncrypted) {
-                    if ($AsClearText) {
-                        [String]$decodedString = ""
-                        [String]$decodedString = (New-Object System.Management.Automation.PSCredential(" ", (ConvertTo-SecureString -k (0..15) $Object.Password))).GetNetworkCredential().Password
-                    } else {
-                        [SecureString]$decodedString = [SecureString]::new()
-                        [SecureString]$decodedString = (New-Object System.Management.Automation.PSCredential(" ", (ConvertTo-SecureString -k (0..15) $Object.Password))).Password
-                    }
+                if ($AsClearText) {
+                    return "$($Object.Password)"
+                } elseif ($AsCredential) {
+                    $username = $Object.UserName
+                    return New-Object System.Management.Automation.PSCredential($username, (ConvertTo-SecureString -AsPlainText -Force -String "$($Object.Password)"))
                 } else {
-                    if ($AsClearText) {
-                        [String]$decodedString = $Object.Password
-                    } else {
-                        [SecureString]$decodedString = ConvertTo-SecureString $Object.Password -AsPlainText -Force
-                    }
+                    return ConvertTo-SecureString -AsPlainText -Force -String "$($Object.Password)"
                 }
             }
         } catch {
             if ($AsClearText) {
-                [String]$decodedString = ""
+                return ""
             } else {
-                [SecureString]$decodedString = [SecureString]::new()
+                return [SecureString]::new()
             }
         }
-        return $decodedString
+    }
+}
+
+function ConvertTo-Base64 {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [string]$String
+    )
+    process {
+        if (-not [string]::IsNullOrEmpty($String)) {
+            return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($String))
+        }
+        return $null
+    }
+}
+
+function ConvertFrom-Base64 {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [string]$String
+    )
+    process {
+        if (-not [string]::IsNullOrEmpty($String)) {
+            try {
+                return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($String))
+            } catch {
+                throw "Invalid Base64 input: $String"
+            }
+        }
+        return $null
     }
 }
 
