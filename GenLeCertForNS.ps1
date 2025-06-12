@@ -383,8 +383,8 @@ param(
             }
         })][object]$PfxPassword = $null,
 
-    [Parameter(ParameterSetName = "LECertificatesHTTP", Mandatory = $true)]
-    [Parameter(ParameterSetName = "LECertificatesDNS", Mandatory = $true)]
+    [Parameter(ParameterSetName = "LECertificatesHTTP")]
+    [Parameter(ParameterSetName = "LECertificatesDNS")]
     [String]$EmailAddress,
 
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
@@ -3757,7 +3757,7 @@ if ($ADCActionsRequired) {
     Write-DisplayText -Line "Username"
     Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Username)"
     Write-DisplayText -Line "Password"
-    Write-DisplayText -ForeGroundColor Cyan "**MASKED**"
+    Write-DisplayText -ForeGroundColor Cyan "**SENSITIVE**"
     try {
         $hanode = (Invoke-ADCGetHanode -ADCSession $ADCSession).hanode | Select-Object -First 1
         Write-DisplayText -Line "Node"
@@ -4633,16 +4633,18 @@ if ($CertificateActions) {
 
 
                 $PARegistration = Get-PAAccount -ID $PARegistration.ID -Refresh
+                # ToDo Cleanup
                 #$PARegistrations = Posh-ACME\Get-PAAccount -List -Contact $($CertRequest.EmailAddress) -Refresh | Where-Object { ($_.status -eq "valid") -and ($_.KeyLength -eq $CertRequest.KeyLength) }
                 #Write-ToLogFile -D -C Registration -M "Registration: $($PARegistrations | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)."
 
-                if (-not ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)")) {
-                    Write-DisplayText -ForeGroundColor Red " Error"
-                    Write-ToLogFile -E -C Registration -M "User registration failed."
-                    Write-Error "User registration failed"
-                    Invoke-RegisterError 1 "User registration failed"
-                    Continue
-                }
+                # ToDo Cleanup
+                #if (-not ($PARegistration.Contact -contains "mailto:$($CertRequest.EmailAddress)")) {
+                #    Write-DisplayText -ForeGroundColor Red " Error"
+                #    Write-ToLogFile -E -C Registration -M "User registration failed."
+                #    Write-Error "User registration failed"
+                #    Invoke-RegisterError 1 "User registration failed"
+                #    Continue
+                #}
                 if ($PARegistration.status -ne "valid") {
                     Write-DisplayText -ForeGroundColor Red " Error"
                     Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
@@ -5771,7 +5773,8 @@ if ($CertificateActions) {
                         if ($intermediateFileExists) {
                             Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA file already exists on the ADC, skipping upload."
                             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                            $intermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
+                            #ToDo: Remove
+                            #$intermediateCACertKeyName = $ADCIntermediateCA.sslcertkey.certkey
                         } else {
                             Write-ToLogFile -I -C ADC-CertUpload -M "IntermediateCA does not exist, start uploading."
                             try {
@@ -6701,8 +6704,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAG9E/yS9C3yL8a
-# DpvD7OUx4Q3lT0bRa4NuMkC+7uLUc6CCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDXNlWIj/3KGHiQ
+# Y6uB0lYJc/Nnrvq0S5XdX19kVHNIDaCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
 # AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
 # ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
 # dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
@@ -6878,36 +6881,36 @@ TerminateScript 0
 # MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
 # Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
 # oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgpkLxH7qWVRYsXqaN9xkK+WoQ
-# qpE0BTQNEPKx5hS7howwDQYJKoZIhvcNAQEBBQAEggGAIySvr5c16c3WgiIb6b25
-# mj8GHbwRPCmnfTNkigZM02LWVeH55pqS/fdhHfCDvCici0GI+1b63RadmMxwUm9s
-# KRuEIlB1K2m58atUJ1iZA0djVswVi7QPjeQ79oKkk2UKWXwE4DyHtKyFim1ZGVJ+
-# OH8kl6C6evlIemuW5lxw6TSCZwjj9oCDSWB3BaUJbODmeBNiBYus5xS+HNeQZGIX
-# 4nLV04t9/Ga0YTmJ1FgXhvm5xbI3SXJJbAh8UdB5GTIfgmHxRGmuC6sn9RrFdHUF
-# g9li9fhZPGN3AH2Sri60tcQq5RLmi2bc0j5ISHTIKouXDiC1zlpCbNJaXTJVdnCl
-# y2k6qUFvrmukqp7zRW9lkL1JtdD/JCfoi/MDytXS8+rVt9KnejJNnFKIX5VcV9SZ
-# YRwwzlxMEBqy1or2aaYmKJXtoLreZhgKEVycaU43JpmG/mb2LWHUcVvxypyYFEdz
-# n83Zb7C1Bees8yIfsbFFGZ0khdXWpUczklFexqpshcCaoYIEBDCCBAAGCSqGSIb3
+# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgbCsnhGngMO4+IssOcRebrGw/
+# knn/FzOWSZWU27cZk3QwDQYJKoZIhvcNAQEBBQAEggGAd2qweui6ql2s3aKv5pNR
+# pdt+Psl/kZpa80E3dZcSdJQp27obrZewhXASR5HzYmpVpuZ0V+PXrduXPV8BqLPi
+# Q61D1lg1coDzaCqAUAUd3OrAVReYVnUkP67rOJfzl9Su8aOGeWnVAz18Un8heatb
+# OFhDOgpf8/XYJjlXyc0HPmxifK4ZPZCQm1zr0tRIIQXSdmP06cPR2Tk/u8pOBEIV
+# ArmxfgT9tKYq1VbyuhGWv872IMLRQYKJYVnk3HgjRt1rEXK9jKCHr3wGDc7Q599t
+# eZEOiGzaCFoBJwWbc+exQBjvd6V/Uc8o6A1P84hqJ+6b19KZGhkd3n4Ze/woryGW
+# gGJYuuN5fGeKYt1GGhylgmVYNp5CTdw9fDGdwrLsZ+xHurFACE5P+xy2+xoqTIgD
+# dy3Fh5XW0tPqNGJcngw567lfbT8BG02Uy2wuk4m7hWp86eUWmXNdVac1IuBnDYDF
+# c4sC9mXh8h6Ht+AcoAg8PdvfnZwKNDc4kL8knRQLsx79oYIEBDCCBAAGCSqGSIb3
 # DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
 # byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
 # ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
 # GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA2
-# MDIyMDU2MzZaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBXn262fJb48UAjN5pm
-# zpSdvBRX+AdKsC1CCrqW2lDu0nhwzd1iuMADPrFCfFgCV+owgaAGCyqGSIb3DQEJ
+# MTIwNDM0MTVaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
+# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBwm7R/s0v2/cv7eQHj
+# JSXfvfperFbKxC5rlr6l/F6rr4BTvkQZLIGoaAhEA2QAAOowgaAGCyqGSIb3DQEJ
 # EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
 # CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
 # IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAKzFOUqYc0YeGeptaqEleu0pP+7ftmTD
-# m8L/prC+uMmf/Zo5R19P0xlq2cd3BNjZ0zGAcHjEGsjqZPaplV0yy3YxONFUKd8m
-# dWs9a3dX6JDfq5mbU+d5NKIe3LZ1eA9UHRlZ9bW709RPw8AKUqEs0b57onXk7jGx
-# ctfCwXcINSYbOh7E1WnRw84zJX/elEK41wHOlPrqaD7Cj9CQl//3lN2tAqYTZrAn
-# RCx3gBWWjZGaXWFr5Yp1Rak7eQCdhRyXDH6rNcl+KWr9qF43fOeqHBKFzj87k7sx
-# eaehKwauu7BBhVFH+XikbOkBoBQ0xyWtpC9do790cZo1bNMOmWkr9S301hbtoWtH
-# TUtBISjc30X65NkuYAql842wNlwgws+8S/8V02/CH6rwhwT417mct1uy3C4NMZD3
-# anAfex3N+TfgFVVo7qQAPWl2Q7hF2HBqAGpPeeRdpayD8dyMnzs8y1Fv7cvzXOLD
-# d5NAfzd+uGxllw63/qXqSfx9pY7O0IzzPKKuBBDY6tB8x/b8bWmmIDEt/K+w2wgf
-# 6MQjNyVjxojGpYlAenggaOu6z2yyiZfwXAskuSfn785YhJLqC2Jp6X4i7YBpUvJ9
-# W6LLCYq9ryyGtzWnkFlwH0cODKJEkiqwdV5Nnkfla1ExuvLuxHPb8H8+03x63VJt
-# x7E84d1o0XSY
+# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAGZn6iI6bIiV9zniNlodwpejs20lHXH8
+# EB4kHpTmTm71FxmhDbld88W0p2QnS248qKQVCaL391ohoeJfaKzLyPPEzvwbMOV4
+# DB2RsnXQrCTMzTsY0lQQV3jJiwq83e+WKeW7II+xoXCrOcyndrI+NHsitATdC1Wo
+# Qmi7WS+yBZUYuagdrSHaPPMh5HW1aXHwW+sIJVhhQBlf6W0hXUg77aF2ukXsp+a+
+# rPw1aBH0giXnb/7gy7SFpRMUVbNm0k1awsI/LvR4GzTsVKTTRrs3+ZjHo//4DDBg
+# UBL70BM3e4Ni9cwi8xV8kERGr0waN9frnmj2NZOw0r0zEHZCcd6PdoQe/DHpwtEe
+# 7ury78pI8sMsQ46LPtZIGGLqk4fcHTen8RKJ8fxwLbHpa0l7PgZhD8cPi3VL/A4I
+# L6XXTb3lIDGgNWtHp+klpMM5WYVo4PVQFvWqP5gGRYLtU33wY1KJJ46A28YD2IGx
+# 2XVQM7aqNd7/5SOV+K3jZk1r/nQ0xYdy0e3M7PbbAXpJ7CrTovTALL+u3EM32EeC
+# biZstiGHd/e2SuahFlVwkjDqo6g7XPFipIVv7vjuY0ToO2LMCIezAmhr+bIeWFa6
+# eRPP/jj4BGTFeO0BsD2DVfuwmSpXFgAy6kJoCCZpgHy3Y5US0ByrJoO+qNDWsk48
+# +DFITG1YdrJN
 # SIG # End signature block
