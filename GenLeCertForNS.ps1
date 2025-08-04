@@ -3074,6 +3074,9 @@ if ($Help -or ($PSBoundParameters.Count -eq 0)) {
 
 #region ScriptBasics
 
+#Disable the progress bar since it is not needed and can slow down the script
+$ProgressPreference = 'SilentlyContinue'
+
 # Check the -CSVIPName parameter
 if ((($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') -or ($PSCmdlet.ParameterSetName -eq 'LECertificatesHTTP') -or ($PSCmdlet.ParameterSetName -eq 'CommandPolicy')) -and ($UseLbVip.ToBool() -eq $false) -and $CsVipName.Count -lt 1) {
     Write-Error -Exception ([System.Management.Automation.ParameterBindingException]::New("The `"-CsVipName`" parameter may not be empty! Only when specifying the `"-UseLbVip`" parameter.")) -ErrorAction Stop
@@ -6719,17 +6722,23 @@ if ($SaveConfig -and (-not [String]::IsNullOrEmpty($ConfigFile))) {
 $RequestsWithErrors = $SessionRequestObjects | Where-Object { $_.ErrorOccurred -gt 0 }
 if (-not [String]::IsNullOrEmpty($RequestsWithErrors)) {
     $ExitCode = 0
+    if ($RequestsWithErrors) {
+        Write-DisplayText -Title "Error Summary"
+    }
     foreach ($FailedItem in $RequestsWithErrors) {
-        Write-Error "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
-        Write-ToLogFile -E -C Final-Actions -M "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
+        Write-DisplayText -Line "CN"
+        Write-DisplayText -ForeGroundColor Red $FailedItem.CN
+        Write-DisplayText -Line "Error Count"
+        Write-DisplayText -ForeGroundColor Red $FailedItem.ErrorOccurred
+        Write-ToLogFile -E -C Final-Actions -M "CN: $($FailedItem.CN), Error Count: $($FailedItem.ErrorOccurred)"
         $ExitCode = $FailedItem.ExitCode
     }
+    Write-Error "There were one or more errors, please check the logs!"
     if ($LogLevel -eq "Debug") {
         TerminateScript $ExitCode "There were one or more errors, please check the debug log for more info!"
     } else {
         TerminateScript $ExitCode "There were one or more errors, please check the log or rerun with the `"-LogLevel Debug`" option!"
     }
-
 }
 
 TerminateScript 0
@@ -6737,8 +6746,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCN2SdS0dN/cH/s
-# qosgzuR+PW1+0dXqSzui59M1W9FJ9aCCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCzuE2FLW3zXw6B
+# snvwdhNxIQvhQ+ItOl5KW1tBGayOVqCCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -6914,31 +6923,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCDSt/VZvFYV8yPDeg1JVcz6Hjf2rPNwT37q+4olTowW
-# 9DANBgkqhkiG9w0BAQEFAASCAYB8Gvv5L9T+h2znHVxieHgf6askxuBW2AmaanBv
-# XMIwB6WFFzKTVtS5ahunZ6by5JrkvXz+todL/KrSwjA6UARlcnF9OBZvlUxtwLSc
-# J4OchCHzMI1Mofkgn8yhTYXlg0RN6vY7ktOUxMjtYJIULxxRxTqMUZdwYw9fFa6G
-# P0xD1+KGeuUJV/OxzKJzZQsZz6XnF1qCwXRqDDA5Is2t9DFU1wO52sa8QoSTDgps
-# fSF1Q5YU98+T9kt3Dz0aKO3hAF6R3slXMRlLL2qErwcvKW11E37MlazMSkxxZN+i
-# eVBiSSWGfK1rU7CizbmfhG8STyHLZtF7iO4ua6t0FiiCp9Gf+Xs52mdq0rgIFKdM
-# uVB81obDXIwWjiUFnscuYYgw2BHQrw7JoG/zepGBlSzBrxAoBFPYo413Sao7/nMZ
-# 6ctDWsSwQvnwqjI62Zxp3vvw5rWfKhuUJDl+vvpjCSvZkO2tGOr3W4+cZxKVPJre
-# yC3qShR/hFHcPd4chxK9W+N308ihggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCCWCEkUV0lJyBN/KPYlFje6+59/J15dXEssXAr+2l/j
+# fzANBgkqhkiG9w0BAQEFAASCAYAjHjHv9LdxCYfRc4t8SlII/fhqZr4sxWZ0zuSD
+# 6ABSKyJkKD2nnFMn7KBqvTaYOysQd0G6a8X5hBVobeKbP60Fz3iOaORr6L0tICtD
+# zYRFj9fQPjRBrCRg/nvJfnobCSjs5GCr9MEqJhmJw1A/dTuTfslSUUOeeVjOve8e
+# OibnCfqYUbD4JD7xfcsgEQIr5B3PDB7YieZXleuJPDHOssf0QOC6uKvJTfPp6vjJ
+# +9syZE0bYG6fsZ5JBG0WLbSooB/vq7j+QRFU0gf5WJtYsC14pJTkbCZYO319Xv5f
+# B+OuLRWZ8aWBjqL+K0dHfq+yIT0mhBUKNsMPVwux4OTv/d2qj4LZEIzOzXes0OHg
+# HoEt394irxE2GJ9lI9V76X+wk9EJmdiONCeZZujCS0Tkl9WFHov96OnGxAHHaiBU
+# /RwMi6ezBZ+YLj/pliLYW9jHIKJrJ9MMEvIFR16PaV0tGbZYCxOKNn9FenvydS26
+# 7QD5kUBJwp5V17aqkhtEcFnB2j+hggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MDQxMDE2MjFaMD8GCSqGSIb3
-# DQEJBDEyBDCVCHo68v3WmICSeytL0jKNTax50CRqoovTPInDQmaj+2liSa3+Wpel
-# TFQ/oC3gKG4wDQYJKoZIhvcNAQEBBQAEggIASG074Xe594xrKdzHdnDiJhxNpKyB
-# Pl2o1//tApZKfx2iT6G4To9N8PuuLZYi15UZIhh8Oq2wwI4+xDxjI+cKvVTHATM8
-# qYzSHgHdWiBtqFSqKx4weunfr7n3aSYeG2Qaps22dm2foxO65Y5l5clzJD64JDdp
-# aZFk9/K0R/ql9wGnqzJKYZOx8GnjoL+LgijKQMx4xssJQiE2MkJzAazz+7wElhNM
-# JMy8U8+aFRCDn0uJ55kM1hu2iNIeTr45B1X+UN8yc9wv1YWSvotdSfJru1oCiYb/
-# 6LltUTDKMBBTUc7jDmaSz4o0OoOQWvvSq7ZKkvbAkL7wHDsLgQ1C8uNqW3kbfrmA
-# WyapPtBa1XCEyIs+6cNmgRkA1mJRPWl+5M87h/6mb0d2QAfh8wSeBSyB+wlbxo/v
-# Z2MzKVX5Cl0g8ftEOxD8Cr/qxKbgkMcBUjyBk3qpaM1XaeFq+8aY+JmU4zi1jAvP
-# N3X79x66HBky1IsPc1r/GTgWbqQSgNRqDt7fpsASH5Ztw7pqQ6YRDURXb4ApnVJd
-# g8VGX419XEcOzC0quAFFAC/nK6LZBdFeIyvgMtISyitAqPxmz0M0HtFRk+mqueit
-# 7apcaLrmqQsCou0jyM0QG7I7dY9V2C4St9is4hOecnKs02Fm3SpfnCngF3Tl7bVD
-# 6f8oZsV0zC4QSvI=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MDQxNjM5NTNaMD8GCSqGSIb3
+# DQEJBDEyBDBuma18ad+krWrKPKDPpqFJOdilkawxIJxHnCL9VbRrSFz4cNWNmcsg
+# 4L+/VHJYPr4wDQYJKoZIhvcNAQEBBQAEggIAzVIT2L6HaC48kLSGCEQbDdWV6mZ1
+# AG0PPSBq3B3WIhF2JGxCjnC01FKr2HPqur3LnmlNpuSHCmPyZ19F0Hn0JgmS5zsO
+# YhL2RlS0t/hXUhZA1CRUUwzmZSFUnKQZoL46sRqAb9Kw1XPDijuTRylc8oKgMjCD
+# MIHmDdOhpl9Rs0B9UKq/nrVYsUrrwo95md1Rm5IsRuB437A3lDno/5XeTz4TfGCN
+# 6WOW1FYyGJqCUjMLG8VIwLKdOSGdWpbtBm1CypsG8yAZivphdA5PeqBCt3RXWf8l
+# PZ6um7LymShGdjW9jnQ9ODhNLbK1IkeUt6vvQ540oa6Y1mxNVAWZWLUAgoc3MQp+
+# k7if1AWBbEpJyKYx40UGy53aX8oDEEwcVbAPAAnDu/RJQa+3mgQkZ/cvhNBkM22q
+# wugJ1qPVK0iyAfMSFa6GFORfHE5NgljrnioF2IGW+DKp7nWsJO765p9oWIO0Px/1
+# HNNmKybMASpiZxHELI9Qj2l0/+Bik5kVdVzRhtp1XClApcXOS0a342cV5IxRllYC
+# I8Rnt+bbg3HYVeASdZ9beMfvHNznz8sU5pXgyMHLAKAxbMXLKCgQfPx0Ea0nxVPq
+# IgVeJdKeeu4LAOe5XOUFNrN7icu6Qo19kEIOmycA9yxTCu8r/d4B6dhljfMv+Til
+# gpOaILyk3NZW9nA=
 # SIG # End signature block
