@@ -249,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.31.0
+    Version   : v2.32.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -390,7 +390,7 @@ param(
     [Parameter(ParameterSetName = "LECertificatesHTTP")]
     [Parameter(ParameterSetName = "LECertificatesDNS")]
     [ValidateScript( {
-            if ($_ -lt 2048 -Or $_ -gt 4096 -Or ($_ % 128) -ne 0) {
+            if ($_ -lt 2048 -or $_ -gt 4096 -or ($_ % 128) -ne 0) {
                 throw "Unsupported RSA key size. Must be 2048-4096 in 8 bit increments."
             } else {
                 $true
@@ -680,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.31.0"
+$ScriptVersion = "2.32.0"
 $PoshACMEVersion = "4.28.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -811,7 +811,7 @@ function Write-ToLogFile {
     More Info    : https://blog.j81.nl
 #>
     [CmdletBinding(DefaultParameterSetName = "Info")]
-    Param (
+    param (
         [Parameter(ParameterSetName = "Error", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
         [Parameter(ParameterSetName = "Warning", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
         [Parameter(ParameterSetName = "Info", Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
@@ -1500,7 +1500,7 @@ function Invoke-ADCRestApi {
         if ($Type -eq 'reboot' -and $restError[0].Message -eq 'The underlying connection was closed: The connection was closed unexpectedly.') {
             if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Invoke-ADCRestApi -M "Connection closed due to reboot." }
         } else {
-            if (-Not [String]::IsNullOrEmpty($($errorDetails.message))) {
+            if (-not [String]::IsNullOrEmpty($($errorDetails.message))) {
                 $errorMessage = '{0} [{2}]: {1}' -f $errorDetails.severity, $errorDetails.message, $errorDetails.errorcode
                 if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. NetScaler message: $errorMessage" }
                 throw $errorMessage
@@ -1543,7 +1543,7 @@ function Connect-ADC {
     if ($Script:LoggingEnabled) { Write-ToLogFile -I -C Connect-ADC -M "Connecting to $ManagementURL..." }
     if ($ManagementURL -like "https://*") {
         if ('PSEdition' -notin $PSVersionTable.Keys -or $PSVersionTable.PSEdition -eq 'Desktop') {
-            if (-Not ("TrustAllCertsPolicy" -as [type])) {
+            if (-not ("TrustAllCertsPolicy" -as [type])) {
                 Add-Type -TypeDefinition @"
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
@@ -1594,7 +1594,7 @@ public class TrustAllCertsPolicy : ICertificatePolicy {
         }
     } catch [Exception] {
         $errorDetails = $_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue
-        if (-Not [String]::IsNullOrEmpty($($errorDetails.message))) {
+        if (-not [String]::IsNullOrEmpty($($errorDetails.message))) {
             $errorMessage = '{0} [{2}]: {1}' -f $errorDetails.severity, $errorDetails.message, $errorDetails.errorcode
             if ($Script:LoggingEnabled) { Write-ToLogFile -E -C Invoke-ADCRestApi -M "Caught an error. NetScaler message: $errorMessage" }
             throw $errorMessage
@@ -1844,7 +1844,7 @@ function ConvertTo-PlainText {
         [parameter(Mandatory = $true)]
         [System.Security.SecureString]$SecureString
     )
-    Process {
+    process {
         $BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
         try {
             $result = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR)
@@ -1869,11 +1869,11 @@ function Invoke-RegisterError {
         [Switch]$ExitNow
     )
     Write-ToLogFile -E -C Invoke-RegisterError -M "[$ExitCode] $ErrorMessage"
-    if (-Not $ExitNow) {
+    if (-not $ExitNow) {
         Write-ToLogFile -E -C Invoke-RegisterError -M "Registering error only, continuing to cleanup."
         $Script:SessionRequestObject.ErrorOccurred++
         $Script:SessionRequestObject.ExitCode = $ExitCode
-        if (-Not [String]::IsNullOrEmpty($ErrorMessage)) {
+        if (-not [String]::IsNullOrEmpty($ErrorMessage)) {
             $Script:SessionRequestObject.Messages += $ErrorMessage
             $mailDataItem.Text += "ERROR: $ErrorMessage"
         }
@@ -1894,7 +1894,7 @@ function TerminateScript {
         [Parameter(Position = 1)]
         [String]$ExitMessage = $null
     )
-    if (-Not [String]::IsNullOrEmpty($ExitMessage)) {
+    if (-not [String]::IsNullOrEmpty($ExitMessage)) {
         Write-ToLogFile -I -C Final -M "$ExitMessage"
     }
     if ($Parameters.settings.SendMail) {
@@ -1910,7 +1910,7 @@ function TerminateScript {
         }
 
         $Script:MailLog += "`r`n=============================="
-        if (-Not ($ExitCode -eq 0)) {
+        if (-not ($ExitCode -eq 0)) {
             $SMTPSubject = "GenLeCertForNS Finished with one or more Error(s) $((Get-Date).ToString('yyyy-MM-dd HH:mm'))"
             $SMTPBody = @"
 GenLeCertForNS Finished with at least one Error!
@@ -1949,12 +1949,12 @@ $($MailResultData | Out-String)
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
             $message.Body = $SMTPBody
             $smtp = New-Object Net.Mail.SmtpClient($($Script:Parameters.settings.SMTPServer))
-            if (-Not ($Script:SMTPCredential -eq [PSCredential]::Empty)) {
+            if (-not ($Script:SMTPCredential -eq [PSCredential]::Empty)) {
                 Write-ToLogFile -D -C SendMail -M "Setting SMTP Credentials, Username: $($Script:SMTPCredential.Username)"
                 $smtp.Credentials = $Script:SMTPCredential
             }
             Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-            if (-Not ([String]::IsNullOrEmpty(($Script:Parameters.settings.SMTPPort)))) {
+            if (-not ([String]::IsNullOrEmpty(($Script:Parameters.settings.SMTPPort)))) {
                 Write-ToLogFile -D -C SendMail -M "Configuring SMTP Port: $($Script:Parameters.settings.SMTPPort)"
                 $smtp.Port = $Script:Parameters.settings.SMTPPort
             }
@@ -2057,7 +2057,7 @@ function Invoke-ADCCleanup {
             }
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to login into the Citrix ADC."
             $ADCSession = Connect-ADC -ManagementURL $Parameters.settings.ManagementURL -Credential $Credential -PassThru
-            if (-Not $CertRequest.UseLbVip) {
+            if (-not $CertRequest.UseLbVip) {
                 Write-DisplayText -Line "Cleanup CS Vip"
                 try {
                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if a binding exists for `"$($Parameters.settings.CspName)`"."
@@ -2066,7 +2066,7 @@ function Invoke-ADCCleanup {
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type cspolicy_csvserver_binding -Resource $($Parameters.settings.CspName) -ErrorAction SilentlyContinue
                     } catch { }
                     if ($response.cspolicy_csvserver_binding.Count -gt 0) {
-                        ForEach ($item in $response.cspolicy_csvserver_binding) {
+                        foreach ($item in $response.cspolicy_csvserver_binding) {
                             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Binding exists for `"$($item.policyname)`", removing Content Switch CSPolicy Binding for CS VIP: `"$($item.boundto)`", Prio: `"$($($item.priority))`"."
                             $Arguments = @{"policyname" = "$($item.policyname)"; "priority" = "$($item.priority)"; }
                             try {
@@ -2219,17 +2219,17 @@ function Invoke-ADCCleanup {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
-            if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
+            if (-not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
                 Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Policies found:"
                 $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
                     Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                ForEach ($ResponderPolicy in $response.responderpolicy) {
+                foreach ($ResponderPolicy in $response.responderpolicy) {
                     try {
                         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if policy `"$($ResponderPolicy.name)`" is bound to Load Balance VIP."
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
-                        ForEach ($ResponderBinding in $response.responderpolicy_binding) {
+                        foreach ($ResponderBinding in $response.responderpolicy_binding) {
                             try {
                                 if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
                                     Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy not bound."
@@ -2271,12 +2271,12 @@ function Invoke-ADCCleanup {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
-            if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
+            if (-not([String]::IsNullOrEmpty($($response.responderaction)))) {
                 Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Actions found:"
                 $response.responderaction | Select-Object name, target | ForEach-Object {
                     Write-ToLogFile -D -C Invoke-ADCCleanup -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                ForEach ($ResponderAction in $response.responderaction) {
+                foreach ($ResponderAction in $response.responderaction) {
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     try {
                         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
@@ -2309,7 +2309,7 @@ function Invoke-ADCCleanup {
 
 function Invoke-NSPublishTXTRecord {
     [CmdletBinding()]
-    Param(
+    param(
         [Parameter(Mandatory = $true)]
         [String]$DomainName,
 
@@ -2349,13 +2349,13 @@ function Invoke-NSPublishTXTRecord {
         Write-DisplayText -ForeGroundColor Red " Error"
         Write-ToLogFile -E -C Invoke-ADCPublishTXTRecord -M "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-        Throw "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
+        throw "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
     }
 }
 
 function Invoke-NSRemoveTXTRecord {
     [CmdletBinding()]
-    Param(
+    param(
         [Parameter(Mandatory = $true)]
         [String]$DomainName,
 
@@ -2396,7 +2396,7 @@ function Invoke-NSRemoveTXTRecord {
             Write-DisplayText -ForeGroundColor Red " Error"
             Write-ToLogFile -E -C Invoke-NSRemoveTXTRecord -M "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-            Throw "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
+            throw "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
         }
     }
 }
@@ -2406,7 +2406,7 @@ function Invoke-AddInitialADCConfig {
     param (
 
     )
-    Process {
+    process {
         try {
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to login into the Citrix ADC."
             Write-DisplayText -Title "ADC - Configure Prerequisites"
@@ -2418,7 +2418,7 @@ function Invoke-AddInitialADCConfig {
             } catch {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Caught an error while retrieving licenses! If using an api user, update the api user by running the command again!"
                 Write-DisplayText -ForeGroundColor RED "`r`nCaught an error while retrieving licenses! If using an api user, update the api user by running the command again!`r`n"
-                Throw $_
+                throw $_
             }
             if ($CertRequest.UseLbVip) {
                 $FeaturesRequired = @("RESPONDER", "SSL")
@@ -2455,7 +2455,7 @@ function Invoke-AddInitialADCConfig {
             }
             Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Features enabled, verifying Content Switch."
             if (-not $CertRequest.UseLbVip) {
-                ForEach ($csVip in $CertRequest.CsVipName) {
+                foreach ($csVip in $CertRequest.CsVipName) {
                     try {
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type csvserver -Resource $csVip
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch is OK, check if Load Balance Service exists."
@@ -2476,7 +2476,7 @@ function Invoke-AddInitialADCConfig {
                             Write-DisplayText -ForeGroundColor Red "Error message: `"$ExceptMessage`""
                             Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Unknown error found while checking the Content Switch: `"$csVip`". Exception Message: $ExceptMessage"
                             TerminateScript 1 "Unknown error found while checking the Content Switch: `"$csVip`". Exception Message: $ExceptMessage"
-                        } elseif (-Not [String]::IsNullOrEmpty($ExceptMessage)) {
+                        } elseif (-not [String]::IsNullOrEmpty($ExceptMessage)) {
                             Write-DisplayText -ForeGroundColor Red "Unknown Error, `"$ExceptMessage`""
                             Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Caught an unknown error. Exception Message: $ExceptMessage"
                             TerminateScript 1 "Caught an unknown error. Exception Message: $ExceptMessage"
@@ -2550,17 +2550,17 @@ function Invoke-AddInitialADCConfig {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
-            if (-Not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
+            if (-not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policies found"
                 $response.responderpolicy | Select-Object name, action, rule | ForEach-Object {
                     Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                ForEach ($ResponderPolicy in $response.responderpolicy) {
+                foreach ($ResponderPolicy in $response.responderpolicy) {
                     try {
                         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Checking if policy `"$($ResponderPolicy.name)`" is bound to Load Balance VIP."
                         $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy_binding -Resource "$($ResponderPolicy.name)"
-                        ForEach ($ResponderBinding in $response.responderpolicy_binding) {
+                        foreach ($ResponderBinding in $response.responderpolicy_binding) {
                             try {
                                 if ($null -eq $ResponderBinding.responderpolicy_lbvserver_binding.priority) {
                                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy not bound."
@@ -2601,12 +2601,12 @@ function Invoke-AddInitialADCConfig {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
                 Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
             }
-            if (-Not([String]::IsNullOrEmpty($($response.responderaction)))) {
+            if (-not([String]::IsNullOrEmpty($($response.responderaction)))) {
                 Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Responder Actions found:"
                 $response.responderaction | Select-Object name, target | ForEach-Object {
                     Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                ForEach ($ResponderAction in $response.responderaction) {
+                foreach ($ResponderAction in $response.responderaction) {
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     try {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to remove the Responder Action `"$($ResponderAction.name)`""
@@ -2676,7 +2676,7 @@ function Invoke-AddInitialADCConfig {
                 }
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Content Switch Policy is OK"
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                ForEach ($csVip in $CertRequest.CsVipName) {
+                foreach ($csVip in $CertRequest.CsVipName) {
                     Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Bind Content Switch Policy `"$($Parameters.settings.CspName)`" to Content Switch `"$csVip`" with prio: $($Parameters.settings.CsVipBinding)"
                     $payload = @{ "name" = "$csVip"; "policyname" = "$($Parameters.settings.CspName)"; "priority" = "$($Parameters.settings.CsVipBinding)"; "gotopriorityexpression" = "END"; }
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type csvserver_cspolicy_binding -Payload $payload
@@ -2707,7 +2707,7 @@ function Invoke-CheckDNS {
         Write-DisplayText -ForeGroundColor Yellow "Should a DNS test fail, the script will try to continue!"
         Write-DisplayText -Title "DNS Validation & Verifying ADC config"
         Write-ToLogFile -I -C Invoke-CheckDNS -M "DNS Validation & Verifying ADC config."
-        ForEach ($DNSObject in $SessionRequestObject.DNSObjects ) {
+        foreach ($DNSObject in $SessionRequestObject.DNSObjects ) {
             Write-DisplayText -Line "DNS Hostname"
             Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName) [$($DNSObject.IPAddress)]"
             $TestURL = "http://$($DNSObject.DNSName)/.well-known/acme-challenge/XXXX"
@@ -2761,7 +2761,7 @@ function Invoke-CheckDNS {
                     Write-ToLogFile -W -C Invoke-CheckDNS -M "External DNS Test: Not successful, maybe not resolvable externally?"
                     Write-ToLogFile -D -C Invoke-CheckDNS -M "Output: $($result | Select-Object StatusCode,StatusDescription,RawContent | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                 }
-                if (-Not [String]::IsNullOrEmpty($($DNSObject.DNSType))) {
+                if (-not [String]::IsNullOrEmpty($($DNSObject.DNSType))) {
                     Write-DisplayText -Line "External DNS Record Type"
                     if ([String]::IsNullOrEmpty($($DNSObject.DNSCNAMEDetails))) {
                         Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSType -Join '-Record, ')-Record"
@@ -3018,7 +3018,7 @@ function Write-DisplayText {
             Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine " -$($Message.PadRight($($Length -4), ".")): "
         } elseif ([String]::IsNullOrEmpty($Message)) {
             Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine "<none>"
-        } elseif (-Not [String]::IsNullOrEmpty($Message)) {
+        } elseif (-not [String]::IsNullOrEmpty($Message)) {
             Write-Host -ForegroundColor $ForeGroundColor -NoNewline:$NoNewLine "$Message"
         }
         if ($PostBlank) {
@@ -3066,7 +3066,7 @@ function Get-ExceptionDetails {
 
 #region Help
 
-if ($Help -Or ($PSBoundParameters.Count -eq 0)) {
+if ($Help -or ($PSBoundParameters.Count -eq 0)) {
     Get-Help $MyInvocation.InvocationName -Detailed
     exit 0
 }
@@ -3177,7 +3177,7 @@ if ($IPv6 -and $CertificateActions) {
 $PublicDnsServer = "1.1.1.1"
 ##End ToDo
 
-if (-Not [String]::IsNullOrEmpty($ManagementURL)) {
+if (-not [String]::IsNullOrEmpty($ManagementURL)) {
     $ManagementURL = $ManagementURL.TrimEnd('/')
 }
 
@@ -3189,11 +3189,11 @@ $SessionRequestObjects = @()
 $Script:MailData = @()
 $Script:MailLog = @()
 
-if (-Not [String]::IsNullOrEmpty($SAN)) {
+if (-not [String]::IsNullOrEmpty($SAN)) {
     if ($SAN -is [Array]) {
-        [String]$SAN = $SAN -Join ","
+        [String]$SAN = $SAN -join ","
     } else {
-        [String]$SAN = $($SAN.Split(",").Split(" ") -Join ",")
+        [String]$SAN = $($SAN.Split(",").Split(" ") -join ",")
     }
 }
 
@@ -3203,12 +3203,12 @@ if ($PSCmdlet.ParameterSetName -eq 'LECertificatesDNS') {
     $ValidationMethod = "dns"
 }
 
-if (-Not [String]::IsNullOrEmpty($DNSParams)) {
+if (-not [String]::IsNullOrEmpty($DNSParams)) {
     if ($DNSParams -is [Array]) {
-        [String]$DNSParams = $DNSParams -Join "`r`n"
+        [String]$DNSParams = $DNSParams -join "`r`n"
         [hashtable]$DNSParams = ConvertFrom-StringData -StringData $DNSParams
     } elseif ($DNSParams -is [String]) {
-        [String]$DNSParams = ($DNSParams -Split (";") | ForEach-Object { "$($_.Trim())" }) -Join "`r`n"
+        [String]$DNSParams = ($DNSParams -split (";") | ForEach-Object { "$($_.Trim())" }) -join "`r`n"
         [hashtable]$DNSParams = ConvertFrom-StringData -StringData $DNSParams
     } elseif ($DNSParams -is [hashtable]) {
         if ($DNSParams.count -eq 0) {
@@ -3221,7 +3221,7 @@ if (-Not [String]::IsNullOrEmpty($DNSParams)) {
 }
 
 try {
-    if ((-Not $AutoRun) -and (-Not $CleanAllExpiredCertsOnDisk)) {
+    if ((-not $AutoRun) -and (-not $CleanAllExpiredCertsOnDisk)) {
         if (($Password -is [String]) -and ($Password.Length -gt 0)) {
             $Script:ReplaceSensitive += @($Password)
             [SecureString]$Password = ConvertTo-SecureString -String $Password -AsPlainText -Force
@@ -3230,7 +3230,7 @@ try {
             [PSCredential]$Credential = New-Object System.Management.Automation.PSCredential ($Username, $Password)
             $Script:ReplaceSensitive += @($Credential.GetNetworkCredential().Password)
         }
-        if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
+        if (([PSCredential]::Empty -eq $Credential) -or ([String]::IsNullOrEmpty($Credential))) {
             if ([string]::IsNullOrEmpty($Username)) {
                 $Credential = Get-Credential -UserName nsroot -Message "Citrix ADC Credentials"
             } else {
@@ -3238,7 +3238,7 @@ try {
             }
             $Script:ReplaceSensitive += @($Credential.GetNetworkCredential().Password)
         }
-        if (([PSCredential]::Empty -eq $Credential) -Or ([String]::IsNullOrEmpty($Credential))) {
+        if (([PSCredential]::Empty -eq $Credential) -or ([String]::IsNullOrEmpty($Credential))) {
             throw "No valid credential found, -Username & -Password or -Credential not specified!"
         } else {
             $ADCCredentialUsername = $Credential.Username
@@ -3256,8 +3256,8 @@ try {
 
 try {
     Write-DisplayText -Title "Script"
-    if ($AutoRun -and (-Not (Test-Path -Path $ConfigFile -ErrorAction SilentlyContinue))) {
-        Throw "Config File NOT found! This is required when specifying the AutoRun parameter!"
+    if ($AutoRun -and (-not (Test-Path -Path $ConfigFile -ErrorAction SilentlyContinue))) {
+        throw "Config File NOT found! This is required when specifying the AutoRun parameter!"
     }
     Write-DisplayText -Line "PowerShell Version"
     Write-DisplayText -ForeGroundColor Cyan "$($PSVersionTable.PSVersion.ToString()) ($psEditionInfo)"
@@ -3269,9 +3269,9 @@ try {
         certrequests = @()
     }
     $SaveConfig = $false
-    if (-Not [String]::IsNullOrEmpty($ConfigFile)) {
+    if (-not [String]::IsNullOrEmpty($ConfigFile)) {
         $ConfigPath = try { Split-Path -Path $ConfigFile -Parent -ErrorAction SilentlyContinue } catch { $null }
-        if ([String]::IsNullOrEmpty($ConfigPath) -Or $ConfigPath -eq ".") {
+        if ([String]::IsNullOrEmpty($ConfigPath) -or $ConfigPath -eq ".") {
             $ConfigFile = Join-Path -Path $ScriptRoot -ChildPath $(Split-Path -Path $ConfigFile -Leaf -ErrorAction SilentlyContinue ) -ErrorAction SilentlyContinue
         }
         Write-DisplayText -Line "Config File"
@@ -3289,15 +3289,15 @@ try {
                     Write-DisplayText -Line "Creating Config"
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 }
-                try { if (-Not $Parameters.GetType().Name -eq "PSCustomObject") { $Parameters = New-Object -TypeName PSCustomObject } } catch { $Parameters = New-Object -TypeName PSCustomObject }
+                try { if (-not $Parameters.GetType().Name -eq "PSCustomObject") { $Parameters = New-Object -TypeName PSCustomObject } } catch { $Parameters = New-Object -TypeName PSCustomObject }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if ([String]::IsNullOrEmpty($($Parameters | Get-Member -Name "settings" -ErrorAction SilentlyContinue))) { $Parameters | Add-Member -MemberType NoteProperty -Name "settings" -Value $(New-Object -TypeName PSCustomObject) }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                 if ([String]::IsNullOrEmpty($($Parameters | Get-Member -Name "certrequests" -ErrorAction SilentlyContinue))) { $Parameters | Add-Member -MemberType NoteProperty -Name "certrequests" -Value @() }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                try { if (-Not ($Parameters.settings.GetType().Name -eq "PSCustomObject")) { $Parameters.settings = $(New-Object -TypeName PSCustomObject) } } Catch { $Parameters.settings = $(New-Object -TypeName PSCustomObject) }
+                try { if (-not ($Parameters.settings.GetType().Name -eq "PSCustomObject")) { $Parameters.settings = $(New-Object -TypeName PSCustomObject) } } catch { $Parameters.settings = $(New-Object -TypeName PSCustomObject) }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                if (-Not ($Parameters.certrequests -is [Array])) { $Parameters.certrequests = @() }
+                if (-not ($Parameters.certrequests -is [Array])) { $Parameters.certrequests = @() }
                 try {
                     if ($Parameters.settings.ScriptVersion -ne $ScriptVersion) {
                         if ( $Parameters.settings | Get-Member -Name ScriptVersion ) {
@@ -3341,21 +3341,21 @@ try {
             $PreLogLines += "I;CONFIGFILE;`"$ConfigFile`" not Found, creating new ConfigFile"
             if ($AutoRun) {
                 Write-DisplayText -ForeGroundColor Red "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
-                Throw "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
+                throw "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
             }
         }
         if ($Parameters.certrequests.Count -le 0) {
             $Parameters.certrequests += New-Object -TypeName PSCustomobject
             if ($AutoRun) {
                 Write-DisplayText -ForeGroundColor Red "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
-                Throw "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
+                throw "No valid certificate requests found! This is required when specifying the AutoRun parameter!"
             }
         }
     } elseif ($ADCActionsRequired -eq $false) {
         Write-DisplayText -ForeGroundColor Yellow "Skipped"
     } elseif ($AutoRun) {
         Write-DisplayText -ForeGroundColor Red "Not Found! This is required when specifying the AutoRun parameter!"
-        Throw "Config File NOT found! This is required when specifying the AutoRun parameter!`r`n$($_.Exception.Message)"
+        throw "Config File NOT found! This is required when specifying the AutoRun parameter!`r`n$($_.Exception.Message)"
     } elseif ($CertificateActions) {
         if ($Parameters.certrequests.Count -le 0) {
             $Parameters.certrequests += New-Object -TypeName PSCustomobject
@@ -3364,7 +3364,7 @@ try {
 } catch {
     Write-DisplayText -ForeGroundColor Yellow "Could not load the Config File`r`n$($_.Exception.Message)"
     if ($AutoRun) {
-        Throw "Could not load the Config File!`r`n$($_.Exception.Message)"
+        throw "Could not load the Config File!`r`n$($_.Exception.Message)"
     }
 }
 
@@ -3380,13 +3380,13 @@ if ($AutoRun) {
         $Script:ReplaceSensitive += @(ConvertFrom-EncryptedPassword -Object $($Parameters.settings.ADCCredentialPassword) -AsClearText)
         $Credential = New-Object -TypeName PSCredential -ArgumentList $ADCCredentialUsername, $ADCCredentialPassword
         $PreLogLines += "D;PARAMETERS;ADCCredential ready. Username:$($Credential.UserName)"
-        if (-Not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
+        if (-not $Parameters.settings.ADCCredentialPassword.IsEncrypted) {
             Invoke-AddUpdateParameter -Object $Parameters.settings -Name ADCCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $ADCCredentialPassword)
             $SaveConfig = $true
         }
     } catch {
         $PreLogLines += "E;PARAMETERS;Could not read the ADCCredential. ERROR:$($_.Exception.Message)"
-        Throw "Could not read ADC credentials. ERROR:$($_.Exception.Message)"
+        throw "Could not read ADC credentials. ERROR:$($_.Exception.Message)"
     }
     try {
         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -3409,7 +3409,7 @@ if ($AutoRun) {
             $SMTPCredential = New-Object -TypeName PSCredential -ArgumentList $SMTPCredentialUsername, $SMTPCredentialPassword
             $PreLogLines += "D;PARAMETERS;SMTPCredential ready. Username:$($SMTPCredential.UserName)"
         }
-        if (-Not $Parameters.settings.SMTPCredentialPassword.IsEncrypted) {
+        if (-not $Parameters.settings.SMTPCredentialPassword.IsEncrypted) {
             Invoke-AddUpdateParameter -Object $Parameters.settings -Name SMTPCredentialPassword -Value $(ConvertTo-EncryptedPassword -Object $SMTPCredentialPassword)
             $SaveConfig = $true
         }
@@ -3463,7 +3463,7 @@ if ($AutoRun) {
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name ScriptVersion -Value $ScriptVersion
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSParams -Value $DNSParams
     Invoke-AddUpdateParameter -Object $Parameters.settings -Name DNSPlugin -Value $DNSPlugin
-    if (($Parameters.certrequests.Count -eq 1) -and (-Not $AutoRun )) {
+    if (($Parameters.certrequests.Count -eq 1) -and (-not $AutoRun )) {
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name Enabled -Value $true
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name CN -Value $CN
         Invoke-AddUpdateParameter -Object $Parameters.certrequests[0] -Name SANs -Value $SAN
@@ -3506,12 +3506,21 @@ if ($AutoRun) {
     $PreLogLines += "I;PARAMETERS;Finished."
 }
 
-if (-Not [string]::IsNullOrEmpty($ApiPassword)) {
+if (-not [string]::IsNullOrEmpty($ApiPassword)) {
     $Script:ReplaceSensitive += @($ApiPassword)
 }
 
 # Get only the unique sensitive words
 $Script:ReplaceSensitive = @($Script:ReplaceSensitive | Select-Object -Unique | Sort-Object Length -Descending)
+
+
+# Ratelimit protection https://letsencrypt.org/docs/rate-limits/#new-registrations-per-ip-address
+if ($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) {
+    $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter already set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
+} else {
+    $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value (Get-Date)
+    $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter added and set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
+}
 
 if ($Parameters.settings.DisableLogging) {
     $Script:LoggingEnabled = $false
@@ -3521,7 +3530,7 @@ if ($Parameters.settings.DisableLogging) {
 } else {
     $Script:LoggingEnabled = $true
     if ($Parameters.settings.LogFile -like "*<DEFAULT>*") {
-        $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $($MyInvocation.MyCommand -Replace '.ps1', '.txt' )
+        $Parameters.settings.LogFile = Join-Path -Path $ScriptRoot -ChildPath $($MyInvocation.MyCommand -replace '.ps1', '.txt' )
     }
     Write-Verbose "Log $($Parameters.settings.LogFile)"
     if (((Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue) -eq ".") -or ([String]::IsNullOrEmpty($(Split-Path -Path $Parameters.settings.LogFile -Parent -ErrorAction SilentlyContinue)))) {
@@ -3557,9 +3566,9 @@ $($PSBoundParameters | Out-String)
 
 try {
     Write-ToLogFile -I -C LOG-CATCH-UP -M "Filling log with previously gathered log entries"
-    Foreach ($line in $PreLogLines) {
+    foreach ($line in $PreLogLines) {
         $lLevel, $lComponent, $lMessage = $line -split ';'
-        $lExpression = 'Write-ToLogFile -{0} -C {1} -M "{2}"' -f $lLevel, $lComponent, $(($lMessage -Join ';').Replace('"', '`"'))
+        $lExpression = 'Write-ToLogFile -{0} -C {1} -M "{2}"' -f $lLevel, $lComponent, $(($lMessage -join ';').Replace('"', '`"'))
         Invoke-Expression $lExpression
     }
     Write-ToLogFile -I -C LOG-CATCH-UP -M "Finished catching-up"
@@ -3581,10 +3590,6 @@ if ($CleanPoshACMEStorage) {
 #endregion CleanPoshACMEStorage
 
 #region LoadModule
-
-
-
-
 
 if ($CertificateActions) {
     Write-ToLogFile -I -C DOTNETCheck -M "Checking if .NET Framework 4.7.2 or higher is installed."
@@ -3702,7 +3707,7 @@ try {
         Write-DisplayText -ForeGroundColor Cyan "$($AvailableVersions.masterurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.masterurl)"
         $Script:MailLog += "New version available: v$($AvailableVersions.master), $($AvailableVersions.masterurl)"
-        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
+        if (-not [String]::IsNullOrEmpty($($AvailableVersions.masterimportant))) {
             Write-DisplayText -Blank
             Write-DisplayText -Line "IMPORTANT Note"
             Write-DisplayText -ForeGroundColor Yellow "$($AvailableVersions.masterimportant)"
@@ -3723,7 +3728,7 @@ try {
         Write-DisplayText -Line "New Develop URL"
         Write-DisplayText -ForeGroundColor Cyan "$($AvailableVersions.devurl)"
         Write-ToLogFile -I -C VersionInfo -M "URL: $($AvailableVersions.devurl)"
-        if (-Not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
+        if (-not [String]::IsNullOrEmpty($($AvailableVersions.devimportant))) {
             Write-DisplayText -Blank
             Write-DisplayText -Line "IMPORTANT Note"
             Write-DisplayText -ForeGroundColor Yellow "$($AvailableVersions.devimportant)"
@@ -3804,7 +3809,7 @@ if ($ADCActionsRequired) {
 
 #region ApiUserPermissions
 
-if ($CreateUserPermissions -Or $CreateApiUser) {
+if ($CreateUserPermissions -or $CreateApiUser) {
     Write-DisplayText -Blank
     $CSVipString = ""
     Write-Information "INFO: When you want to use own names instead of the default values for VIPs, Policies, Actions, etc." -InformationAction Continue
@@ -3829,11 +3834,11 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
         $csVipExtraActionsString = $csVipExtraActionsString += '|disable'
     }
 
-    if (-Not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
-        ForEach ($VipName in $CsVipName) {
+    if (-not $UseLbVip -or [String]::IsNullOrEmpty($CsVipName)) {
+        foreach ($VipName in $CsVipName) {
             $CSVipString += "|(^(set|show|bind|unbind$($csVipExtraActionsString))\s+cs\s+vserver(\s+$($VipName).*))|(^\S+\s+cs\s+(policy\s+$($Parameters.settings.CspName)|action\s+$($Parameters.settings.CsaName)).*)"
         }
-        Write-DisplayText -ForeGroundColor Cyan $($CsVipName -Join ", ")
+        Write-DisplayText -ForeGroundColor Cyan $($CsVipName -join ", ")
         Write-DisplayText -Line "CS Policy Name"
         Write-DisplayText -ForeGroundColor Cyan $($Parameters.settings.CspName)
         Write-DisplayText -Line "CS Action Name"
@@ -3875,7 +3880,7 @@ if ($CreateUserPermissions -Or $CreateApiUser) {
     #if ($otherPartitions.Count -gt 0 ) {
     #
     #}
-    ForEach ($item in $($cmdSpec.GetEnumerator())) {
+    foreach ($item in $($cmdSpec.GetEnumerator())) {
         Write-DisplayText -Line "Command Spec $($item.Name)"
         try {
             $policyName = "$($NSCPName)-$($item.Name)"
@@ -3941,7 +3946,7 @@ if ($CreateApiUser) {
         $ApiCredential = New-Object System.Management.Automation.PSCredential -ArgumentList $ApiUsername, $ApiPassword
         Write-ToLogFile -D -C ApiUser -M "Credential created"
     }
-    if (([PSCredential]::Empty -eq $ApiCredential) -Or ($null -eq $ApiCredential)) {
+    if (([PSCredential]::Empty -eq $ApiCredential) -or ($null -eq $ApiCredential)) {
         Write-DisplayText -ForeGroundColor Red "No valid credentials found!"
         Write-ToLogFile -E -C ApiUser -M "No valid Api Credential found, -ApiUsername or -ApiPassword not specified!"
         TerminateScript 1 "No valid Api Credential found, -ApiUsername or -ApiPassword not specified!"
@@ -4041,7 +4046,7 @@ if ($CreateApiUser) {
             }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
         }
-        ForEach ($cmdSpecItem in $($cmdSpec.GetEnumerator())) {
+        foreach ($cmdSpecItem in $($cmdSpec.GetEnumerator())) {
             $itemPolicyName = "$($policyName)-$($cmdSpecItem.Name)"
             Write-DisplayText -Line "User Policy Binding"
             Write-DisplayText -ForeGroundColor Cyan -NoNewLine "[$itemPolicyName => $($cmdSpecPriority[$cmdSpecItem.Name])] "
@@ -4063,7 +4068,7 @@ if ($CreateApiUser) {
     }
 }
 
-if (($CreateUserPermissions) -Or ($CreateApiUser)) {
+if (($CreateUserPermissions) -or ($CreateApiUser)) {
     Save-ADCConfig -SaveADCConfig:$($Parameters.settings.SaveADCConfig)
     TerminateScript 0
 }
@@ -4101,7 +4106,7 @@ if ($Parameters.settings.SendMail) {
         Write-DisplayText -ForeGroundColor Red "None"
         Write-ToLogFile -E -C EmailSettings -M "No Email (SMTP) Server specified (-SMTPServer)"
         $SMTPError += "No Email (SMTP) Server specified (-SMTPServer)"
-    } if (-Not [String]::IsNullOrEmpty($($Parameters.settings.SMTPPort))) {
+    } if (-not [String]::IsNullOrEmpty($($Parameters.settings.SMTPPort))) {
         Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPServer):$($Parameters.settings.SMTPPort)"
         Write-ToLogFile -I -C EmailSettings -M "Email Server: $($Parameters.settings.SMTPServer):$($Parameters.settings.SMTPPort)"
     } else {
@@ -4123,7 +4128,7 @@ if ($Parameters.settings.SendMail) {
         Write-DisplayText -ForeGroundColor Cyan "$($Parameters.settings.SMTPCredentialUserName) (Credential)"
         Write-ToLogFile -I -C EmailSettings -M "Email Credential: $($Parameters.settings.SMTPCredentialUserName)"
     }
-    if (-Not [String]::IsNullOrEmpty($SMTPError)) {
+    if (-not [String]::IsNullOrEmpty($SMTPError)) {
         $Parameters.settings.SendMail = $false
         TerminateScript 1 "Incorrect values, check mail settings.`r`n$($SMTPError | Out-String)"
     }
@@ -4173,26 +4178,26 @@ if ($CertificateActions) {
     $round = 0
     $TotalRounds = $Parameters.certrequests.Count
     Write-ToLogFile -I -C CertLoop -M "$TotalRounds required for all requests."
-    ForEach ($CertRequest in $Parameters.certrequests) {
+    foreach ($CertRequest in $Parameters.certrequests) {
         $round++
         if ($CertRequest.CsVipName -like "*,*") {
             $CertRequest.CsVipName = [String[]]$CertRequest.CsVipName.Split(",")
-        } elseif (-Not ($CertRequest.CsVipName -is [Array])) {
+        } elseif (-not ($CertRequest.CsVipName -is [Array])) {
             $CertRequest.CsVipName = [String[]]$CertRequest.CsVipName
         }
         $PfxPasswordGenerated = $false
-        if ((-Not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-Not ($CertRequest.ValidationMethod -eq "dns"))) {
+        if ((-not [String]::IsNullOrEmpty($($CertRequest.CN))) -and (-not ($CertRequest.ValidationMethod -eq "dns"))) {
             $CertRequest.ValidationMethod = "http"
         }
-        if (-Not ($CertRequest | Get-Member -Name "Enabled" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+        if (-not ($CertRequest | Get-Member -Name "Enabled" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
             $CertRequest | Add-Member -Name "Enabled" -MemberType NoteProperty -Value $true
             $SaveConfig = $true
         }
-        if (-Not ($CertRequest | Get-Member -Name "ForceCertRenew" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+        if (-not ($CertRequest | Get-Member -Name "ForceCertRenew" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
             $CertRequest | Add-Member -Name "ForceCertRenew" -MemberType NoteProperty -Value $false
             $SaveConfig = $true
         }
-        if (-Not ($CertRequest | Get-Member -Name "CurrentCertIsProduction" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+        if (-not ($CertRequest | Get-Member -Name "CurrentCertIsProduction" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
             $CertRequest | Add-Member -Name "CurrentCertIsProduction" -MemberType NoteProperty -Value $null
             $SaveConfig = $true
         } else {
@@ -4252,7 +4257,7 @@ if ($CertificateActions) {
             Write-DisplayText -Line "Status"
             Write-DisplayText -ForeGroundColor Cyan "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
             $mailDataItem.Text = "Still valid, but request is diffrent! Current: `"$currentCertificateType`" New: `"$newCertificateType`". Certificate will be renewed."
-        } elseif (-Not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and ($CertRequest.ForceCertRenew -eq $false) -and ($ForceCertRenew -eq $false)) {
+        } elseif (-not [String]::IsNullOrEmpty($($CertRequest.RenewAfter)) -and ($CertRequest.ForceCertRenew -eq $false) -and ($ForceCertRenew -eq $false)) {
             try {
                 $RenewAfterDate = [DateTime]$CertRequest.RenewAfter
                 if ((Get-Date) -lt $RenewAfterDate) {
@@ -4298,7 +4303,7 @@ if ($CertificateActions) {
 
             #region DNSPreCheck
             [regex]$fqdnExpression = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-).)+[A-Za-z]{2,63}$"
-            if (($($CertRequest.CN) -match "\*") -Or ($CertRequest.SANs -match "\*")) {
+            if (($($CertRequest.CN) -match "\*") -or ($CertRequest.SANs -match "\*")) {
                 Write-DisplayText -ForeGroundColor Yellow "`r`nNOTE: -CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
                 Write-ToLogFile -I -C DNSPreCheck -M "-CN or -SAN contains a wildcard entry, continuing with the `"dns`" validation method!"
                 Write-DisplayText -Line "CN"
@@ -4322,11 +4327,11 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNSPreCheck -M "SAN(s): $($CertRequest.SANs | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
             } else {
                 $CertRequest.ValidationMethod = $CertRequest.ValidationMethod.ToLower()
-                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName)) -or ($CertRequest.CsVipName.Count -lt 1)) -and ($CertRequest.ValidationMethod -eq "http") -and (-Not $CertRequest.UseLbVip)) {
+                if (([String]::IsNullOrWhiteSpace($($CertRequest.CsVipName)) -or ($CertRequest.CsVipName.Count -lt 1)) -and ($CertRequest.ValidationMethod -eq "http") -and (-not $CertRequest.UseLbVip)) {
                     Write-DisplayText -ForeGroundColor Red "ERROR: The `"-CsVipName`" parameter cannot be empty!" -PostBlank -PreBlank
                     Write-ToLogFile -E -C DNSPreCheck -M "The `"-CsVipName`" cannot be empty!"
                     Invoke-RegisterError 1 "The `"-CsVipName`" cannot be empty!"
-                    Continue
+                    continue
                 }
                 Write-DisplayText -Title "Certificate Request"
                 Write-DisplayText -Line "CN"
@@ -4337,12 +4342,12 @@ if ($CertificateActions) {
                 } else {
                     Write-DisplayText -ForeGroundColor Red " NOT a valid fqdn!"
                     Invoke-RegisterError 1 "`"$($CertRequest.CN)`" is NOT a valid fqdn!"
-                    Continue
+                    continue
                 }
                 Write-DisplayText -Line "SAN(s)"
                 $CheckedSANs = @()
-                if (-Not [String]::IsNullOrEmpty($($CertRequest.SANs))) {
-                    ForEach ($record in $CertRequest.SANs.Split(",")) {
+                if (-not [String]::IsNullOrEmpty($($CertRequest.SANs))) {
+                    foreach ($record in $CertRequest.SANs.Split(",")) {
                         if ($CheckedSANs.Count -eq 0) {
                             Write-DisplayText -ForeGroundColor Yellow -NoNewline "$record"
                         } else {
@@ -4362,13 +4367,13 @@ if ($CertificateActions) {
                     Write-DisplayText -ForeGroundColor Green -NoNewline "none"
                 }
                 Write-DisplayText -Blank
-                $CertRequest.SANs = $CheckedSANs -Join ","
+                $CertRequest.SANs = $CheckedSANs -join ","
                 $mailDataItem.SAN = "$($CheckedSANs -Join ", ")"
             }
 
             Write-ToLogFile -D -C DNSPreCheck -M "ValidationMethod is set to: `"$($CertRequest.ValidationMethod)`"."
 
-            if ($UseNetScalerDNS -and -Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck -and $AutoRun) {
+            if ($UseNetScalerDNS -and -not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck -and $AutoRun) {
                 Write-ToLogFile -E -C DNSPreCheck -M "-AutoRun and -UseNetScalerDNS are defined, we will allow this"
 
             } elseif ($DNSPlugin -ine "Manual" -and $DNSParams.count -gt 0 -and $AutoRun) {
@@ -4378,7 +4383,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -E -C DNSPreCheck -M "You cannot use the dns validation method with the -AutoRun parameter!"
                 Write-DisplayText -Line "DNS Validation"
                 Write-DisplayText -ForeGroundColor RED "(Manual) DNS validation is configured together with the -AutoRun parameter. Only HTTP validation or Automatic DNS validations are supported with -AutoRun"
-                Break
+                break
             }
 
             $ResponderPrio = 10
@@ -4399,18 +4404,18 @@ if ($CertificateActions) {
                 $SANRecords = $CertRequest.SANs.Split(",").Split(" ")
                 $SANCount = $SANRecords.Count
                 $SANRecords = $SANRecords | Select-Object -Unique
-                $CertRequest.SANs = $SANRecords -Join ","
+                $CertRequest.SANs = $SANRecords -join ","
 
-                if (-Not ($SANCount -eq $SANRecords.Count)) {
+                if (-not ($SANCount -eq $SANRecords.Count)) {
                     Write-DisplayText -Line "Double Records"
                     Write-DisplayText -ForeGroundColor Yellow "WARNING: There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
                     Write-ToLogFile -W -C DNSPreCheck -M "There were $($SANCount - $SANRecords.Count) double SAN values, only continuing with unique ones."
                 } else {
                     Write-ToLogFile -I -C DNSPreCheck -M "No double SAN values found."
                 }
-                Foreach ($SANEntry in $SANRecords) {
+                foreach ($SANEntry in $SANRecords) {
                     $ResponderPrio += 10
-                    if (-Not ($SANEntry -eq $($CertRequest.CN))) {
+                    if (-not ($SANEntry -eq $($CertRequest.CN))) {
                         $SessionRequestObject.DNSObjects += [PSCustomObject]@{
                             DNSName         = [String]$SANEntry
                             IPAddress       = $null
@@ -4441,12 +4446,12 @@ if ($CertificateActions) {
             if ($CertRequest.ValidationMethod -eq "dns") {
                 Write-DisplayText -Line "Connection"
                 Write-DisplayText -ForeGroundColor Yellow "Skipped"
-            } elseif ($AutoRun -Or (-Not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
+            } elseif ($AutoRun -or (-not [String]::IsNullOrEmpty($($Parameters.settings.ManagementURL)))) {
                 if ($CertRequest.UseLbVip) {
                     Write-DisplayText -Line "Content Switch"
                     Write-DisplayText -ForeGroundColor Yellow "Skipped, -UseLbVip specified!"
                     Write-DisplayText -Line "Connection"
-                    if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
+                    if (-not [String]::IsNullOrEmpty($($ADCSession.Version))) {
                         Write-DisplayText -ForeGroundColor Green "OK"
                         Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
                     } else {
@@ -4457,7 +4462,7 @@ if ($CertificateActions) {
                 } elseif ($CertRequest.CsVipName.Count -gt 0) {
                     $CsVipError = $false
                     $loopCounter = 0
-                    ForEach ($csVip in $CertRequest.CsVipName) {
+                    foreach ($csVip in $CertRequest.CsVipName) {
                         $loopCounter++
                         Write-DisplayText -Line "Content Switch $loopCounter/$($CertRequest.CsVipName.Count)"
                         Write-DisplayText "$csVip"
@@ -4567,7 +4572,7 @@ if ($CertificateActions) {
                     }
                 } else {
                     Write-DisplayText -Line "Connection"
-                    if (-Not [String]::IsNullOrEmpty($($ADCSession.Version))) {
+                    if (-not [String]::IsNullOrEmpty($($ADCSession.Version))) {
                         Write-DisplayText -ForeGroundColor Green "OK"
                         Write-ToLogFile -I -C ADC-CS-Validation -M "Connection OK."
                     } else {
@@ -4578,7 +4583,7 @@ if ($CertificateActions) {
                 }
             }
             if ($CsVipError) {
-                Continue
+                continue
             }
 
             #region Registration
@@ -4607,15 +4612,43 @@ if ($CertificateActions) {
                             Write-ToLogFile -I -C Registration -M "Current registration `"$($PARegistration.Contact)`" is not equal to `"$($CertRequest.EmailAddress)`", setting new registration."
                         }
                         Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
+                        if ($Parameters.settings.NewRegistrationsAfter -gt (Get-Date)) {
+                            Write-ToLogFile -W -C Registration -M "Too many new registrations detected, skipping registration for now."
+                            Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
+                            Invoke-RegisterError 1 "Too many new registrations detected"
+                            continue
+                        }
                         $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
                     }
                 } catch {
+                    if ($_.Exception.Message -like "*too many new registrations*") {
+                        Write-ToLogFile -W -C Registration -M "Too many new registrations detected."
+                        Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
+                        $Parameters.settings.NewRegistrationsAfter = (Get-Date).AddMinutes(20)
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Invoke-RegisterError 1 "Too many new registrations detected"
+                        continue
+                    }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Write-ToLogFile -I -C Registration -M "Setting new registration to `"$($CertRequest.EmailAddress)`"."
                     try {
+                        if ($Parameters.settings.NewRegistrationsAfter -gt (Get-Date)) {
+                            Write-ToLogFile -W -C Registration -M "Too many new registrations detected, skipping registration for now."
+                            Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
+                            Invoke-RegisterError 1 "Too many new registrations detected"
+                            continue
+                        }
                         $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
                         Write-ToLogFile -I -C Registration -M "New registration successful."
                     } catch {
+                        if ($_.Exception.Message -like "*too many new registrations*") {
+                            Write-ToLogFile -W -C Registration -M "Too many new registrations detected."
+                            Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
+                            $Parameters.settings.NewRegistrationsAfter = (Get-Date).AddMinutes(20)
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Invoke-RegisterError 1 "Too many new registrations detected"
+                            continue
+                        }
                         Write-ToLogFile -E -C Registration -M "New registration failed! Exception Message: $($_.Exception.Message)"
                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                         Write-DisplayText -ForeGroundColor Red "`nERROR: New registration failed!"
@@ -4650,7 +4683,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -E -C Registration -M "Account status is $($Account.status)."
                     Write-Error "Account status is $($Account.status)"
                     Invoke-RegisterError 1 "Account status is $($Account.status)"
-                    Continue
+                    continue
                 }
                 Write-DisplayText -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
             }
@@ -4692,7 +4725,7 @@ if ($CertificateActions) {
                 Add-Type -AssemblyName System.Web | Out-Null
                 $length = 20
                 [SecureString]$GeneratedPassword = ConvertTo-SecureString -String $(New-Password -Length $length) -AsPlainText -Force
-                if (-Not [String]::IsNullOrEmpty($($Parameters.settings.PfxPassword))) {
+                if (-not [String]::IsNullOrEmpty($($Parameters.settings.PfxPassword))) {
                     $PfxPassword = ConvertFrom-EncryptedPassword -Object $($Parameters.settings.PfxPassword)
                     Write-ToLogFile -I -C Order -M "PfxPassword retrieved from the settings"
                     try {
@@ -4702,7 +4735,7 @@ if ($CertificateActions) {
                         Write-ToLogFile -E -C Order -M "Could not delete PfxPassword from settings"
                     }
                 }
-                if (-Not [String]::IsNullOrEmpty($($CertRequest.PfxPassword))) {
+                if (-not [String]::IsNullOrEmpty($($CertRequest.PfxPassword))) {
                     $PfxPassword = ConvertFrom-EncryptedPassword -Object $($CertRequest.PfxPassword)
                     Write-ToLogFile -I -C Order -M "PfxPassword retrieved from the cert request"
                 }
@@ -4747,7 +4780,7 @@ if ($CertificateActions) {
                         $mailDataItem.Text = "Could not create the order, ERROR: $($_.Exception.Message)"
                     }
                     Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
-                    Continue
+                    continue
                 }
                 Write-DisplayText -ForeGroundColor Green " Ready"
             }
@@ -4762,7 +4795,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C DNS-Validation -M "Validate DNS record(s)."
                 $DNSTypes = '[{"Type":"A","TypeId":1},{"Type":"AAAA","TypeId":28},{"Type":"CNAME","TypeId":5},{"Type":"TXT","TypeId":16}]' | ConvertFrom-Json
                 $DNSValidationError = $false
-                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     if ($IPv6) {
                         $DNSObject.IPAddress = "::"
@@ -4779,16 +4812,16 @@ if ($CertificateActions) {
                             Write-Error "No valid Challenge found"
                             $DNSValidationError = $true
                             Invoke-RegisterError 1 "No valid Challenge found"
-                            Break
+                            break
                         } else {
                             $DNSObject.Challenge = $PAChallenge
                         }
-                        if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                        if (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
                             $DNSObject.IPAddress = "NoIPCheck"
                             $DNSObject.Match = $true
                             $DNSObject.Status = $true
                             Write-ToLogFile -I -C DNS-Validation -M "Skipped IP Checking for alternate DNS Validation Domain."
-                        } elseif ($($CertRequest.DisableIPCheck) -Or $($Parameters.settings.DisableIPCheck)) {
+                        } elseif ($($CertRequest.DisableIPCheck) -or $($Parameters.settings.DisableIPCheck)) {
                             $DNSObject.IPAddress = "NoIPCheck"
                             $DNSObject.Match = $true
                             $DNSObject.Status = $true
@@ -4843,7 +4876,7 @@ if ($CertificateActions) {
                                 Write-Error "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`""
                                 $DNSValidationError = $true
                                 Invoke-RegisterError 1 "No valid (public) IP Address found for DNSName:`"$($DNSObject.DNSName)`". Try running the script with the `"-DisableIPCheck`" parameter."
-                                Break
+                                break
 
                             } elseif ($PublicIP -is [system.array]) {
                                 Write-ToLogFile -W -C DNS-Validation -M "More than one ip address found:"
@@ -4876,7 +4909,7 @@ if ($CertificateActions) {
                             Write-ToLogFile -E -C DNS-Validation -M "You can try to re-run the script with the -DisableIPCheck parameter."
                             $DNSValidationError = $true
                             Invoke-RegisterError 1 "You can try to re-run the script with the -DisableIPCheck parameter."
-                            Break
+                            break
                         }
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -4922,7 +4955,7 @@ if ($CertificateActions) {
                     Write-DisplayText -Blank
                     Write-Error -Message "Invalid (not registered?) DNS Record(s) found!"
                     Invoke-RegisterError 1 "Invalid (not registered?) DNS Record(s) found!"
-                    Continue
+                    continue
                 } else {
                     Write-ToLogFile -I -C DNS-Validation -M "None found, continuing"
                 }
@@ -4946,7 +4979,7 @@ if ($CertificateActions) {
                     Write-DisplayText ""
                     Write-Error "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
                     Invoke-RegisterError 1 "Non-matching records found, must match to `"$($SessionRequestObject.DNSObjects[0].DNSName)`" ($($SessionRequestObject.DNSObjects[0].IPAddress))."
-                    Continue
+                    continue
                 } elseif ($($CertRequest.DisableIPCheck)) {
                     Write-ToLogFile -I -C DNS-Validation -M "IP Addresses checking was skipped."
                 } else {
@@ -5053,7 +5086,7 @@ if ($CertificateActions) {
                                         Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                                         Write-DisplayText -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
                                         Invoke-RegisterError 1 "Error while submitting the Challenge."
-                                        Break
+                                        break
                                     }
                                     Write-DisplayText -ForeGroundColor Green " Ready"
                                 } catch {
@@ -5062,7 +5095,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
                                     Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                     Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
-                                    Break
+                                    break
                                 }
                             } catch {
                                 Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
@@ -5070,7 +5103,7 @@ if ($CertificateActions) {
                                 Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
                                 Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                 Invoke-RegisterError 1 "Failed to add Responder Policy"
-                                Break
+                                break
                             }
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
@@ -5078,7 +5111,7 @@ if ($CertificateActions) {
                             Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
                             Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                             Invoke-RegisterError 1 "Failed to add Responder Action"
-                            Break
+                            break
                         }
                     }
                 }
@@ -5123,7 +5156,7 @@ if ($CertificateActions) {
                             Write-ToLogFile -D -C OrderValidation -M "$($_ | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                         }
                         Write-DisplayText -Title "Invalid items:"
-                        ForEach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
+                        foreach ($Item in $($PAOrderItems | Where-Object { $_.status -ne "valid" })) {
                             Write-DisplayText -Line "DNS Hostname"
                             Write-DisplayText -ForeGroundColor Cyan "$($Item.fqdn)"
                             Write-DisplayText -Line "Status"
@@ -5161,7 +5194,7 @@ if ($CertificateActions) {
                 #endregion CleanupADC
 
                 if ($orderCompletionError) {
-                    Continue
+                    continue
                 }
             }
             #endregion OrderValidation
@@ -5184,7 +5217,7 @@ if ($CertificateActions) {
                 Write-DisplayText -Title "DNS Challenge"
                 Write-ToLogFile -I -C DNSChallenge -M "DNS Challenge requested."
 
-                if (-Not ([String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                if (-not ([String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
                     Write-ToLogFile -I -C DNSChallenge -M "Alternate DNS Validation Domain is set."
                     Write-DisplayText -Line "Alt. DNS validation"
                     Write-DisplayText -ForeGroundColor Cyan "Enabled"
@@ -5192,14 +5225,14 @@ if ($CertificateActions) {
                     Write-DisplayText -ForeGroundColor Cyan "$AlternateDNSValidationDomain"
                 }
 
-                if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck )) {
+                if ($UseNetScalerDNS -and (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain) -and $AlternateDNSValidationDomainSkipCheck )) {
                     Write-ToLogFile -I -C DNSChallenge -M "Alternate DNS Validation Domain is set to `"$AlternateDNSValidationDomain`" and -AlternateDNSValidationDomainSkipCheck was configured, skipping DNS manual configuration."
                     Write-DisplayText -Line "Validation Skip"
                     Write-DisplayText -ForeGroundColor Cyan "Enabled"
 
                 } elseif ([String]::IsNullOrEmpty($DNSParams) -or [String]::IsNullOrEmpty($DNSPlugin) -or ($DNSParams.Count -eq 0) -or ($DNSPlugin -like "Manual") ) {
                     Write-DisplayText -ForeGroundColor Magenta "`r`n********************************************************************"
-                    if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                    if (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
                         Write-DisplayText -ForeGroundColor Magenta "* Make sure the following CNAME records are configured at your DNS *"
                         Write-DisplayText -ForeGroundColor Magenta "* provider before continuing! If not, DNS validation will fail!    *"
                         Write-DisplayText -ForeGroundColor Magenta "* You can leave the CNAME records after validation is completed.   *"
@@ -5217,7 +5250,7 @@ if ($CertificateActions) {
                             Write-DisplayText -Line "CNAME Record Value"
                             Write-DisplayText -ForeGroundColor Cyan "$($Record.AlternateCNAMEValue)"
                             Write-ToLogFile -I -C DNSChallenge -M "CNAME Record: `"$($Record.AlternateCNAMEName)`" => `"$($Record.AlternateCNAMEValue)`"."
-                            if (-Not $UseNetScalerDNS) {
+                            if (-not $UseNetScalerDNS) {
                                 Write-DisplayText -Line "TXT Record Name."
                                 Write-DisplayText -ForeGroundColor Yellow "$($Record.AlternateTXTName)"
                                 Write-DisplayText -Line "TXT Record Value"
@@ -5243,7 +5276,7 @@ if ($CertificateActions) {
                         $answer = Read-Host -Prompt "Enter `"yes`" when ready to continue, or something else to stop and exit"
                         if (-not ($answer.ToLower() -eq "yes")) {
                             Write-DisplayText -ForegroundColor Yellow "You've entered `"$answer`", ending now!"
-                            Exit (0)
+                            exit (0)
                         }
                         Write-DisplayText -Blank
                     }
@@ -5270,7 +5303,7 @@ if ($CertificateActions) {
                     $PoshACMEPluginUsed = $true
                 }
 
-                if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                if ($UseNetScalerDNS -and (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
                     Write-ToLogFile -I -C DNSChallenge -M "Using the NetScaler DNS Plugin."
                     Write-DisplayText -Line "NetScaler DNS Plugin"
                     Write-DisplayText -ForeGroundColor Cyan "Enabled"
@@ -5287,7 +5320,7 @@ if ($CertificateActions) {
                 $issues = $false
                 try {
                     Write-DisplayText -Title "Pre-Checking the TXT records"
-                    Foreach ($Record in $TXTRecords) {
+                    foreach ($Record in $TXTRecords) {
                         Write-DisplayText -Line "DNS Hostname"
                         Write-DisplayText -ForeGroundColor Cyan "$($Record.fqdn)"
                         Write-DisplayText -Line "TXT Record check"
@@ -5336,7 +5369,7 @@ if ($CertificateActions) {
                 Write-ToLogFile -I -C FinalizingOrder -M "Check if DNS Records need to be validated."
                 Write-DisplayText -Title "Sending Acknowledgment"
                 $DNSValidationError = $false
-                Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
                     Write-DisplayText -Line "DNS Hostname"
                     Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
                     Write-ToLogFile -I -C FinalizingOrder -M "Validating item: `"$($DNSObject.DNSName)`"."
@@ -5360,7 +5393,7 @@ if ($CertificateActions) {
                             Write-Error "Error while submitting the Challenge"
                             $DNSValidationError = $true
                             Invoke-RegisterError 1 "Error while submitting the Challenge"
-                            Break
+                            break
                         }
                         Write-DisplayText -ForeGroundColor Green " Sent Successfully"
                     } elseif ($PAOrderItem.DNS01Status -like "valid") {
@@ -5373,7 +5406,7 @@ if ($CertificateActions) {
                     $PAOrderItem = $null
                 }
                 if ($DNSValidationError) {
-                    Continue
+                    continue
                 }
                 $i = 1
                 Write-DisplayText -Title "Validation"
@@ -5384,8 +5417,8 @@ if ($CertificateActions) {
                     Write-DisplayText "$i"
                     Write-ToLogFile -I -C FinalizingOrder -M "Validation attempt: $i"
                     $PAOrderItems = Posh-ACME\Get-PAOrder -MainDomain $($CertRequest.CN) | Posh-ACME\Get-PAAuthorizations
-                    Foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
-                        if ($DNSObject.Done -eq $false -And (-Not $ValidationError)) {
+                    foreach ($DNSObject in $SessionRequestObject.DNSObjects) {
+                        if ($DNSObject.Done -eq $false -and (-not $ValidationError)) {
                             Write-DisplayText -Line "DNS Hostname"
                             Write-DisplayText -ForeGroundColor Cyan "$($DNSObject.DNSName)"
                             try {
@@ -5431,15 +5464,15 @@ if ($CertificateActions) {
                                 Write-Error "Error while Retrieving validation status"
                                 $ValidationError = $true
                                 Invoke-RegisterError 1 "Error while Retrieving validation status"
-                                Break
+                                break
                             }
                             $PAOrderItem = $null
                         }
                     }
                     if ($ValidationError) {
-                        Break
+                        break
                     }
-                    if (-NOT ($SessionRequestObject.DNSObjects | Where-Object { $_.Done -eq $false })) {
+                    if (-not ($SessionRequestObject.DNSObjects | Where-Object { $_.Done -eq $false })) {
                         Write-ToLogFile -I -C FinalizingOrder -M "All items validated."
                         if ($PAOrderItems | Where-Object { $_.DNS01Status -eq "invalid" }) {
                             Write-DisplayText -ForegroundColor Red "`r`nERROR: Validation Failed, invalid items found! Exiting now!"
@@ -5462,7 +5495,7 @@ if ($CertificateActions) {
                 }
             }
             if ($ValidationError) {
-                Continue
+                continue
             }
             if (($CertRequest.ValidationMethod -in "http", "dns") -and ($SessionRequestObject.ExitCode -eq 0)) {
                 Write-DisplayText -Title "Certificates"
@@ -5515,7 +5548,7 @@ if ($CertificateActions) {
                         Write-DisplayText -ForeGroundColor Red " Error, certificate not found!"
                         Write-ToLogFile -E -C CertFinalization -M "No Certificate Found!"
                         Invoke-RegisterError 1 "No Certificate Found!"
-                        Continue
+                        continue
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
                     Write-ToLogFile -D -C CertFinalization -M $($ChainFile | Select-Object DnsNameList, Subject, @{ Name = 'NotBefore'; Expression = { $_.NotBefore.ToString('yyyy-MM-dd HH:mm:ss') } }, @{ Name = 'NotAfter'; Expression = { $_.NotAfter.ToString('yyyy-MM-dd HH:mm:ss') } }, SerialNumber, Thumbprint, Issuer | ConvertTo-Json -WarningAction SilentlyContinue -Compress -Depth 8)
@@ -5588,19 +5621,19 @@ if ($CertificateActions) {
                     $CertificatePfxFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxFileName
                     $CertificatePfxWithChainFullPath = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
                     Copy-Item $PACertificate.CertFile -Destination $CertificateFullPath -Force
-                    if (-Not [String]::IsNullOrEmpty($CertificateFullPath) -and (Test-Path -Path "$CertificateFullPath" -ErrorAction SilentlyContinue)) {
+                    if (-not [String]::IsNullOrEmpty($CertificateFullPath) -and (Test-Path -Path "$CertificateFullPath" -ErrorAction SilentlyContinue)) {
                         Write-ToLogFile -D -C CertFinalization -M "Certificate file copied successfully."
                     } else {
                         Write-ToLogFile -E -C CertFinalization -M "Certificate file not copied!"
                     }
                     Copy-Item $PACertificate.KeyFile -Destination $CertificateKeyFullPath -Force
-                    if (-Not [String]::IsNullOrEmpty($CertificateKeyFullPath) -and (Test-Path "$CertificateKeyFullPath" -ErrorAction SilentlyContinue)) {
+                    if (-not [String]::IsNullOrEmpty($CertificateKeyFullPath) -and (Test-Path "$CertificateKeyFullPath" -ErrorAction SilentlyContinue)) {
                         Write-ToLogFile -D -C CertFinalization -M "Key file copied successfully."
                     } else {
                         Write-ToLogFile -E -C CertFinalization -M "Key file not copied!"
                     }
                     Copy-Item $PACertificate.PfxFullChain -Destination $CertificatePfxWithChainFullPath -Force
-                    if (-Not [String]::IsNullOrEmpty($CertificatePfxWithChainFullPath) -and (Test-Path "$CertificatePfxWithChainFullPath" -ErrorAction SilentlyContinue)) {
+                    if (-not [String]::IsNullOrEmpty($CertificatePfxWithChainFullPath) -and (Test-Path "$CertificatePfxWithChainFullPath" -ErrorAction SilentlyContinue)) {
                         Write-ToLogFile -D -C CertFinalization -M "Pfx file (with full chain) copied successfully."
                     } else {
                         Write-ToLogFile -E -C CertFinalization -M "Pfx file (with full chain) not copied!"
@@ -5623,7 +5656,7 @@ if ($CertificateActions) {
                         )
                         Write-ToLogFile -D -C CertFinalization -M "Saving the certificate to `"$CertificatePfxFullPath`"."
                         [System.IO.File]::WriteAllBytes($CertificatePfxFullPath, $pfxBytes)
-                        if (-Not [String]::IsNullOrEmpty($CertificatePfxFullPath) -and (Test-Path "$CertificatePfxFullPath" -ErrorAction SilentlyContinue)) {
+                        if (-not [String]::IsNullOrEmpty($CertificatePfxFullPath) -and (Test-Path "$CertificatePfxFullPath" -ErrorAction SilentlyContinue)) {
                             Write-ToLogFile -D -C CertFinalization -M "Pfx file created successfully."
                         } else {
                             Write-ToLogFile -E -C CertFinalization -M "Pfx file not created!"
@@ -5814,7 +5847,7 @@ if ($CertificateActions) {
                         $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $($CertRequest.CertKeyNameToUpdate) -Filters $Filters -ErrorAction SilentlyContinue } catch { $null }
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
-                    if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
+                    if (-not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
                         $CertificateCertKeyName = $($ExistingCertificateDetails.sslcertkey.certkey)
                         $CertificateCertKeyNameEscaped = $CertificateCertKeyName.Replace('\u0027', "'").Replace('\u003c', "<").Replace('\u003e', ">").Replace('\u0026', "&")
                         Write-ToLogFile -I -C ADC-CertUpload -M "Existing certificate `"$CertificateCertKeyName`" found on the ADC, start updating."
@@ -5851,7 +5884,7 @@ if ($CertificateActions) {
                         } else {
                             $CertRequest.RemovePrevious = $false
                         }
-                        if (-Not [String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
+                        if (-not [String]::IsNullOrEmpty($($CertRequest.CertKeyNameToUpdate))) {
                             $CertificateCertKeyName = $($CertRequest.CertKeyNameToUpdate)
                             $CertificateCertKeyNameEscaped = $CertificateCertKeyName.Replace('\u0027', "'").Replace('\u003c', "<").Replace('\u003e', ">").Replace('\u0026', "&")
                             Write-ToLogFile -I -C ADC-CertUpload -M "Adding new certificate as `"$($CertRequest.CertKeyNameToUpdate)`""
@@ -5859,11 +5892,11 @@ if ($CertificateActions) {
                             $CertificateCertKeyName = $CertificateName
                             $CertificateCertKeyNameEscaped = $CertificateCertKeyName.Replace('\u0027', "'").Replace('\u003c', "<").Replace('\u003e', ">").Replace('\u0026', "&")
                             $ExistingCertificateDetails = try { Invoke-ADCRestApi -Session $ADCSession -Method GET -Type sslcertkey -Resource $CertificateName -ErrorAction SilentlyContinue } catch { $null }
-                            if (-Not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
+                            if (-not [String]::IsNullOrEmpty($($ExistingCertificateDetails.sslcertkey.certkey))) {
                                 Write-Warning "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
                                 Write-ToLogFile -W -C ADC-CertUpload -M "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
                                 Invoke-RegisterError 1 "Certificate `"$CertificateCertKeyName`" already exists, please update manually! Or if you need to update an existing Certificate, specify the `"-CertKeyNameToUpdate`" Parameter."
-                                Continue
+                                continue
                             }
                         }
                         $ADCCertKeyUpdating = $false
@@ -5906,7 +5939,7 @@ if ($CertificateActions) {
                                 } catch {
                                     Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
                                     Invoke-RegisterError 1 "Certificate update failed!"
-                                    Continue
+                                    continue
                                 }
                             }
                             if ($CertRequest.RemovePrevious) {
@@ -5927,7 +5960,7 @@ if ($CertificateActions) {
                                         $PreviousKeyFileName = $response.systemfile.filename
                                         Write-ToLogFile -D -C ADC-RemovePrevious -M "PreviousKeyFileName: `"$PreviousKeyFileName`""
                                         $Arguments = @{ filelocation = "/nsconfig/ssl/" }
-                                        if (-Not [String]::IsNullOrEmpty($PreviousCertFileName)) {
+                                        if (-not [String]::IsNullOrEmpty($PreviousCertFileName)) {
                                             Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousCertFileName`""
                                             try {
                                                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine " *"
@@ -5941,7 +5974,7 @@ if ($CertificateActions) {
                                                 Write-DisplayText -ForeGroundColor Red "Failed to remove"
                                             }
                                         }
-                                        if ((-Not [String]::IsNullOrEmpty($PreviousKeyFileName)) -And ($PreviousCertFileName -ne $PreviousKeyFileName)) {
+                                        if ((-not [String]::IsNullOrEmpty($PreviousKeyFileName)) -and ($PreviousCertFileName -ne $PreviousKeyFileName)) {
                                             Write-ToLogFile -I -C ADC-RemovePrevious -M "Removing file: `"/nsconfig/ssl/$PreviousKeyFileName`""
                                             try {
                                                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine " *"
@@ -6024,12 +6057,12 @@ if ($CertificateActions) {
                     }
                     try {
                         $PAOrder = Posh-ACME\Get-PAOrder -Refresh -MainDomain $($CertRequest.CN)
-                        if (-Not ($CertRequest | Get-Member -Name "CertExpires" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+                        if (-not ($CertRequest | Get-Member -Name "CertExpires" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
                             $CertRequest | Add-Member -MemberType NoteProperty -Name "CertExpires" -Value $PAOrder.CertExpires
                         } else {
                             $CertRequest.CertExpires = $PAOrder.CertExpires
                         }
-                        if (-Not ($CertRequest | Get-Member -Name "RenewAfter" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+                        if (-not ($CertRequest | Get-Member -Name "RenewAfter" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
                             $CertRequest | Add-Member -MemberType NoteProperty -Name "RenewAfter" -Value $PAOrder.RenewAfter
                         } else {
                             $CertRequest.RenewAfter = $PAOrder.RenewAfter
@@ -6229,7 +6262,7 @@ if ($CertificateActions) {
 
                     #region CleanupDNSRecords
                     if ($CertRequest.ValidationMethod -eq "dns") {
-                        if ($UseNetScalerDNS -and (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
+                        if ($UseNetScalerDNS -and (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain))) {
                             Write-ToLogFile -I -C ADC-CertUpload -M "Cleanup DNS Records using the NetScaler DNS Plugin"
                             Write-DisplayText -Title "Cleanup DNS Records"
                             foreach ($record in $TXTRecords) {
@@ -6240,7 +6273,7 @@ if ($CertificateActions) {
                             Write-DisplayText -ForegroundColor Magenta "* IMPORTANT: Don't forget to delete the created DNS records!!      *"
                             Write-DisplayText -ForegroundColor Magenta "********************************************************************"
                             Write-ToLogFile -I -C ADC-CertUpload -M "Don't forget to delete the created DNS records!!"
-                            if (-Not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
+                            if (-not [String]::IsNullOrEmpty($AlternateDNSValidationDomain)) {
                                 foreach ($Record in $TXTRecords) {
                                     Write-DisplayText -Blank
                                     Write-DisplayText -Line "DNS Hostname"
@@ -6355,7 +6388,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
                     Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                     Invoke-RegisterError 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
-                    Continue
+                    continue
                 }
                 if ($SessionRequestObject.ErrorOccurred -gt 0 ) {
                     Write-DisplayText -Blank
@@ -6369,8 +6402,8 @@ if ($CertificateActions) {
             #region PostPoSHScriptFilename
             Write-ToLogFile -I -C PostPoSHScript -M "Checking if parameter `"PostPoSHScriptFilename`" was defined."
 
-            if (($CertRequest | Get-Member -Name PostPoSHScriptFilename -ErrorAction SilentlyContinue) -and (-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename)))) {
-                if (-Not (Split-Path -Path $CertRequest.PostPoSHScriptFilename -Parent -ErrorAction SilentlyContinue)) {
+            if (($CertRequest | Get-Member -Name PostPoSHScriptFilename -ErrorAction SilentlyContinue) -and (-not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename)))) {
+                if (-not (Split-Path -Path $CertRequest.PostPoSHScriptFilename -Parent -ErrorAction SilentlyContinue)) {
                     Write-ToLogFile -I -C PostPoSHScript -M "PostPoSHScriptFilename is not a full path, trying to find it in the scripts folder."
                     $tempPath = Join-Path -Path (Join-Path -Path $ScriptRoot -ChildPath "scripts") -ChildPath $CertRequest.PostPoSHScriptFilename
                     Write-ToLogFile -I -C PostPoSHScript -M "Checking if `"$tempPath`" exists."
@@ -6384,11 +6417,11 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C PostPoSHScript -M "PostPoSHScriptFilename is a full path."
                 }
                 $CertRequest.PostPoSHScriptFilename = try { (Resolve-Path -Path $CertRequest.PostPoSHScriptFilename).Path } catch { $null }
-                if ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
+                if ((-not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (Test-Path -Path $($CertRequest.PostPoSHScriptFilename))) {
                     Write-DisplayText -Title "Post PowerShell Script"
                     Write-ToLogFile -I -C PostPoSHScript -M "Post PowerShell Script defined, Filename: `"$($CertRequest.PostPoSHScriptFilename)`""
                     $pfxCertificateFilename = Join-Path -Path $CertificateDirectory -ChildPath $CertificatePfxWithChainFileName
-                    if (-Not [String]::IsNullOrEmpty($($FinalCertificate.Thumbprint)) -and (Test-Path $pfxCertificateFilename)) {
+                    if (-not [String]::IsNullOrEmpty($($FinalCertificate.Thumbprint)) -and (Test-Path $pfxCertificateFilename)) {
                         Write-DisplayText -Line "Script Path"
                         Write-DisplayText -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
                         Write-DisplayText -Line "Executing script"
@@ -6428,7 +6461,7 @@ if ($CertificateActions) {
                                 Write-DisplayText -ForeGroundColor Red "Failed!"
                                 Invoke-RegisterError 1 "Failed to execute Post PowerShell script"
                             }
-                            Default {
+                            default {
                                 Write-DisplayText -ForeGroundColor Yellow "Unknown Result! [$postPoSHScriptResult]"
                                 Write-ToLogFile -W -C PostPoSHScript -M "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
                                 $mailDataItem.Text += "Unknown Result while executing post PowerShell Script! [ $output.ExitCode / $postPoSHScriptResult ]"
@@ -6438,7 +6471,7 @@ if ($CertificateActions) {
                         Write-DisplayText -ForeGroundColor Yellow "SKIPPED! Not a valid certificate found!"
                         Write-ToLogFile -W -C PostPoSHScript -M "Not a valid certificate found! Skipped the execution."
                     }
-                } elseif ((-Not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (-Not (Test-Path -Path $($CertRequest.PostPoSHScriptFilename)))) {
+                } elseif ((-not [String]::IsNullOrEmpty($($CertRequest.PostPoSHScriptFilename))) -and (-not (Test-Path -Path $($CertRequest.PostPoSHScriptFilename)))) {
                     Write-DisplayText -Title "Post PowerShell Script"
                     Write-DisplayText -Line "Script Path"
                     Write-DisplayText -NoNewLine -ForeGroundColor Cyan $CertRequest.PostPoSHScriptFilename
@@ -6535,7 +6568,7 @@ if ($RemoveTestCertificates) {
     }
     Write-DisplayText -Line "Linked Certkeys found"
     Write-DisplayText -ForeGroundColor Cyan "$(($LinkedCertificates | Measure-Object).Count)"
-    ForEach ($LinkedCertificate in $LinkedCertificates) {
+    foreach ($LinkedCertificate in $LinkedCertificates) {
         $payload = @{"certkey" = "$($LinkedCertificate.certkey)"; }
         try {
             $response = Invoke-ADCRestApi -Session $ADCSession -Method POST -Type sslcertkey -Payload $payload -Action unlink
@@ -6555,7 +6588,7 @@ if ($RemoveTestCertificates) {
     }
     Write-DisplayText -Line "Certificates found"
     Write-DisplayText -ForeGroundColor Cyan "$(($FakeCerts | Measure-Object).Count)"
-    ForEach ($FakeCert in $FakeCerts) {
+    foreach ($FakeCert in $FakeCerts) {
         try {
             Write-ToLogFile -I -C RemoveTestCerts -M "Trying to delete `"$($FakeCert.certkey)`"."
             Write-DisplayText -Line "SSL Certkey"
@@ -6608,7 +6641,7 @@ if ($RemoveTestCertificates) {
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`". Exception Message: $($_.Exception.Message)"
             Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
         }
-        if (-Not ($(Join-Path -Path $CertFilePath -ChildPath $CertFileName) -eq $(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName))) {
+        if (-not ($(Join-Path -Path $CertFilePath -ChildPath $CertFileName) -eq $(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName))) {
             Write-DisplayText -Line "SSL Key File"
             $Arguments = @{"filelocation" = "$KeyFilePath"; }
             try {
@@ -6628,7 +6661,7 @@ if ($RemoveTestCertificates) {
     $CertFilesToRemove = $CertFiles.systemfile | Where-Object { $_.filename -match "TST-" }
     Write-DisplayText -Line "Misc. Files Found"
     Write-DisplayText -ForeGroundColor Cyan "$(($CertFilesToRemove | Measure-Object).Count)"
-    ForEach ($CertFileToRemove in $CertFilesToRemove) {
+    foreach ($CertFileToRemove in $CertFilesToRemove) {
         Write-DisplayText -Line "File"
         $Arguments = @{"filelocation" = "$($CertFileToRemove.filelocation)"; }
         try {
@@ -6667,7 +6700,7 @@ if ($CleanAllExpiredCertsOnDisk) {
     }
 }
 
-if ($SaveConfig -and (-Not [String]::IsNullOrEmpty($ConfigFile))) {
+if ($SaveConfig -and (-not [String]::IsNullOrEmpty($ConfigFile))) {
     try {
         Write-ToLogFile -I -C Final-Actions -M "Saving parameters to file `"$ConfigFile`""
         $Parameters | ConvertTo-Json -Depth 7 -WarningAction SilentlyContinue | Out-File -FilePath $ConfigFile -Encoding unicode -Force -ErrorAction Stop | Out-Null
@@ -6684,9 +6717,9 @@ if ($SaveConfig -and (-Not [String]::IsNullOrEmpty($ConfigFile))) {
 }
 
 $RequestsWithErrors = $SessionRequestObjects | Where-Object { $_.ErrorOccurred -gt 0 }
-if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
+if (-not [String]::IsNullOrEmpty($RequestsWithErrors)) {
     $ExitCode = 0
-    ForEach ($FailedItem in $RequestsWithErrors) {
+    foreach ($FailedItem in $RequestsWithErrors) {
         Write-Error "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
         Write-ToLogFile -E -C Final-Actions -M "There were $($FailedItem.ErrorOccurred) errors during the request for CN: `"$($FailedItem.CN)`"!"
         $ExitCode = $FailedItem.ExitCode
@@ -6702,215 +6735,210 @@ if (-Not [String]::IsNullOrEmpty($RequestsWithErrors)) {
 TerminateScript 0
 
 # SIG # Begin signature block
-# MIInZQYJKoZIhvcNAQcCoIInVjCCJ1ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDXNlWIj/3KGHiQ
-# Y6uB0lYJc/Nnrvq0S5XdX19kVHNIDaCCIBcwggXJMIIEsaADAgECAhAbtY8lKt8j
-# AEkoya49fu0nMA0GCSqGSIb3DQEBDAUAMH4xCzAJBgNVBAYTAlBMMSIwIAYDVQQK
-# ExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQLEx5DZXJ0dW0gQ2Vy
-# dGlmaWNhdGlvbiBBdXRob3JpdHkxIjAgBgNVBAMTGUNlcnR1bSBUcnVzdGVkIE5l
-# dHdvcmsgQ0EwHhcNMjEwNTMxMDY0MzA2WhcNMjkwOTE3MDY0MzA2WjCBgDELMAkG
-# A1UEBhMCUEwxIjAgBgNVBAoTGVVuaXpldG8gVGVjaG5vbG9naWVzIFMuQS4xJzAl
-# BgNVBAsTHkNlcnR1bSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTEkMCIGA1UEAxMb
-# Q2VydHVtIFRydXN0ZWQgTmV0d29yayBDQSAyMIICIjANBgkqhkiG9w0BAQEFAAOC
-# Ag8AMIICCgKCAgEAvfl4+ObVgAxknYYblmRnPyI6HnUBfe/7XGeMycxca6mR5rlC
-# 5SBLm9qbe7mZXdmbgEvXhEArJ9PoujC7Pgkap0mV7ytAJMKXx6fumyXvqAoAl4Va
-# qp3cKcniNQfrcE1K1sGzVrihQTib0fsxf4/gX+GxPw+OFklg1waNGPmqJhCrKtPQ
-# 0WeNG0a+RzDVLnLRxWPa52N5RH5LYySJhi40PylMUosqp8DikSiJucBb+R3Z5yet
-# /5oCl8HGUJKbAiy9qbk0WQq/hEr/3/6zn+vZnuCYI+yma3cWKtvMrTscpIfcRnNe
-# GWJoRVfkkIJCu0LW8GHgwaM9ZqNd9BjuiMmNF0UpmTJ1AjHuKSbIawLmtWJFfzcV
-# WiNoidQ+3k4nsPBADLxNF8tNorMe0AZa3faTz1d1mfX6hhpneLO/lv403L3nUlbl
-# s+V1e9dBkQXcXWnjlQ1DufyDljmVe2yAWk8TcsbXfSl6RLpSpCrVQUYJIP4ioLZb
-# MI28iQzV13D4h1L92u+sUS4Hs07+0AnacO+Y+lbmbdu1V0vc5SwlFcieLnhO+Nqc
-# noYsylfzGuXIkosagpZ6w7xQEmnYDlpGizrrJvojybawgb5CAKT41v4wLsfSRvbl
-# jnX98sy50IdbzAYQYLuDNbdeZ95H7JlI8aShFf6tjGKOOVVPORa5sWOd/7cCAwEA
-# AaOCAT4wggE6MA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFLahVDkCw6A/joq8
-# +tT4HKbROg79MB8GA1UdIwQYMBaAFAh2zcsH/yT2xc3tu5C84oQ3RnX3MA4GA1Ud
-# DwEB/wQEAwIBBjAvBgNVHR8EKDAmMCSgIqAghh5odHRwOi8vY3JsLmNlcnR1bS5w
-# bC9jdG5jYS5jcmwwawYIKwYBBQUHAQEEXzBdMCgGCCsGAQUFBzABhhxodHRwOi8v
-# c3ViY2Eub2NzcC1jZXJ0dW0uY29tMDEGCCsGAQUFBzAChiVodHRwOi8vcmVwb3Np
-# dG9yeS5jZXJ0dW0ucGwvY3RuY2EuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQG
-# CCsGAQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEM
-# BQADggEBAFHCoVgWIhCL/IYx1MIy01z4S6Ivaj5N+KsIHu3V6PrnCA3st8YeDrJ1
-# BXqxC/rXdGoABh+kzqrya33YEcARCNQOTWHFOqj6seHjmOriY/1B9ZN9DbxdkjuR
-# mmW60F9MvkyNaAMQFtXx0ASKhTP5N+dbLiZpQjy6zbzUeulNndrnQ/tjUoCFBMQl
-# lVXwfqefAcVbKPjgzoZwpic7Ofs4LphTZSJ1Ldf23SIikZbr3WjtP6MZl9M7JYjs
-# NhI9qX7OAo0FmpKnJ25FspxihjcNpDOO16hO0EoXQ0zF8ads0h5YbBRRfopUofbv
-# n3l6XYGaFpAP4bvxSgD5+d2+7arszgowggZFMIIELaADAgECAhAIMk+dt9qRb2Pk
-# 8qM8Xl1RMA0GCSqGSIb3DQEBCwUAMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhB
-# c3NlY28gRGF0YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNp
-# Z25pbmcgMjAyMSBDQTAeFw0yNDA0MDQxNDA0MjRaFw0yNzA0MDQxNDA0MjNaMGsx
-# CzAJBgNVBAYTAk5MMRIwEAYDVQQHDAlTY2hpam5kZWwxIzAhBgNVBAoMGkpvaG4g
-# QmlsbGVrZW5zIENvbnN1bHRhbmN5MSMwIQYDVQQDDBpKb2huIEJpbGxla2VucyBD
-# b25zdWx0YW5jeTCCAaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBAMslntDb
-# SQwHZXwFhmibivbnd0Qfn6sqe/6fos3pKzKxEsR907RkDMet2x6RRg3eJkiIr3TF
-# PwqBooyXXgK3zxxpyhGOcuIqyM9J28DVf4kUyZHsjGO/8HFjrr3K1hABNUszP0o7
-# H3o6J31eqV1UmCXYhQlNoW9FOmRC1amlquBmh7w4EKYEytqdmdOBavAD5Xq4vLPx
-# NP6kyA+B2YTtk/xM27TghtbwFGKnu9Vwnm7dFcpLxans4ONt2OxDQOMA5NwgcUv/
-# YTpjhq9qoz6ivG55NRJGNvUXsM3w2o7dR6Xh4MuEGrTSrOWGg2A5EcLH1XqQtkF5
-# cZnAPM8W/9HUp8ggornWnFVQ9/6Mga+ermy5wy5XrmQpN+x3u6tit7xlHk1Hc+4X
-# Y4a4ie3BPXG2PhJhmZAn4ebNSBwNHh8z7WTT9X9OFERepGSytZVeEP7hgyptSLcu
-# hpwWeR4QdBb7dV++4p3PsAUQVHFpwkSbrRTv4EiJ0Lcz9P1HPGFoHiFAQQIDAQAB
-# o4IBeDCCAXQwDAYDVR0TAQH/BAIwADA9BgNVHR8ENjA0MDKgMKAuhixodHRwOi8v
-# Y2NzY2EyMDIxLmNybC5jZXJ0dW0ucGwvY2NzY2EyMDIxLmNybDBzBggrBgEFBQcB
-# AQRnMGUwLAYIKwYBBQUHMAGGIGh0dHA6Ly9jY3NjYTIwMjEub2NzcC1jZXJ0dW0u
-# Y29tMDUGCCsGAQUFBzAChilodHRwOi8vcmVwb3NpdG9yeS5jZXJ0dW0ucGwvY2Nz
-# Y2EyMDIxLmNlcjAfBgNVHSMEGDAWgBTddF1MANt7n6B0yrFu9zzAMsBwzTAdBgNV
-# HQ4EFgQUO6KtBpOBgmrlANVAnyiQC6W6lJwwSwYDVR0gBEQwQjAIBgZngQwBBAEw
-# NgYLKoRoAYb2dwIFAQQwJzAlBggrBgEFBQcCARYZaHR0cHM6Ly93d3cuY2VydHVt
-# LnBsL0NQUzATBgNVHSUEDDAKBggrBgEFBQcDAzAOBgNVHQ8BAf8EBAMCB4AwDQYJ
-# KoZIhvcNAQELBQADggIBAEQsN8wgPMdWVkwHPPTN+jKpdns5AKVFjcn00psf2NGV
-# VgWWNQBIQc9lEuTBWb54IK6Ga3hxQRZfnPNo5HGl73YLmFgdFQrFzZ1lnaMdIcyh
-# 8LTWv6+XNWfoyCM9wCp4zMIDPOs8LKSMQqA/wRgqiACWnOS4a6fyd5GUIAm4Cuap
-# tpFYr90l4Dn/wAdXOdY32UhgzmSuxpUbhD8gVJUaBNVmQaRqeU8y49MxiVrUKJXd
-# e1BCrtR9awXbqembc7Nqvmi60tYKlD27hlpKtj6eGPjkht0hHEsgzU0Fxw7ZJghY
-# G2wXfpF2ziN893ak9Mi/1dmCNmorGOnybKYfT6ff6YTCDDNkod4egcMZdOSv+/Qv
-# +HAeIgEvrxE9QsGlzTwbRtbm6gwYYcVBs/SsVUdBn/TSB35MMxRhHE5iC3aUTkDb
-# ceo/XP3uFhVL4g2JZHpFfCSu2TQrrzRn2sn07jfMvzeHArCOJgBW1gPqR3WrJ4hU
-# xL06Rbg1gs9tU5HGGz9KNQMfQFQ70Wz7UIhezGcFcRfkIfSkMmQYYpsc7rfzj+z0
-# ThfDVzzJr2dMOFsMlfj1T6l22GBq9XQx0A4lcc5Fl9pRxbOuHHWFqIBD/BCEhwni
-# OCySzqENd2N+oz8znKooSISStnkNaYXt6xblJF2dx9Dn89FK7d1IquNxOwt0tI5d
-# MIIGgzCCBGugAwIBAgIRAJ6cBPZVqLSnAm1JjGx4jaowDQYJKoZIhvcNAQEMBQAw
-# VjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5B
-# LjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGluZyAyMDIxIENBMB4XDTI1MDEw
-# OTA4NDA0M1oXDTM2MDEwNzA4NDA0M1owUDELMAkGA1UEBhMCUEwxITAfBgNVBAoM
-# GEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEeMBwGA1UEAwwVQ2VydHVtIFRpbWVz
-# dGFtcCAyMDI1MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAxylfZ/is
-# K92QReVAi1jkPzXW25QL0HhjI3wov24m0+9YT5MCleFL0LdTLjsKGlAmLbC4cPI6
-# 5jpqM9h6ByisxKYktwNawN7LF1GTJ0q24olaQ4/uTLZ210lRCSm3HLh25sHI5d/T
-# eFu9s3HKAv53igLsDtQyfvUjvmJB53EYlfeYnVocUQHA2L+O4XPRhBWbUxcUFy26
-# y+DezfdAai5Xt2ss583HBD0PhOh+qdNMxPR1Kfvt22UxeD38j0Zygi3OXswMxKqm
-# 21ORf57o8evU9ZptNo5bZRV50zBdb5WpHkF1mKRiI7a0e1j+7SDGZ5O/J62En3gK
-# fJXvv1v+fqq+7akGbn1vYp77EU3H5Oz/ppyoyS7km8KoMXpbwga8s/a+dW09OetW
-# kdnPo6BcoKlu5+BTwpzCzo+NF+KLe8D9rvJC0Q1R24bB6uUhi6q/A2xateMLNgC0
-# t7WGthhogO8F+/a0uaAzJ0mP8ZiTuXLqbkr6qcpczu483CzsFoqgq6tOQF6edUka
-# 4/cUbfCnWVqQ3VoVphPDBYhbZkNAKjgyyQZ9YUAMdxbw/6bXuqRNQYpdATlQtkp2
-# 3qv9zcpQ8Lw3QIP9AmUSbECGsnR7MCcMmAZWFA8mkCtslEue4aG52Mf70rTL0wfe
-# oouIxld1JGYdxr8HQwrGZGyV2lPAExf8+g8CAwEAAaOCAVAwggFMMHUGCCsGAQUF
-# BwEBBGkwZzA7BggrBgEFBQcwAoYvaHR0cDovL3N1YmNhLnJlcG9zaXRvcnkuY2Vy
-# dHVtLnBsL2N0c2NhMjAyMS5jZXIwKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
-# Y3NwLWNlcnR1bS5jb20wHwYDVR0jBBgwFoAUvlQCL79AbHNDzqwJJU6eQ0Qa7uAw
-# DAYDVR0TAQH/BAIwADA5BgNVHR8EMjAwMC6gLKAqhihodHRwOi8vc3ViY2EuY3Js
-# LmNlcnR1bS5wbC9jdHNjYTIwMjEuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMI
-# MA4GA1UdDwEB/wQEAwIHgDAiBgNVHSAEGzAZMAgGBmeBDAEEAjANBgsqhGgBhvZ3
-# AgUBCzAdBgNVHQ4EFgQUgYwGoChT/AA/236eSsEfIuyyEokwDQYJKoZIhvcNAQEM
-# BQADggIBAJkPGQwb6wVD52i/OwGHOCZZnx9WT+creuTLc2LvH25rC93d3L2LPhJ2
-# 7X7vX9sDHoc0sr3nd0XOfWtODvDTe6ZcOD14O9cH0hODERTNRLqi+t86vbk45v/b
-# QO969WgnVppKayqdGi6GaJVDdKhnL6/fkBvFSCVTHLkqhXhL0ayxCitsVZDEnU02
-# w4bHlIyOLzfga15uc+ORAN2g6UomULqDXeERZw83XW4H3AkD2mNlMl6szQY57s+g
-# Mh5xcyrTZQnr5DAYIeHSA7f9AxhgzmkxAFmbVBKiuQJR3dDwZ3eNC56IOFAE1Nwb
-# ehh33g5lhBxU4xyrJp/UPMIho/dOm1YC/N+bXxB/RIGA5JaqzlMVsQ39XDgO3bP6
-# /KSHNr4y0PbTkpJvVl1W503ixt0Oe3604Ar0zm3f6n91MxPe50zTlO7zjGRKONQI
-# JobhGxrMkCAzP1enyUF9UZ88yTaKn005FM1KD9rZTR5zbIxaNmFfucmXKGmsJjVp
-# ke08sFFxtv7xYCWhtG3xKKHXnl6ewOCOB2gw6X0Wu8qYCRD3k8B7gUSaY/Tftcba
-# 4vugcxz8LAAL1CZufDxqFbLXhwF8L6YODVYL1JNwSm5e8RbpVlNSh6h/7JO09AhQ
-# UOaIbij5hX9aKgD+ADvWt2INsATMBINczzoesW1F7JM7PYkmvchsMIIGuTCCBKGg
-# AwIBAgIRAJmjgAomVTtlq9xuhKaz6jkwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNV
-# BAYTAlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYD
-# VQQLEx5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0Nl
-# cnR1bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMThaFw0zNjA1
-# MTgwNTMyMThaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBT
-# eXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBD
-# QTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJ0jzwQwIzvBRiznM3M+
-# Y116dbq+XE26vest+L7k5n5TeJkgH4Cyk74IL9uP61olRsxsU/WBAElTMNQI/HsE
-# 0uCJ3VPLO1UufnY0qDHG7yCnJOvoSNbIbMpT+Cci75scCx7UsKK1fcJo4TXetu4d
-# u2vEXa09Tx/bndCBfp47zJNsamzUyD7J1rcNxOw5g6FJg0ImIv7nCeNn3B6gZG28
-# WAwe0mDqLrvU49chyKIc7gvCjan3GH+2eP4mYJASflBTQ3HOs6JGdriSMVoD1lzB
-# JobtYDF4L/GhlLEXWgrVQ9m0pW37KuwYqpY42grp/kSYE4BUQrbLgBMNKRvfhQPs
-# kDfZ/5GbTCyvlqPN+0OEDmYGKlVkOMenDO/xtMrMINRJS5SY+jWCi8PRHAVxO0xd
-# x8m2bWL4/ZQ1dp0/JhUpHEpABMc3eKax8GI1F03mSJVV6o/nmmKqDE6TK34eTAgD
-# iBuZJzeEPyR7rq30yOVw2DvetlmWssewAhX+cnSaaBKMEj9O2GgYkPJ16Q5Da1AP
-# YO6n/6wpCm1qUOW6Ln1J6tVImDyAB5Xs3+JriasaiJ7P5KpXeiVV/HIsW3ej85A6
-# cGaOEpQA2gotiUqZSkoQUjQ9+hPxDVb/Lqz0tMjp6RuLSKARsVQgETwoNQZ8jCeK
-# wSQHDkpwFndfCceZ/OfCUqjxAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/
-# MB0GA1UdDgQWBBTddF1MANt7n6B0yrFu9zzAMsBwzTAfBgNVHSMEGDAWgBS2oVQ5
-# AsOgP46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYB
-# BQUHAwMwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3Ru
-# Y2EyLmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJj
-# YS5vY3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5
-# LmNlcnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsG
-# AQUFBwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQAD
-# ggIBAHWIWA/lj1AomlOfEOxD/PQ7bcmahmJ9l0Q4SZC+j/v09CD2csX8Yl7pmJQE
-# TIMEcy0VErSZePdC/eAvSxhd7488x/Cat4ke+AUZZDtfCd8yHZgikGuS8mePCHyA
-# iU2VSXgoQ1MrkMuqxg8S1FALDtHqnizYS1bIMOv8znyJjZQESp9RT+6NH024/IqT
-# RsRwSLrYkbFq4VjNn/KV3Xd8dpmyQiirZdrONoPSlCRxCIi54vQcqKiFLpeBm5S0
-# IoDtLoIe21kSw5tAnWPazS6sgN2oXvFpcVVpMcq0C4x/CLSNe0XckmmGsl9z4UUg
-# uAJtf+5gE8GVsEg/ge3jHGTYaZ/MyfujE8hOmKBAUkVa7NMxRSB1EdPFpNIpEn/p
-# SHuSL+kWN/2xQBJaDFPr1AX0qLgkXmcEi6PFnaw5T17UdIInA58rTu3mefNuzUts
-# e4AgYmxEmJDodf8NbVcU6VdjWtz0e58WFZT7tST6EWQmx/OoHPelE77lojq7lpsj
-# hDCzhhp4kfsfszxf9g2hoCtltXhCX6NqsqwTT7xe8LgMkH4hVy8L1h2pqGLT2aNC
-# x7h/F95/QvsTeGGjY7dssMzq/rSshFQKLZ8lPb8hFTmiGDJNyHga5hZ59IGynk08
-# mHhBFM/0MLeBzlAQq1utNjQprztZ5vv/NJy8ua9AGbwkMWkOMIIGuTCCBKGgAwIB
-# AgIRAOf/acc7Nc5LkSbYdHxopYcwDQYJKoZIhvcNAQEMBQAwgYAxCzAJBgNVBAYT
-# AlBMMSIwIAYDVQQKExlVbml6ZXRvIFRlY2hub2xvZ2llcyBTLkEuMScwJQYDVQQL
-# Ex5DZXJ0dW0gQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkxJDAiBgNVBAMTG0NlcnR1
-# bSBUcnVzdGVkIE5ldHdvcmsgQ0EgMjAeFw0yMTA1MTkwNTMyMDdaFw0zNjA1MTgw
-# NTMyMDdaMFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBTeXN0
-# ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBUaW1lc3RhbXBpbmcgMjAyMSBDQTCC
-# AiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAOkSHwQ17bldesWmlUG+imV/
-# TnfRbSV102aO2/hhKH9/t4NAoVoipzu0ePujH67y8iwlmWuhqRR4xLeLdPxolEL5
-# 5CzgUXQaq+Qzr5Zk7ySbNl/GZloFiYwuzwWS2AVgLPLCZd5DV8QTF+V57Y6lsdWT
-# rrl5dEeMfsxhkjM2eOXabwfLy6UH2ZHzAv9bS/SmMo1PobSx+vHWST7c4aiwVRvv
-# JY2dWRYpTipLEu/XqQnqhUngFJtnjExqTokt4HyzOsr2/AYOm8YOcoJQxgvc26+L
-# AfXHiBkbQkBdTfHak4DP3UlYolICZHL+XSzSXlsRgqiWD4MypWGU4A13xiHmaRBZ
-# owS8FET+QAbMiqBaHDM3Y6wohW07yZ/mw9ZKu/KmVIAEBhrXesxifPB+DTyeWNke
-# CGq4IlgJr/Ecr1px6/1QPtj66yvXl3uauzPPGEXUk6vUym6nZyE1IGXI45uGVI7X
-# qvCt99WuD9LNop9Kd1LmzBGGvxucOo0lj1M3IRi8FimAX3krunSDguC5HgD75nWc
-# UgdZVjm/R81VmaDPEP25Wj+C1reicY5CPckLGBjHQqsJe7jJz1CJXBMUtZs10cVK
-# MEK3n/xD2ku5GFWhx0K6eFwe50xLUIZD9GfT7s/5/MyBZ1Ep8Q6H+GMuudDwF0mJ
-# itk3G8g6EzZprfMQMc3DAgMBAAGjggFVMIIBUTAPBgNVHRMBAf8EBTADAQH/MB0G
-# A1UdDgQWBBS+VAIvv0Bsc0POrAklTp5DRBru4DAfBgNVHSMEGDAWgBS2oVQ5AsOg
-# P46KvPrU+Bym0ToO/TAOBgNVHQ8BAf8EBAMCAQYwEwYDVR0lBAwwCgYIKwYBBQUH
-# AwgwMAYDVR0fBCkwJzAloCOgIYYfaHR0cDovL2NybC5jZXJ0dW0ucGwvY3RuY2Ey
-# LmNybDBsBggrBgEFBQcBAQRgMF4wKAYIKwYBBQUHMAGGHGh0dHA6Ly9zdWJjYS5v
-# Y3NwLWNlcnR1bS5jb20wMgYIKwYBBQUHMAKGJmh0dHA6Ly9yZXBvc2l0b3J5LmNl
-# cnR1bS5wbC9jdG5jYTIuY2VyMDkGA1UdIAQyMDAwLgYEVR0gADAmMCQGCCsGAQUF
-# BwIBFhhodHRwOi8vd3d3LmNlcnR1bS5wbC9DUFMwDQYJKoZIhvcNAQEMBQADggIB
-# ALiTWXfJTBX9lAcIoKd6oCzwQZOfARQkt0OmiQ390yEqMrStHmpfycggfPGlBHdM
-# DDYhHDVTGyvY+WIbdsIWpJ1BNRt9pOrpXe8HMR5sOu71AWOqUqfEIXaHWOEs0UWm
-# Vs8mJb4lKclOHV8oSoR0p3GCX2tVO+XF8Qnt7E6fbkwZt3/AY/C5KYzFElU7TCeq
-# BLuSagmM0X3Op56EVIMM/xlWRaDgRna0hLQze5mYHJGv7UuTCOO3wC1bzeZWdlPJ
-# Ow5v4U1/AljsNLgWZaGRFuBwdF62t6hOKs86v+jPIMqFPwxNJN/ou22DqzpP+7Ty
-# YNbDocrThlEN9D2xvvtBXyYqA7jhYY/fW9edUqhZUmkUGM++Mvz9lyT/nBdfaKqM
-# 5otK0U5H8hCSL4SGfjOVyBWbbZlUIE8X6XycDBRRKEK0q5JTsaZksoKabFAyRKJY
-# gtObwS1UPoDGcmGirwSeGMQTJSh+WR5EXZaEWJVA6ZZPBlGvjgjFYaQ0kLq1Oitb
-# muXZmX7Z70ks9h/elK0A8wOg8oiNVd3o1bb59ms1QF4OjZ45rkWfsGuz8ctB9/le
-# CuKzkx5Rt1WAOsXy7E7pws+9k+jrePrZKw2DnmlNaT19QgX2I+hFtvhC6uOhj/Cg
-# jVEA4q1i1OJzpoAmre7zdEg+kZcFIkrDHgokA5mcIMK1MYIGpDCCBqACAQEwajBW
-# MQswCQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEu
-# MSQwIgYDVQQDExtDZXJ0dW0gQ29kZSBTaWduaW5nIDIwMjEgQ0ECEAgyT5232pFv
-# Y+TyozxeXVEwDQYJYIZIAWUDBAIBBQCggYQwGAYKKwYBBAGCNwIBDDEKMAigAoAA
-# oQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4w
-# DAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgbCsnhGngMO4+IssOcRebrGw/
-# knn/FzOWSZWU27cZk3QwDQYJKoZIhvcNAQEBBQAEggGAd2qweui6ql2s3aKv5pNR
-# pdt+Psl/kZpa80E3dZcSdJQp27obrZewhXASR5HzYmpVpuZ0V+PXrduXPV8BqLPi
-# Q61D1lg1coDzaCqAUAUd3OrAVReYVnUkP67rOJfzl9Su8aOGeWnVAz18Un8heatb
-# OFhDOgpf8/XYJjlXyc0HPmxifK4ZPZCQm1zr0tRIIQXSdmP06cPR2Tk/u8pOBEIV
-# ArmxfgT9tKYq1VbyuhGWv872IMLRQYKJYVnk3HgjRt1rEXK9jKCHr3wGDc7Q599t
-# eZEOiGzaCFoBJwWbc+exQBjvd6V/Uc8o6A1P84hqJ+6b19KZGhkd3n4Ze/woryGW
-# gGJYuuN5fGeKYt1GGhylgmVYNp5CTdw9fDGdwrLsZ+xHurFACE5P+xy2+xoqTIgD
-# dy3Fh5XW0tPqNGJcngw567lfbT8BG02Uy2wuk4m7hWp86eUWmXNdVac1IuBnDYDF
-# c4sC9mXh8h6Ht+AcoAg8PdvfnZwKNDc4kL8knRQLsx79oYIEBDCCBAAGCSqGSIb3
-# DQEJBjGCA/EwggPtAgEBMGswVjELMAkGA1UEBhMCUEwxITAfBgNVBAoTGEFzc2Vj
-# byBEYXRhIFN5c3RlbXMgUy5BLjEkMCIGA1UEAxMbQ2VydHVtIFRpbWVzdGFtcGlu
-# ZyAyMDIxIENBAhEAnpwE9lWotKcCbUmMbHiNqjANBglghkgBZQMEAgIFAKCCAVcw
-# GgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMBwGCSqGSIb3DQEJBTEPFw0yNTA2
-# MTIwNDM0MTVaMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIM+h3DWd7SvDy4kPojDl
-# 2vd7VA8abisj3c8XVOGM+qDVMD8GCSqGSIb3DQEJBDEyBDBwm7R/s0v2/cv7eQHj
-# JSXfvfperFbKxC5rlr6l/F6rr4BTvkQZLIGoaAhEA2QAAOowgaAGCyqGSIb3DQEJ
-# EAIMMYGQMIGNMIGKMIGHBBTDJbibF/zFAmBhzitxe0UH3ZxqajBvMFqkWDBWMQsw
-# CQYDVQQGEwJQTDEhMB8GA1UEChMYQXNzZWNvIERhdGEgU3lzdGVtcyBTLkEuMSQw
-# IgYDVQQDExtDZXJ0dW0gVGltZXN0YW1waW5nIDIwMjEgQ0ECEQCenAT2Vai0pwJt
-# SYxseI2qMA0GCSqGSIb3DQEBAQUABIICAGZn6iI6bIiV9zniNlodwpejs20lHXH8
-# EB4kHpTmTm71FxmhDbld88W0p2QnS248qKQVCaL391ohoeJfaKzLyPPEzvwbMOV4
-# DB2RsnXQrCTMzTsY0lQQV3jJiwq83e+WKeW7II+xoXCrOcyndrI+NHsitATdC1Wo
-# Qmi7WS+yBZUYuagdrSHaPPMh5HW1aXHwW+sIJVhhQBlf6W0hXUg77aF2ukXsp+a+
-# rPw1aBH0giXnb/7gy7SFpRMUVbNm0k1awsI/LvR4GzTsVKTTRrs3+ZjHo//4DDBg
-# UBL70BM3e4Ni9cwi8xV8kERGr0waN9frnmj2NZOw0r0zEHZCcd6PdoQe/DHpwtEe
-# 7ury78pI8sMsQ46LPtZIGGLqk4fcHTen8RKJ8fxwLbHpa0l7PgZhD8cPi3VL/A4I
-# L6XXTb3lIDGgNWtHp+klpMM5WYVo4PVQFvWqP5gGRYLtU33wY1KJJ46A28YD2IGx
-# 2XVQM7aqNd7/5SOV+K3jZk1r/nQ0xYdy0e3M7PbbAXpJ7CrTovTALL+u3EM32EeC
-# biZstiGHd/e2SuahFlVwkjDqo6g7XPFipIVv7vjuY0ToO2LMCIezAmhr+bIeWFa6
-# eRPP/jj4BGTFeO0BsD2DVfuwmSpXFgAy6kJoCCZpgHy3Y5US0ByrJoO+qNDWsk48
-# +DFITG1YdrJN
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCN2SdS0dN/cH/s
+# qosgzuR+PW1+0dXqSzui59M1W9FJ9aCCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
+# Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
+# U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
+# WjBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSwwKgYD
+# VQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNjCCAaIwDQYJ
+# KoZIhvcNAQEBBQADggGPADCCAYoCggGBAM2Y2ENBq26CK+z2M34mNOSJjNPvIhKA
+# VD7vJq+MDoGD46IiM+b83+3ecLvBhStSVjeYXIjfa3ajoW3cS3ElcJzkyZlBnwDE
+# JuHlzpbN4kMH2qRBVrjrGJgSlzzUqcGQBaCxpectRGhhnOSwcjPMI3G0hedv2eNm
+# GiUbD12OeORN0ADzdpsQ4dDi6M4YhoGE9cbY11XxM2AVZn0GiOUC9+XE0wI7CQKf
+# OUfigLDn7i/WeyxZ43XLj5GVo7LDBExSLnh+va8WxTlA+uBvq1KO8RSHUQLgzb1g
+# bL9Ihgzxmkdp2ZWNuLc+XyEmJNbD2OIIq/fWlwBp6KNL19zpHsODLIsgZ+WZ1AzC
+# s1HEK6VWrxmnKyJJg2Lv23DlEdZlQSGdF+z+Gyn9/CRezKe7WNyxRf4e4bwUtrYE
+# 2F5Q+05yDD68clwnweckKtxRaF0VzN/w76kOLIaFVhf5sMM/caEZLtOYqYadtn03
+# 4ykSFaZuIBU9uCSrKRKTPJhWvXk4CllgrwIDAQABo4IBXDCCAVgwHwYDVR0jBBgw
+# FoAU9ndq3T/9ARP/FqFsggIv0Ao9FCUwHQYDVR0OBBYEFF9Y7UwxeqJhQo1SgLqz
+# YZcZojKbMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8ECDAGAQH/AgEAMBMGA1Ud
+# JQQMMAoGCCsGAQUFBwMIMBEGA1UdIAQKMAgwBgYEVR0gADBMBgNVHR8ERTBDMEGg
+# P6A9hjtodHRwOi8vY3JsLnNlY3RpZ28uY29tL1NlY3RpZ29QdWJsaWNUaW1lU3Rh
+# bXBpbmdSb290UjQ2LmNybDB8BggrBgEFBQcBAQRwMG4wRwYIKwYBBQUHMAKGO2h0
+# dHA6Ly9jcnQuc2VjdGlnby5jb20vU2VjdGlnb1B1YmxpY1RpbWVTdGFtcGluZ1Jv
+# b3RSNDYucDdjMCMGCCsGAQUFBzABhhdodHRwOi8vb2NzcC5zZWN0aWdvLmNvbTAN
+# BgkqhkiG9w0BAQwFAAOCAgEAEtd7IK0ONVgMnoEdJVj9TC1ndK/HYiYh9lVUacah
+# RoZ2W2hfiEOyQExnHk1jkvpIJzAMxmEc6ZvIyHI5UkPCbXKspioYMdbOnBWQUn73
+# 3qMooBfIghpR/klUqNxx6/fDXqY0hSU1OSkkSivt51UlmJElUICZYBodzD3M/SFj
+# eCP59anwxs6hwj1mfvzG+b1coYGnqsSz2wSKr+nDO+Db8qNcTbJZRAiSazr7KyUJ
+# Go1c+MScGfG5QHV+bps8BX5Oyv9Ct36Y4Il6ajTqV2ifikkVtB3RNBUgwu/mSiSU
+# ice/Jp/q8BMk/gN8+0rNIE+QqU63JoVMCMPY2752LmESsRVVoypJVt8/N3qQ1c6F
+# ibbcRabo3azZkcIdWGVSAdoLgAIxEKBeNh9AQO1gQrnh1TA8ldXuJzPSuALOz1Uj
+# b0PCyNVkWk7hkhVHfcvBfI8NtgWQupiaAeNHe0pWSGH2opXZYKYG4Lbukg7HpNi/
+# KqJhue2Keak6qH9A8CeEOB7Eob0Zf+fU+CCQaL0cJqlmnx9HCDxF+3BLbUufrV64
+# EbTI40zqegPZdA+sXCmbcZy6okx/SjwsusWRItFA3DE8MORZeFb6BmzBtqKJ7l93
+# 9bbKBy2jvxcJI98Va95Q5JnlKor3m0E7xpMeYRriWklUPsetMSf2NvUQa/E5vVye
+# fQIwggZFMIIELaADAgECAhAIMk+dt9qRb2Pk8qM8Xl1RMA0GCSqGSIb3DQEBCwUA
+# MFYxCzAJBgNVBAYTAlBMMSEwHwYDVQQKExhBc3NlY28gRGF0YSBTeXN0ZW1zIFMu
+# QS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQTAeFw0yNDA0
+# MDQxNDA0MjRaFw0yNzA0MDQxNDA0MjNaMGsxCzAJBgNVBAYTAk5MMRIwEAYDVQQH
+# DAlTY2hpam5kZWwxIzAhBgNVBAoMGkpvaG4gQmlsbGVrZW5zIENvbnN1bHRhbmN5
+# MSMwIQYDVQQDDBpKb2huIEJpbGxla2VucyBDb25zdWx0YW5jeTCCAaIwDQYJKoZI
+# hvcNAQEBBQADggGPADCCAYoCggGBAMslntDbSQwHZXwFhmibivbnd0Qfn6sqe/6f
+# os3pKzKxEsR907RkDMet2x6RRg3eJkiIr3TFPwqBooyXXgK3zxxpyhGOcuIqyM9J
+# 28DVf4kUyZHsjGO/8HFjrr3K1hABNUszP0o7H3o6J31eqV1UmCXYhQlNoW9FOmRC
+# 1amlquBmh7w4EKYEytqdmdOBavAD5Xq4vLPxNP6kyA+B2YTtk/xM27TghtbwFGKn
+# u9Vwnm7dFcpLxans4ONt2OxDQOMA5NwgcUv/YTpjhq9qoz6ivG55NRJGNvUXsM3w
+# 2o7dR6Xh4MuEGrTSrOWGg2A5EcLH1XqQtkF5cZnAPM8W/9HUp8ggornWnFVQ9/6M
+# ga+ermy5wy5XrmQpN+x3u6tit7xlHk1Hc+4XY4a4ie3BPXG2PhJhmZAn4ebNSBwN
+# Hh8z7WTT9X9OFERepGSytZVeEP7hgyptSLcuhpwWeR4QdBb7dV++4p3PsAUQVHFp
+# wkSbrRTv4EiJ0Lcz9P1HPGFoHiFAQQIDAQABo4IBeDCCAXQwDAYDVR0TAQH/BAIw
+# ADA9BgNVHR8ENjA0MDKgMKAuhixodHRwOi8vY2NzY2EyMDIxLmNybC5jZXJ0dW0u
+# cGwvY2NzY2EyMDIxLmNybDBzBggrBgEFBQcBAQRnMGUwLAYIKwYBBQUHMAGGIGh0
+# dHA6Ly9jY3NjYTIwMjEub2NzcC1jZXJ0dW0uY29tMDUGCCsGAQUFBzAChilodHRw
+# Oi8vcmVwb3NpdG9yeS5jZXJ0dW0ucGwvY2NzY2EyMDIxLmNlcjAfBgNVHSMEGDAW
+# gBTddF1MANt7n6B0yrFu9zzAMsBwzTAdBgNVHQ4EFgQUO6KtBpOBgmrlANVAnyiQ
+# C6W6lJwwSwYDVR0gBEQwQjAIBgZngQwBBAEwNgYLKoRoAYb2dwIFAQQwJzAlBggr
+# BgEFBQcCARYZaHR0cHM6Ly93d3cuY2VydHVtLnBsL0NQUzATBgNVHSUEDDAKBggr
+# BgEFBQcDAzAOBgNVHQ8BAf8EBAMCB4AwDQYJKoZIhvcNAQELBQADggIBAEQsN8wg
+# PMdWVkwHPPTN+jKpdns5AKVFjcn00psf2NGVVgWWNQBIQc9lEuTBWb54IK6Ga3hx
+# QRZfnPNo5HGl73YLmFgdFQrFzZ1lnaMdIcyh8LTWv6+XNWfoyCM9wCp4zMIDPOs8
+# LKSMQqA/wRgqiACWnOS4a6fyd5GUIAm4CuaptpFYr90l4Dn/wAdXOdY32UhgzmSu
+# xpUbhD8gVJUaBNVmQaRqeU8y49MxiVrUKJXde1BCrtR9awXbqembc7Nqvmi60tYK
+# lD27hlpKtj6eGPjkht0hHEsgzU0Fxw7ZJghYG2wXfpF2ziN893ak9Mi/1dmCNmor
+# GOnybKYfT6ff6YTCDDNkod4egcMZdOSv+/Qv+HAeIgEvrxE9QsGlzTwbRtbm6gwY
+# YcVBs/SsVUdBn/TSB35MMxRhHE5iC3aUTkDbceo/XP3uFhVL4g2JZHpFfCSu2TQr
+# rzRn2sn07jfMvzeHArCOJgBW1gPqR3WrJ4hUxL06Rbg1gs9tU5HGGz9KNQMfQFQ7
+# 0Wz7UIhezGcFcRfkIfSkMmQYYpsc7rfzj+z0ThfDVzzJr2dMOFsMlfj1T6l22GBq
+# 9XQx0A4lcc5Fl9pRxbOuHHWFqIBD/BCEhwniOCySzqENd2N+oz8znKooSISStnkN
+# aYXt6xblJF2dx9Dn89FK7d1IquNxOwt0tI5dMIIGYjCCBMqgAwIBAgIRAKQpO24e
+# 3denNAiHrXpOtyQwDQYJKoZIhvcNAQEMBQAwVTELMAkGA1UEBhMCR0IxGDAWBgNV
+# BAoTD1NlY3RpZ28gTGltaXRlZDEsMCoGA1UEAxMjU2VjdGlnbyBQdWJsaWMgVGlt
+# ZSBTdGFtcGluZyBDQSBSMzYwHhcNMjUwMzI3MDAwMDAwWhcNMzYwMzIxMjM1OTU5
+# WjByMQswCQYDVQQGEwJHQjEXMBUGA1UECBMOV2VzdCBZb3Jrc2hpcmUxGDAWBgNV
+# BAoTD1NlY3RpZ28gTGltaXRlZDEwMC4GA1UEAxMnU2VjdGlnbyBQdWJsaWMgVGlt
+# ZSBTdGFtcGluZyBTaWduZXIgUjM2MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
+# CgKCAgEA04SV9G6kU3jyPRBLeBIHPNyUgVNnYayfsGOyYEXrn3+SkDYTLs1crcw/
+# ol2swE1TzB2aR/5JIjKNf75QBha2Ddj+4NEPKDxHEd4dEn7RTWMcTIfm492TW22I
+# 8LfH+A7Ehz0/safc6BbsNBzjHTt7FngNfhfJoYOrkugSaT8F0IzUh6VUwoHdYDpi
+# ln9dh0n0m545d5A5tJD92iFAIbKHQWGbCQNYplqpAFasHBn77OqW37P9BhOASdmj
+# p3IijYiFdcA0WQIe60vzvrk0HG+iVcwVZjz+t5OcXGTcxqOAzk1frDNZ1aw8nFhG
+# EvG0ktJQknnJZE3D40GofV7O8WzgaAnZmoUn4PCpvH36vD4XaAF2CjiPsJWiY/j2
+# xLsJuqx3JtuI4akH0MmGzlBUylhXvdNVXcjAuIEcEQKtOBR9lU4wXQpISrbOT8ux
+# +96GzBq8TdbhoFcmYaOBZKlwPP7pOp5Mzx/UMhyBA93PQhiCdPfIVOCINsUY4U23
+# p4KJ3F1HqP3H6Slw3lHACnLilGETXRg5X/Fp8G8qlG5Y+M49ZEGUp2bneRLZoyHT
+# yynHvFISpefhBCV0KdRZHPcuSL5OAGWnBjAlRtHvsMBrI3AAA0Tu1oGvPa/4yeei
+# Ayu+9y3SLC98gDVbySnXnkujjhIh+oaatsk/oyf5R2vcxHahajMCAwEAAaOCAY4w
+# ggGKMB8GA1UdIwQYMBaAFF9Y7UwxeqJhQo1SgLqzYZcZojKbMB0GA1UdDgQWBBSI
+# YYyhKjdkgShgoZsx0Iz9LALOTzAOBgNVHQ8BAf8EBAMCBsAwDAYDVR0TAQH/BAIw
+# ADAWBgNVHSUBAf8EDDAKBggrBgEFBQcDCDBKBgNVHSAEQzBBMDUGDCsGAQQBsjEB
+# AgEDCDAlMCMGCCsGAQUFBwIBFhdodHRwczovL3NlY3RpZ28uY29tL0NQUzAIBgZn
+# gQwBBAIwSgYDVR0fBEMwQTA/oD2gO4Y5aHR0cDovL2NybC5zZWN0aWdvLmNvbS9T
+# ZWN0aWdvUHVibGljVGltZVN0YW1waW5nQ0FSMzYuY3JsMHoGCCsGAQUFBwEBBG4w
+# bDBFBggrBgEFBQcwAoY5aHR0cDovL2NydC5zZWN0aWdvLmNvbS9TZWN0aWdvUHVi
+# bGljVGltZVN0YW1waW5nQ0FSMzYuY3J0MCMGCCsGAQUFBzABhhdodHRwOi8vb2Nz
+# cC5zZWN0aWdvLmNvbTANBgkqhkiG9w0BAQwFAAOCAYEAAoE+pIZyUSH5ZakuPVKK
+# 4eWbzEsTRJOEjbIu6r7vmzXXLpJx4FyGmcqnFZoa1dzx3JrUCrdG5b//LfAxOGy9
+# Ph9JtrYChJaVHrusDh9NgYwiGDOhyyJ2zRy3+kdqhwtUlLCdNjFjakTSE+hkC9F5
+# ty1uxOoQ2ZkfI5WM4WXA3ZHcNHB4V42zi7Jk3ktEnkSdViVxM6rduXW0jmmiu71Z
+# pBFZDh7Kdens+PQXPgMqvzodgQJEkxaION5XRCoBxAwWwiMm2thPDuZTzWp/gUFz
+# i7izCmEt4pE3Kf0MOt3ccgwn4Kl2FIcQaV55nkjv1gODcHcD9+ZVjYZoyKTVWb4V
+# qMQy/j8Q3aaYd/jOQ66Fhk3NWbg2tYl5jhQCuIsE55Vg4N0DUbEWvXJxtxQQaVR5
+# xzhEI+BjJKzh3TQ026JxHhr2fuJ0mV68AluFr9qshgwS5SpN5FFtaSEnAwqZv3IS
+# +mlG50rK7W3qXbWwi4hmpylUfygtYLEdLQukNEX1jiOKMIIGgjCCBGqgAwIBAgIQ
+# NsKwvXwbOuejs902y8l1aDANBgkqhkiG9w0BAQwFADCBiDELMAkGA1UEBhMCVVMx
+# EzARBgNVBAgTCk5ldyBKZXJzZXkxFDASBgNVBAcTC0plcnNleSBDaXR5MR4wHAYD
+# VQQKExVUaGUgVVNFUlRSVVNUIE5ldHdvcmsxLjAsBgNVBAMTJVVTRVJUcnVzdCBS
+# U0EgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMjEwMzIyMDAwMDAwWhcNMzgw
+# MTE4MjM1OTU5WjBXMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1p
+# dGVkMS4wLAYDVQQDEyVTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIFJvb3Qg
+# UjQ2MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAiJ3YuUVnnR3d6Lkm
+# gZpUVMB8SQWbzFoVD9mUEES0QUCBdxSZqdTkdizICFNeINCSJS+lV1ipnW5ihkQy
+# C0cRLWXUJzodqpnMRs46npiJPHrfLBOifjfhpdXJ2aHHsPHggGsCi7uE0awqKggE
+# /LkYw3sqaBia67h/3awoqNvGqiFRJ+OTWYmUCO2GAXsePHi+/JUNAax3kpqstbl3
+# vcTdOGhtKShvZIvjwulRH87rbukNyHGWX5tNK/WABKf+Gnoi4cmisS7oSimgHUI0
+# Wn/4elNd40BFdSZ1EwpuddZ+Wr7+Dfo0lcHflm/FDDrOJ3rWqauUP8hsokDoI7D/
+# yUVI9DAE/WK3Jl3C4LKwIpn1mNzMyptRwsXKrop06m7NUNHdlTDEMovXAIDGAvYy
+# nPt5lutv8lZeI5w3MOlCybAZDpK3Dy1MKo+6aEtE9vtiTMzz/o2dYfdP0KWZwZIX
+# bYsTIlg1YIetCpi5s14qiXOpRsKqFKqav9R1R5vj3NgevsAsvxsAnI8Oa5s2oy25
+# qhsoBIGo/zi6GpxFj+mOdh35Xn91y72J4RGOJEoqzEIbW3q0b2iPuWLA911cRxgY
+# 5SJYubvjay3nSMbBPPFsyl6mY4/WYucmyS9lo3l7jk27MAe145GWxK4O3m3gEFEI
+# kv7kRmefDR7Oe2T1HxAnICQvr9sCAwEAAaOCARYwggESMB8GA1UdIwQYMBaAFFN5
+# v1qqK0rPVIDh2JvAnfKyA2bLMB0GA1UdDgQWBBT2d2rdP/0BE/8WoWyCAi/QCj0U
+# JTAOBgNVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zATBgNVHSUEDDAKBggr
+# BgEFBQcDCDARBgNVHSAECjAIMAYGBFUdIAAwUAYDVR0fBEkwRzBFoEOgQYY/aHR0
+# cDovL2NybC51c2VydHJ1c3QuY29tL1VTRVJUcnVzdFJTQUNlcnRpZmljYXRpb25B
+# dXRob3JpdHkuY3JsMDUGCCsGAQUFBwEBBCkwJzAlBggrBgEFBQcwAYYZaHR0cDov
+# L29jc3AudXNlcnRydXN0LmNvbTANBgkqhkiG9w0BAQwFAAOCAgEADr5lQe1oRLjl
+# ocXUEYfktzsljOt+2sgXke3Y8UPEooU5y39rAARaAdAxUeiX1ktLJ3+lgxtoLQhn
+# 5cFb3GF2SSZRX8ptQ6IvuD3wz/LNHKpQ5nX8hjsDLRhsyeIiJsms9yAWnvdYOdEM
+# q1W61KE9JlBkB20XBee6JaXx4UBErc+YuoSb1SxVf7nkNtUjPfcxuFtrQdRMRi/f
+# InV/AobE8Gw/8yBMQKKaHt5eia8ybT8Y/Ffa6HAJyz9gvEOcF1VWXG8OMeM7Vy7B
+# s6mSIkYeYtddU1ux1dQLbEGur18ut97wgGwDiGinCwKPyFO7ApcmVJOtlw9FVJxw
+# /mL1TbyBns4zOgkaXFnnfzg4qbSvnrwyj1NiurMp4pmAWjR+Pb/SIduPnmFzbSN/
+# G8reZCL4fvGlvPFk4Uab/JVCSmj59+/mB2Gn6G/UYOy8k60mKcmaAZsEVkhOFuoj
+# 4we8CYyaR9vd9PGZKSinaZIkvVjbH/3nlLb0a7SBIkiRzfPfS9T+JesylbHa1LtR
+# V9U/7m0q7Ma2CQ/t392ioOssXW7oKLdOmMBl14suVFBmbzrt5V5cQPnwtd3UOTpS
+# 9oCG+ZZheiIvPgkDmA8FzPsnfXW5qHELB43ET7HHFHeRPRYrMBKjkb8/IN7Po0d0
+# hQoF4TeMM+zYAJzoKQnVKOLg8pZVPT8wgga5MIIEoaADAgECAhEAmaOACiZVO2Wr
+# 3G6EprPqOTANBgkqhkiG9w0BAQwFADCBgDELMAkGA1UEBhMCUEwxIjAgBgNVBAoT
+# GVVuaXpldG8gVGVjaG5vbG9naWVzIFMuQS4xJzAlBgNVBAsTHkNlcnR1bSBDZXJ0
+# aWZpY2F0aW9uIEF1dGhvcml0eTEkMCIGA1UEAxMbQ2VydHVtIFRydXN0ZWQgTmV0
+# d29yayBDQSAyMB4XDTIxMDUxOTA1MzIxOFoXDTM2MDUxODA1MzIxOFowVjELMAkG
+# A1UEBhMCUEwxITAfBgNVBAoTGEFzc2VjbyBEYXRhIFN5c3RlbXMgUy5BLjEkMCIG
+# A1UEAxMbQ2VydHVtIENvZGUgU2lnbmluZyAyMDIxIENBMIICIjANBgkqhkiG9w0B
+# AQEFAAOCAg8AMIICCgKCAgEAnSPPBDAjO8FGLOczcz5jXXp1ur5cTbq96y34vuTm
+# flN4mSAfgLKTvggv24/rWiVGzGxT9YEASVMw1Aj8ewTS4IndU8s7VS5+djSoMcbv
+# IKck6+hI1shsylP4JyLvmxwLHtSworV9wmjhNd627h27a8RdrT1PH9ud0IF+njvM
+# k2xqbNTIPsnWtw3E7DmDoUmDQiYi/ucJ42fcHqBkbbxYDB7SYOouu9Tj1yHIohzu
+# C8KNqfcYf7Z4/iZgkBJ+UFNDcc6zokZ2uJIxWgPWXMEmhu1gMXgv8aGUsRdaCtVD
+# 2bSlbfsq7BiqljjaCun+RJgTgFRCtsuAEw0pG9+FA+yQN9n/kZtMLK+Wo837Q4QO
+# ZgYqVWQ4x6cM7/G0yswg1ElLlJj6NYKLw9EcBXE7TF3HybZtYvj9lDV2nT8mFSkc
+# SkAExzd4prHwYjUXTeZIlVXqj+eaYqoMTpMrfh5MCAOIG5knN4Q/JHuurfTI5XDY
+# O962WZayx7ACFf5ydJpoEowSP07YaBiQ8nXpDkNrUA9g7qf/rCkKbWpQ5boufUnq
+# 1UiYPIAHlezf4muJqxqIns/kqld6JVX8cixbd6PzkDpwZo4SlADaCi2JSplKShBS
+# ND36E/ENVv8urPS0yOnpG4tIoBGxVCARPCg1BnyMJ4rBJAcOSnAWd18Jx5n858JS
+# qPECAwEAAaOCAVUwggFRMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFN10XUwA
+# 23ufoHTKsW73PMAywHDNMB8GA1UdIwQYMBaAFLahVDkCw6A/joq8+tT4HKbROg79
+# MA4GA1UdDwEB/wQEAwIBBjATBgNVHSUEDDAKBggrBgEFBQcDAzAwBgNVHR8EKTAn
+# MCWgI6Ahhh9odHRwOi8vY3JsLmNlcnR1bS5wbC9jdG5jYTIuY3JsMGwGCCsGAQUF
+# BwEBBGAwXjAoBggrBgEFBQcwAYYcaHR0cDovL3N1YmNhLm9jc3AtY2VydHVtLmNv
+# bTAyBggrBgEFBQcwAoYmaHR0cDovL3JlcG9zaXRvcnkuY2VydHVtLnBsL2N0bmNh
+# Mi5jZXIwOQYDVR0gBDIwMDAuBgRVHSAAMCYwJAYIKwYBBQUHAgEWGGh0dHA6Ly93
+# d3cuY2VydHVtLnBsL0NQUzANBgkqhkiG9w0BAQwFAAOCAgEAdYhYD+WPUCiaU58Q
+# 7EP89DttyZqGYn2XRDhJkL6P+/T0IPZyxfxiXumYlARMgwRzLRUStJl490L94C9L
+# GF3vjzzH8Jq3iR74BRlkO18J3zIdmCKQa5LyZ48IfICJTZVJeChDUyuQy6rGDxLU
+# UAsO0eqeLNhLVsgw6/zOfImNlARKn1FP7o0fTbj8ipNGxHBIutiRsWrhWM2f8pXd
+# d3x2mbJCKKtl2s42g9KUJHEIiLni9ByoqIUul4GblLQigO0ugh7bWRLDm0CdY9rN
+# LqyA3ahe8WlxVWkxyrQLjH8ItI17RdySaYayX3PhRSC4Am1/7mATwZWwSD+B7eMc
+# ZNhpn8zJ+6MTyE6YoEBSRVrs0zFFIHUR08Wk0ikSf+lIe5Iv6RY3/bFAEloMU+vU
+# BfSouCReZwSLo8WdrDlPXtR0gicDnytO7eZ5827NS2x7gCBibESYkOh1/w1tVxTp
+# V2Na3PR7nxYVlPu1JPoRZCbH86gc96UTvuWiOruWmyOEMLOGGniR+x+zPF/2DaGg
+# K2W1eEJfo2qyrBNPvF7wuAyQfiFXLwvWHamoYtPZo0LHuH8X3n9C+xN4YaNjt2yw
+# zOr+tKyEVAotnyU9vyEVOaIYMk3IeBrmFnn0gbKeTTyYeEEUz/Qwt4HOUBCrW602
+# NCmvO1nm+/80nLy5r0AZvCQxaQ4xggXDMIIFvwIBATBqMFYxCzAJBgNVBAYTAlBM
+# MSEwHwYDVQQKExhBc3NlY28gRGF0YSBTeXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0Nl
+# cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
+# hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
+# DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
+# MC8GCSqGSIb3DQEJBDEiBCDSt/VZvFYV8yPDeg1JVcz6Hjf2rPNwT37q+4olTowW
+# 9DANBgkqhkiG9w0BAQEFAASCAYB8Gvv5L9T+h2znHVxieHgf6askxuBW2AmaanBv
+# XMIwB6WFFzKTVtS5ahunZ6by5JrkvXz+todL/KrSwjA6UARlcnF9OBZvlUxtwLSc
+# J4OchCHzMI1Mofkgn8yhTYXlg0RN6vY7ktOUxMjtYJIULxxRxTqMUZdwYw9fFa6G
+# P0xD1+KGeuUJV/OxzKJzZQsZz6XnF1qCwXRqDDA5Is2t9DFU1wO52sa8QoSTDgps
+# fSF1Q5YU98+T9kt3Dz0aKO3hAF6R3slXMRlLL2qErwcvKW11E37MlazMSkxxZN+i
+# eVBiSSWGfK1rU7CizbmfhG8STyHLZtF7iO4ua6t0FiiCp9Gf+Xs52mdq0rgIFKdM
+# uVB81obDXIwWjiUFnscuYYgw2BHQrw7JoG/zepGBlSzBrxAoBFPYo413Sao7/nMZ
+# 6ctDWsSwQvnwqjI62Zxp3vvw5rWfKhuUJDl+vvpjCSvZkO2tGOr3W4+cZxKVPJre
+# yC3qShR/hFHcPd4chxK9W+N308ihggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
+# KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
+# O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MDQxMDE2MjFaMD8GCSqGSIb3
+# DQEJBDEyBDCVCHo68v3WmICSeytL0jKNTax50CRqoovTPInDQmaj+2liSa3+Wpel
+# TFQ/oC3gKG4wDQYJKoZIhvcNAQEBBQAEggIASG074Xe594xrKdzHdnDiJhxNpKyB
+# Pl2o1//tApZKfx2iT6G4To9N8PuuLZYi15UZIhh8Oq2wwI4+xDxjI+cKvVTHATM8
+# qYzSHgHdWiBtqFSqKx4weunfr7n3aSYeG2Qaps22dm2foxO65Y5l5clzJD64JDdp
+# aZFk9/K0R/ql9wGnqzJKYZOx8GnjoL+LgijKQMx4xssJQiE2MkJzAazz+7wElhNM
+# JMy8U8+aFRCDn0uJ55kM1hu2iNIeTr45B1X+UN8yc9wv1YWSvotdSfJru1oCiYb/
+# 6LltUTDKMBBTUc7jDmaSz4o0OoOQWvvSq7ZKkvbAkL7wHDsLgQ1C8uNqW3kbfrmA
+# WyapPtBa1XCEyIs+6cNmgRkA1mJRPWl+5M87h/6mb0d2QAfh8wSeBSyB+wlbxo/v
+# Z2MzKVX5Cl0g8ftEOxD8Cr/qxKbgkMcBUjyBk3qpaM1XaeFq+8aY+JmU4zi1jAvP
+# N3X79x66HBky1IsPc1r/GTgWbqQSgNRqDt7fpsASH5Ztw7pqQ6YRDURXb4ApnVJd
+# g8VGX419XEcOzC0quAFFAC/nK6LZBdFeIyvgMtISyitAqPxmz0M0HtFRk+mqueit
+# 7apcaLrmqQsCou0jyM0QG7I7dY9V2C4St9is4hOecnKs02Fm3SpfnCngF3Tl7bVD
+# 6f8oZsV0zC4QSvI=
 # SIG # End signature block
