@@ -249,12 +249,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.32.0
+    Version   : v2.33.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.28.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.29.3 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -680,8 +680,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.32.0"
-$PoshACMEVersion = "4.28.0"
+$ScriptVersion = "2.33.1"
+$PoshACMEVersion = "4.29.3"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -5580,17 +5580,18 @@ if ($CertificateActions) {
                         $CertificateName = "$CertificateName"
                         Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) characters)"
                         #}
-                        #if ($CertificateAlias.length -ge 59) {
-                        #    $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
-                        #    $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
-                        #    $CertificatePfxFileName = "$($CertificateAlias.subString(0,59)).pfx"
-                        #    $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
-                        #} else {
-                        $CertificateFileName = "$($CertificateAlias).crt"
-                        $CertificateKeyFileName = "$($CertificateAlias).key"
-                        $CertificatePfxFileName = "$($CertificateAlias).pfx"
-                        $CertificatePemFileName = "$($CertificateAlias).pem"
-                        #}
+                        if ($CertificateAlias.length -ge 59) {
+                            $CertificateFileName = "$($CertificateAlias.subString(0,59)).crt"
+                            $CertificateKeyFileName = "$($CertificateAlias.subString(0,59)).key"
+                            $CertificatePfxFileName = "$($CertificateAlias.subString(0,59)).pfx"
+                            $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateAlias (new name): `"$($CertificateAlias.subString(0,59))`" ($($CertificateAlias.subString(0,59)).length) max 55)"
+                        } else {
+                            $CertificateFileName = "$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "$($CertificateAlias).key"
+                            $CertificatePfxFileName = "$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "$($CertificateAlias).pem"
+                        }
                         $CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
                     } else {
                         #ToDo: Remove old code when no issues with the longer name
@@ -5601,17 +5602,18 @@ if ($CertificateActions) {
                         $CertificateName = "TST-$($CertificateName)"
                         Write-ToLogFile -D -C CertFinalization -M "CertificateName: `"$CertificateName`" ($($CertificateName.length) characters)"
                         #}
-                        #if ($CertificateAlias.length -ge 55) {
-                        #    $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
-                        #    $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
-                        #    $CertificatePfxFileName = "TST-$($CertificateAlias.subString(0,55)).pfx"
-                        #    $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
-                        #} else {
-                        $CertificateFileName = "TST-$($CertificateAlias).crt"
-                        $CertificateKeyFileName = "TST-$($CertificateAlias).key"
-                        $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
-                        $CertificatePemFileName = "TST-$($CertificateAlias).pem"
-                        #}
+                        if ($CertificateAlias.length -ge 55) {
+                            $CertificateFileName = "TST-$($CertificateAlias.subString(0,55)).crt"
+                            $CertificateKeyFileName = "TST-$($CertificateAlias.subString(0,55)).key"
+                            $CertificatePfxFileName = "TST-$($CertificateAlias.subString(0,55)).pfx"
+                            $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
+                            Write-ToLogFile -D -C CertFinalization -M "CertificateAlias (new name): `"TST-$($CertificateAlias.subString(0,55))`" ($(TST-$($CertificateAlias.subString(0,55))).length) max 55)"
+                        } else {
+                            $CertificateFileName = "TST-$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "TST-$($CertificateAlias).key"
+                            $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "TST-$($CertificateAlias).pem"
+                        }
                         $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
                     }
                     Write-ToLogFile -D -C CertFinalization -M "Crt: `"$CertificateFileName`"($($CertificateFileName.length) characters)"
@@ -6746,8 +6748,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCzuE2FLW3zXw6B
-# snvwdhNxIQvhQ+ItOl5KW1tBGayOVqCCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBl9UpJb4UY+ool
+# 58/x4WhzIPUr6obmUdogNTtCdYVh96CCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -6923,31 +6925,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCCWCEkUV0lJyBN/KPYlFje6+59/J15dXEssXAr+2l/j
-# fzANBgkqhkiG9w0BAQEFAASCAYAjHjHv9LdxCYfRc4t8SlII/fhqZr4sxWZ0zuSD
-# 6ABSKyJkKD2nnFMn7KBqvTaYOysQd0G6a8X5hBVobeKbP60Fz3iOaORr6L0tICtD
-# zYRFj9fQPjRBrCRg/nvJfnobCSjs5GCr9MEqJhmJw1A/dTuTfslSUUOeeVjOve8e
-# OibnCfqYUbD4JD7xfcsgEQIr5B3PDB7YieZXleuJPDHOssf0QOC6uKvJTfPp6vjJ
-# +9syZE0bYG6fsZ5JBG0WLbSooB/vq7j+QRFU0gf5WJtYsC14pJTkbCZYO319Xv5f
-# B+OuLRWZ8aWBjqL+K0dHfq+yIT0mhBUKNsMPVwux4OTv/d2qj4LZEIzOzXes0OHg
-# HoEt394irxE2GJ9lI9V76X+wk9EJmdiONCeZZujCS0Tkl9WFHov96OnGxAHHaiBU
-# /RwMi6ezBZ+YLj/pliLYW9jHIKJrJ9MMEvIFR16PaV0tGbZYCxOKNn9FenvydS26
-# 7QD5kUBJwp5V17aqkhtEcFnB2j+hggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCDf2ovgOv4rAI3IMpD0KCY8lx9mNMGqmRCLlc2DWXKq
+# zjANBgkqhkiG9w0BAQEFAASCAYBbdt6ujjlajNxZiBtoHVuhQjhsNPvSW+nFRpeK
+# 94i8VoEd5fzdWF7L0pDhkIbJ8F4pTo5s7hWiGFLHoTCmSVt4wO6ufhIvX8Uaf4C8
+# XDA55Fwazth9fZyK3CCQXxthPG3u0X7X+JHDOeK2oh841Db32ELQ62crlHweoEp7
+# raxSH7HrNu+pmbz30JkfLHjjwr38OVRAaHMwU97UW/+ny38rrqoFn3ei4aEdRkHl
+# PwqOm0LMM+vJFMCFtT1j2+9U1oZnc0FbeuEcSt34iio3cbe0NvhbpMyHrNGnc8Zo
+# QNbTlfnnKUuh1mCwuGr+M6w8yr0bROG4k2c5OaObss+RmmVvj9JbQoJOnv2nVJnU
+# NOiTFb3ejuYxwBpqDU+IxSQmG51+Wq/7BdAQhAkLvhTib/L4zQx4bo0mABGhR7VA
+# avtfIx6l1WV5sgpnNJ7gb549cWdyY3KN1vBjMGglLMytQ5XuNSW/KwCaHwW5SFiN
+# rGodjpoNvZ9Rmmy4enNfJFT+LiuhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MDQxNjM5NTNaMD8GCSqGSIb3
-# DQEJBDEyBDBuma18ad+krWrKPKDPpqFJOdilkawxIJxHnCL9VbRrSFz4cNWNmcsg
-# 4L+/VHJYPr4wDQYJKoZIhvcNAQEBBQAEggIAzVIT2L6HaC48kLSGCEQbDdWV6mZ1
-# AG0PPSBq3B3WIhF2JGxCjnC01FKr2HPqur3LnmlNpuSHCmPyZ19F0Hn0JgmS5zsO
-# YhL2RlS0t/hXUhZA1CRUUwzmZSFUnKQZoL46sRqAb9Kw1XPDijuTRylc8oKgMjCD
-# MIHmDdOhpl9Rs0B9UKq/nrVYsUrrwo95md1Rm5IsRuB437A3lDno/5XeTz4TfGCN
-# 6WOW1FYyGJqCUjMLG8VIwLKdOSGdWpbtBm1CypsG8yAZivphdA5PeqBCt3RXWf8l
-# PZ6um7LymShGdjW9jnQ9ODhNLbK1IkeUt6vvQ540oa6Y1mxNVAWZWLUAgoc3MQp+
-# k7if1AWBbEpJyKYx40UGy53aX8oDEEwcVbAPAAnDu/RJQa+3mgQkZ/cvhNBkM22q
-# wugJ1qPVK0iyAfMSFa6GFORfHE5NgljrnioF2IGW+DKp7nWsJO765p9oWIO0Px/1
-# HNNmKybMASpiZxHELI9Qj2l0/+Bik5kVdVzRhtp1XClApcXOS0a342cV5IxRllYC
-# I8Rnt+bbg3HYVeASdZ9beMfvHNznz8sU5pXgyMHLAKAxbMXLKCgQfPx0Ea0nxVPq
-# IgVeJdKeeu4LAOe5XOUFNrN7icu6Qo19kEIOmycA9yxTCu8r/d4B6dhljfMv+Til
-# gpOaILyk3NZW9nA=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MTgxMDE3NDRaMD8GCSqGSIb3
+# DQEJBDEyBDACXsETEj0ZzFpujh2TQy78Pd/rxYGc1ZRTR12irMwWigH4zN9CJp/4
+# BRgOmqmen/QwDQYJKoZIhvcNAQEBBQAEggIAmZ7E9ESoqDPTwAhgvGH+Hh0yfmEd
+# CmkQ//BAOaiPDCqdB5fyZXPuR/qvTRoXolChES66vlOptKMeMTPTFBTejdHa4gEb
+# +5YLoyiHA9kW+kLMFkksFzZMfrEZx7Ho6TyNLFO4hnU/rNUSUcLkbylZ9sWtqbML
+# SRkqBU/9KsXol+3nW0A2gxZEFGA5M1lLt/fd2mU3yea9XzWOQMGLHSxvHCL8M9D3
+# qTOtQX8F1hRgOQHayT7keYh1IoQgyXT7UafyKigOdArR8WsDg4xFwizy8cHP0ewj
+# 4vwIeowdAVP8U5tIeBooOs8Vy3KN1wY62SiLOzIMqmfDW+zKBI7S4P9Asbv9/8pC
+# GmJTvrmmOYA9W3iQWISRkZQQi3lf2uNXwOhrN/KqrGblzd5YqwQNv1efR6qcFT07
+# tzPyu4SjuaYfxBZ0WvGwqyxNmCdvjRQDFjHw++Ey2rSkmWSlBt3u5NhAh2AkwfYZ
+# bXyUx+t66uLUK+GPRXIj2vY8wDJeMYWoeCfOofiurSo7CsyM/YPgE3QXaVJfs+p/
+# 0yZPeRdOtHxUrjaMuf8qf6209TvzZOyfh+QkExj/84RBQPvGTBEM3wSCnpX3f0E2
+# JHiG9pTABh/QFtITLKPrmlfdDir7M8w9Knn5QN/CmKkWJMkmMeq9HkKXQSKgGyqA
+# rxNAzfjaG8TcnP8=
 # SIG # End signature block
