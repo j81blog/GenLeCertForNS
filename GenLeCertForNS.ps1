@@ -249,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.33.0
+    Version   : v2.33.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -680,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.33.0"
+$ScriptVersion = "2.33.1"
 $PoshACMEVersion = "4.29.3"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -5587,10 +5587,10 @@ if ($CertificateActions) {
                             $CertificatePemFileName = "$($CertificateAlias.subString(0,59)).pem"
                             Write-ToLogFile -D -C CertFinalization -M "CertificateAlias (new name): `"$($CertificateAlias.subString(0,59))`" ($($CertificateAlias.subString(0,59)).length) max 55)"
                         } else {
-                        $CertificateFileName = "$($CertificateAlias).crt"
-                        $CertificateKeyFileName = "$($CertificateAlias).key"
-                        $CertificatePfxFileName = "$($CertificateAlias).pfx"
-                        $CertificatePemFileName = "$($CertificateAlias).pem"
+                            $CertificateFileName = "$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "$($CertificateAlias).key"
+                            $CertificatePfxFileName = "$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "$($CertificateAlias).pem"
                         }
                         $CertificatePfxWithChainFileName = "$($CertificateAlias)-WithChain.pfx"
                     } else {
@@ -5609,10 +5609,10 @@ if ($CertificateActions) {
                             $CertificatePemFileName = "TST-$($CertificateAlias.subString(0,55)).pem"
                             Write-ToLogFile -D -C CertFinalization -M "CertificateAlias (new name): `"TST-$($CertificateAlias.subString(0,55))`" ($(TST-$($CertificateAlias.subString(0,55))).length) max 55)"
                         } else {
-                        $CertificateFileName = "TST-$($CertificateAlias).crt"
-                        $CertificateKeyFileName = "TST-$($CertificateAlias).key"
-                        $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
-                        $CertificatePemFileName = "TST-$($CertificateAlias).pem"
+                            $CertificateFileName = "TST-$($CertificateAlias).crt"
+                            $CertificateKeyFileName = "TST-$($CertificateAlias).key"
+                            $CertificatePfxFileName = "TST-$($CertificateAlias).pfx"
+                            $CertificatePemFileName = "TST-$($CertificateAlias).pem"
                         }
                         $CertificatePfxWithChainFileName = "TST-$($CertificateAlias)-WithChain.pfx"
                     }
@@ -6748,8 +6748,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDjMIVAfcAL0a7t
-# WMv/NOh5yKxXm4K3u1bCxSZwQ4+hwKCCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBl9UpJb4UY+ool
+# 58/x4WhzIPUr6obmUdogNTtCdYVh96CCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -6925,31 +6925,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCBR+Zby6C6KY5X84MEErr48gO3grrdAoz8O97GYVnVc
-# DjANBgkqhkiG9w0BAQEFAASCAYB4tjMLkWjTi7kFiydLS64bwkIFL6EyCcy9CfFb
-# DubVPv16RBOoRisantAv+3rtdLNdqiELHMTcnQfcZ+5o6TdRvZluta/xgVx2m9Be
-# Ho6je8oDnncITaYsqWESxNbFiMMHHflmvVHPltnSO51rOk/zSVC/6VqCrTGNA+sZ
-# 2grDZvNoomZgctoaF2ExDFH8sLGbr5kfEhTumh/I6ZhXQ0eH36r3Oas9i5wyeQU/
-# unedHuOiHJGetRw5AQLnPEPP58bYk61kt1HDMkZ2UgVonGqTqGUhflHINXGq8REf
-# 5YjckVPV0EoEW/Q8WXnbU7DjzgRpevA/9C9TLBiMEbAb320Ax2R5532i/OxIueLb
-# Rr4XIb5uFRePK4h5xbt/uaL7eW1OLaR7xeNanZ9hQhZPKYTa6Uf+O0znZvdOTb0I
-# vgKXS6gfLfueF1lTee1nLki8SlGFPDblg2Nf0KVyh/VRXmeK/2HjoG51LwqDTEpv
-# x7vLQJ2rsscBxqNqTFwtsRVBLD6hggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCDf2ovgOv4rAI3IMpD0KCY8lx9mNMGqmRCLlc2DWXKq
+# zjANBgkqhkiG9w0BAQEFAASCAYBbdt6ujjlajNxZiBtoHVuhQjhsNPvSW+nFRpeK
+# 94i8VoEd5fzdWF7L0pDhkIbJ8F4pTo5s7hWiGFLHoTCmSVt4wO6ufhIvX8Uaf4C8
+# XDA55Fwazth9fZyK3CCQXxthPG3u0X7X+JHDOeK2oh841Db32ELQ62crlHweoEp7
+# raxSH7HrNu+pmbz30JkfLHjjwr38OVRAaHMwU97UW/+ny38rrqoFn3ei4aEdRkHl
+# PwqOm0LMM+vJFMCFtT1j2+9U1oZnc0FbeuEcSt34iio3cbe0NvhbpMyHrNGnc8Zo
+# QNbTlfnnKUuh1mCwuGr+M6w8yr0bROG4k2c5OaObss+RmmVvj9JbQoJOnv2nVJnU
+# NOiTFb3ejuYxwBpqDU+IxSQmG51+Wq/7BdAQhAkLvhTib/L4zQx4bo0mABGhR7VA
+# avtfIx6l1WV5sgpnNJ7gb549cWdyY3KN1vBjMGglLMytQ5XuNSW/KwCaHwW5SFiN
+# rGodjpoNvZ9Rmmy4enNfJFT+LiuhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MTgwOTQ5MzJaMD8GCSqGSIb3
-# DQEJBDEyBDC121VX/9DPlhPwAOcHEVwA1yrw6f3J6lSQm+XIdV42oRwmVl8Y78si
-# c8hhMz7G4sQwDQYJKoZIhvcNAQEBBQAEggIARfENrH8cwTHGInj1tm4RXXHtAhmN
-# mQK4EeolXy49XysSh+MQUJ73F9ScmHl7B8+XKhswL3igPIMsqj/Vm3QOlPZArvAt
-# 9shR3EfQZSiVD325IiyE5G6eT4ZH9IUvkvEUVF6FKZhHP60WyGyPeHxCSzpeoUJi
-# /x8bJ8wsnoBsjryTKzD7FPPKliqUV0nNkE1GDQ4Us+7Wqss2bdz4kvvHzKAA6PfJ
-# Cn9kYi5uW/izEGtCq3Ac35TE5u6+rdwvra/n4VfmYl/B31VcEhky4gbKmKk4iR77
-# 4vn5mAy/nhjp9yOr3mwp80aUto/sRoS2riGQcDiRWV0lQthNk5VW4eyN1XuBpfoH
-# goI4Qld6L8i4rlzkGQoI/0BxSpFazO0ME+zWvD20NC938lL/id+AUugia+smvyGt
-# zQx6jz+CcQI1tGKafx78WtlNBsS+FoKkkBKXwPq7XMvphFDYkh5MlmOTDjSamDdy
-# I1bu8CBnKDfMeUe2im132j7bKBVrJasK/nXR/6eSG4eGKQSAIG5ffppPFbQPRZyo
-# Hdn2HeOMLgg97NmIqunlONph0XjAS/MXMkoxFM+mZBpE0i3Own8EvXFsCKQANu7p
-# O1DnDl55NoAN0yVCObQmPLMvipggB0ltVoL3GgKoaNKZtrNCeqbgF3+slTivyL/g
-# +PS67vLF6q2glYg=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MTgxMDE3NDRaMD8GCSqGSIb3
+# DQEJBDEyBDACXsETEj0ZzFpujh2TQy78Pd/rxYGc1ZRTR12irMwWigH4zN9CJp/4
+# BRgOmqmen/QwDQYJKoZIhvcNAQEBBQAEggIAmZ7E9ESoqDPTwAhgvGH+Hh0yfmEd
+# CmkQ//BAOaiPDCqdB5fyZXPuR/qvTRoXolChES66vlOptKMeMTPTFBTejdHa4gEb
+# +5YLoyiHA9kW+kLMFkksFzZMfrEZx7Ho6TyNLFO4hnU/rNUSUcLkbylZ9sWtqbML
+# SRkqBU/9KsXol+3nW0A2gxZEFGA5M1lLt/fd2mU3yea9XzWOQMGLHSxvHCL8M9D3
+# qTOtQX8F1hRgOQHayT7keYh1IoQgyXT7UafyKigOdArR8WsDg4xFwizy8cHP0ewj
+# 4vwIeowdAVP8U5tIeBooOs8Vy3KN1wY62SiLOzIMqmfDW+zKBI7S4P9Asbv9/8pC
+# GmJTvrmmOYA9W3iQWISRkZQQi3lf2uNXwOhrN/KqrGblzd5YqwQNv1efR6qcFT07
+# tzPyu4SjuaYfxBZ0WvGwqyxNmCdvjRQDFjHw++Ey2rSkmWSlBt3u5NhAh2AkwfYZ
+# bXyUx+t66uLUK+GPRXIj2vY8wDJeMYWoeCfOofiurSo7CsyM/YPgE3QXaVJfs+p/
+# 0yZPeRdOtHxUrjaMuf8qf6209TvzZOyfh+QkExj/84RBQPvGTBEM3wSCnpX3f0E2
+# JHiG9pTABh/QFtITLKPrmlfdDir7M8w9Knn5QN/CmKkWJMkmMeq9HkKXQSKgGyqA
+# rxNAzfjaG8TcnP8=
 # SIG # End signature block
