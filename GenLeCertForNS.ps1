@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Create a new or update an existing Let's Encrypt certificate for one or more domains and add it to a store then update the SSL bindings for a ADC
 .DESCRIPTION
@@ -249,12 +249,12 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.33.1
+    Version   : v2.34.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
                 Run As Administrator
-                Posh-ACME 4.29.3 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
+                Posh-ACME 4.31.0 (Will be installed via this script) Thank you @rmbolger for providing the HTTP validation method!
                 Microsoft .NET Framework 4.7.2 or later
 .LINK
     https://blog.j81.nl
@@ -680,8 +680,8 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.33.1"
-$PoshACMEVersion = "4.29.3"
+$ScriptVersion = "2.34.0"
+$PoshACMEVersion = "4.31.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
 #region Functions
@@ -1972,7 +1972,7 @@ $($MailResultData | Out-String)
                     $message.Attachments.Add($(New-Object System.Net.Mail.Attachment $Script:Parameters.settings.LogFile))
                 } catch {
                     Write-ToLogFile -E -C SendMail -M "Could not attach LogFile, Error Details: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-DisplayText -ForeGroundColor Red -NoNewLine " Could not attach LogFile "
                 }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -1987,11 +1987,11 @@ $($MailResultData | Out-String)
                 $message.Dispose()
                 Write-DisplayText -ForeGroundColor Red " Failed, Could not send mail"
                 Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
         } catch {
             Write-ToLogFile -E -C SendMail -M "Could not send mail: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             Write-DisplayText -ForeGroundColor Red " ERROR, Could not send mail: $($_.Exception.Message)"
         }
 
@@ -2074,7 +2074,7 @@ function Invoke-ADCCleanup {
                                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                             } catch {
                                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding for CS VIP: $($item.domain), Prio: $($($item.priority))."
                             }
                         }
@@ -2084,7 +2084,7 @@ function Invoke-ADCCleanup {
                     Write-DisplayText -ForeGroundColor Green " OK"
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch CSPolicy Binding. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch CSPolicy Binding"
                 }
                 Write-DisplayText -Line "Cleanup CS Policy"
@@ -2105,7 +2105,7 @@ function Invoke-ADCCleanup {
                     Write-DisplayText -ForeGroundColor Green " OK"
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Policy. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Policy"
                 }
                 Write-DisplayText -Line "Cleanup CS Action"
@@ -2126,7 +2126,7 @@ function Invoke-ADCCleanup {
                     Write-DisplayText -ForeGroundColor Green " OK"
                 } catch {
                     Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Content Switch Action. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Content Switch Action"
                 }
                 Write-DisplayText -Line "Cleanup LB Vip"
@@ -2187,7 +2187,7 @@ function Invoke-ADCCleanup {
                 Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Service. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Service"
             }
             Write-DisplayText -Line "Cleanup LB Server"
@@ -2207,7 +2207,7 @@ function Invoke-ADCCleanup {
                 Write-DisplayText -ForeGroundColor Green " OK"
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Not able to remove the Server. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                 Write-DisplayText -ForeGroundColor Yellow " WARNING: Not able to remove the Server"
             }
             Write-ToLogFile -I -C Invoke-ADCCleanup -M "Checking if there are Responder Policies starting with the name `"$($Parameters.settings.RspName)`"."
@@ -2217,7 +2217,7 @@ function Invoke-ADCCleanup {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             if (-not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
                 Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Policies found:"
@@ -2242,12 +2242,12 @@ function Invoke-ADCCleanup {
                                 }
                             } catch {
                                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                         }
                     } catch {
                         Write-ToLogFile -E -C Invoke-ADCCleanup -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                     try {
                         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
@@ -2255,7 +2255,7 @@ function Invoke-ADCCleanup {
                         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Policy removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                 }
             } else {
@@ -2269,7 +2269,7 @@ function Invoke-ADCCleanup {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             if (-not([String]::IsNullOrEmpty($($response.responderaction)))) {
                 Write-ToLogFile -D -C Invoke-ADCCleanup -M "Responder Actions found:"
@@ -2284,7 +2284,7 @@ function Invoke-ADCCleanup {
                         Write-ToLogFile -I -C Invoke-ADCCleanup -M "Responder Action removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-ADCCleanup -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                 }
             } else {
@@ -2348,7 +2348,7 @@ function Invoke-NSPublishTXTRecord {
     } catch {
         Write-DisplayText -ForeGroundColor Red " Error"
         Write-ToLogFile -E -C Invoke-ADCPublishTXTRecord -M "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         throw "Could not add TXT Record. Exception Message: $($_.Exception.Message)"
     }
 }
@@ -2395,7 +2395,7 @@ function Invoke-NSRemoveTXTRecord {
 
             Write-DisplayText -ForeGroundColor Red " Error"
             Write-ToLogFile -E -C Invoke-NSRemoveTXTRecord -M "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             throw "Could not remove TXT Record. Exception Message: $($_.Exception.Message)"
         }
     }
@@ -2464,7 +2464,7 @@ function Invoke-AddInitialADCConfig {
                         $ExceptMessage = $_.Exception.Message
                         Write-DisplayText -ForeGroundColor Red " Error"
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not find/read out the content switch `"$csVip`" not available? Exception Message: $ExceptMessage"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Write-Error "Could not find/read out the content switch `"$csVip`" not available?"
                         TerminateScript 1 "Could not find/read out the content switch `"$csVip`" not available?"
                         if ($ExceptMessage -like "*(404) Not Found*") {
@@ -2548,7 +2548,7 @@ function Invoke-AddInitialADCConfig {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderpolicy -Filter @{name = "/$($Parameters.settings.RspName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Policies. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             if (-not([String]::IsNullOrEmpty($($response.responderpolicy)))) {
                 Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policies found"
@@ -2573,12 +2573,12 @@ function Invoke-AddInitialADCConfig {
                                 }
                             } catch {
                                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to unbind Responder. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                         }
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Something went wrong while Retrieving data. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                     try {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Trying to remove the Responder Policy `"$($ResponderPolicy.name)`"."
@@ -2586,7 +2586,7 @@ function Invoke-AddInitialADCConfig {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Policy removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to remove the Responder Policy. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                 }
 
@@ -2599,7 +2599,7 @@ function Invoke-AddInitialADCConfig {
                 $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type responderaction -Filter @{name = "/$($Parameters.settings.RsaName)/" }
             } catch {
                 Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to retrieve Responder Actions. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             if (-not([String]::IsNullOrEmpty($($response.responderaction)))) {
                 Write-ToLogFile -D -C Invoke-AddInitialADCConfig -M "Responder Actions found:"
@@ -2614,7 +2614,7 @@ function Invoke-AddInitialADCConfig {
                         Write-ToLogFile -I -C Invoke-AddInitialADCConfig -M "Responder Action removed successfully."
                     } catch {
                         Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Failed to remove the Responder Action. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                 }
             } else {
@@ -2689,7 +2689,7 @@ function Invoke-AddInitialADCConfig {
         } catch {
             Write-DisplayText -ForeGroundColor Red " Error"
             Write-ToLogFile -E -C Invoke-AddInitialADCConfig -M "Could not configure the ADC. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             Write-Error "Could not configure the ADC!"
             TerminateScript 1 "Could not configure the ADC!"
         }
@@ -2748,7 +2748,7 @@ function Invoke-CheckDNS {
             } catch {
                 $result = $null
                 Write-ToLogFile -E -C Invoke-CheckDNS -M "External check failed. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             [ref]$ValidIP = [IPAddress]::None
             if (([IPAddress]::TryParse("$($DNSObject.IPAddress)", $ValidIP)) -and (-not $CertRequest.DisableIPCheck)) {
@@ -3028,38 +3028,353 @@ function Write-DisplayText {
 }
 
 function Get-ExceptionDetails {
-    [CmdletBinding(DefaultParameterSetName = "Default")]
-    param(
-        [Parameter(ParameterSetName = "Default", Position = 0, Mandatory)]
-        [Parameter(ParameterSetName = "Full", Position = 0, Mandatory)]
-        [Parameter(ParameterSetName = "Summary", Position = 0, Mandatory)]
-        [Object]$Exception,
+    <#
+    .SYNOPSIS
+        Extracts detailed information from a PowerShell ErrorRecord object.
 
-        [Parameter(ParameterSetName = "Full")]
-        [Switch]$Full,
+    .DESCRIPTION
+        The Get-ExceptionDetails function processes a PowerShell ErrorRecord object
+        and extracts comprehensive error information including exception messages,
+        stack traces, location details, command context, parameter bindings, and
+        nested inner exceptions. This is useful for detailed error logging and debugging.
 
-        [Parameter(ParameterSetName = "Summary")]
-        [Switch]$Summary
-    )
-    $ErrorLines = [System.Text.StringBuilder]::new()
-    if ($Summary) {
-        try { [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String).Trim()) } catch { }
-    } else {
-        [void]$ErrorLines.AppendLine("======================: Exception")
-        try { [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String).Trim()) } catch { }
-        [void]$ErrorLines.AppendLine($("======================: InvocationInfo"))
-        try { [void]$ErrorLines.AppendLine($($Exception.InvocationInfo | Format-List * -Force | Out-String).Trim()) } catch { }
-        if ($Full) {
-            try {
-                for ($i = 0; $Exception; $i++, ($Exception = $Exception.InnerException)) {
-                    [void]$ErrorLines.AppendLine($("======================: InnerException - $i"))
-                    [void]$ErrorLines.AppendLine($($Exception | Format-List * -Force | Out-String ).Trim())
-                }
-            } catch { }
+    .PARAMETER ErrorRecord
+        The ErrorRecord object to extract details from. This is typically obtained
+        from $_ in a catch block or from $Error[0].
+
+    .PARAMETER AsPlainText
+        If specified, returns the error details as a formatted text string instead
+        of a PSCustomObject.
+
+    .PARAMETER IncludeEnvironment
+        If specified, includes host and environment context information such as
+        PowerShell version, computer name, and user name.
+
+    .PARAMETER ExcludeBoundParameters
+        If specified, excludes bound parameters from the output. Use this when
+        parameters may contain sensitive data like passwords or API keys.
+
+    .PARAMETER AsStringValues
+        If specified, converts complex objects (BoundParameters, TargetObject,
+        ExceptionData) to string representations. Useful for logging to flat files
+        or systems that do not support nested objects.
+
+    .EXAMPLE
+        try {
+            Get-Item "C:\NonExistent\Path" -ErrorAction Stop
         }
-        [void]$ErrorLines.AppendLine("=======================")
+        catch {
+            $details = Get-ExceptionDetails -ErrorRecord $_
+            $details | Format-List
+        }
+
+        Captures an error and extracts detailed information from it.
+
+    .EXAMPLE
+        $details = Get-ExceptionDetails -ErrorRecord $Error[0] -IncludeEnvironment
+        Write-Host "Error occurred at line $($details.LineNumber) in $($details.ScriptName)"
+
+        Processes the most recent error from the $Error automatic variable with environment info.
+
+    .EXAMPLE
+        try {
+            Invoke-RestMethod -Uri "https://invalid.url" -ErrorAction Stop
+        }
+        catch {
+            Get-ExceptionDetails -ErrorRecord $_ -AsPlainText | Out-File "C:\Logs\error.log" -Append
+        }
+
+        Logs detailed error information to a file in plain text format.
+
+    .EXAMPLE
+        try {
+            Get-ADUser -Identity "nonexistent" -ErrorAction Stop
+        }
+        catch {
+            $details = Get-ExceptionDetails -ErrorRecord $_ -AsStringValues
+            $details | ConvertTo-Json | Out-File "C:\Logs\error.json"
+        }
+
+        Exports error details as JSON with all values converted to strings.
+
+    .OUTPUTS
+        System.Management.Automation.PSCustomObject
+        Returns a PSCustomObject containing detailed error information.
+
+        System.String
+        When -AsPlainText is specified, returns a formatted string.
+
+    .NOTES
+        Function  : Get-ExceptionDetails
+        Author    : John Billekens
+        Copyright : Copyright (c) John Billekens Consultancy
+        Version   : 2026.129.945
+    #>
+    [CmdletBinding()]
+    [OutputType([PSCustomObject], [string])]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true, Position = 0)]
+        [ValidateNotNull()]
+        [System.Management.Automation.ErrorRecord]
+        $ErrorRecord,
+
+        [Parameter(Mandatory = $false)]
+        [Alias("AsString", "AsText")]
+        [switch]
+        $AsPlainText,
+
+        [Parameter(Mandatory = $false)]
+        [switch]
+        $IncludeEnvironment,
+
+        [Parameter(Mandatory = $false)]
+        [switch]
+        $ExcludeBoundParameters,
+
+        [Parameter(Mandatory = $false)]
+        [Alias("Flatten")]
+        [switch]
+        $AsStringValues
+    )
+
+    process {
+        # Recursively collect all inner exceptions
+        $innerExceptions = [System.Collections.ArrayList]::new()
+        $currentException = $ErrorRecord.Exception.InnerException
+        while ($null -ne $currentException) {
+            [void]$innerExceptions.Add([ordered]@{
+                    Message    = $currentException.Message
+                    Type       = $currentException.GetType().FullName
+                    Source     = $currentException.Source
+                    HResult    = $currentException.HResult
+                    StackTrace = $currentException.StackTrace
+                })
+            $currentException = $currentException.InnerException
+        }
+
+        # Build formatted PS error message
+        $formattedFields = @(
+            $ErrorRecord.InvocationInfo.MyCommand.Name
+            $ErrorRecord.Exception.Message
+            $ErrorRecord.InvocationInfo.PositionMessage
+            $ErrorRecord.CategoryInfo.ToString()
+            $ErrorRecord.FullyQualifiedErrorId
+        )
+        $PSError = "{0} : {1}`n{2}`n    + CategoryInfo          : {3}`n    + FullyQualifiedErrorId : {4}`n" -f $formattedFields
+
+        # Parse call stack into array for easier processing
+        $callStack = $null
+        if ($ErrorRecord.ScriptStackTrace) {
+            $callStack = $ErrorRecord.ScriptStackTrace -split "`n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ }
+        }
+
+        # Extract error code properties (present on some exception types)
+        $errorCode = $null
+        $nativeErrorCode = $null
+        if ($ErrorRecord.Exception.PSObject.Properties['ErrorCode']) {
+            $errorCode = $ErrorRecord.Exception.ErrorCode
+        }
+        if ($ErrorRecord.Exception.PSObject.Properties['NativeErrorCode']) {
+            $nativeErrorCode = $ErrorRecord.Exception.NativeErrorCode
+        }
+
+        # Get bound parameters unless excluded
+        $boundParams = $null
+        if (-not $ExcludeBoundParameters -and $ErrorRecord.InvocationInfo.BoundParameters) {
+            if ($AsStringValues) {
+                $paramStrings = $ErrorRecord.InvocationInfo.BoundParameters.GetEnumerator() | ForEach-Object {
+                    "$($_.Key)='$($_.Value)'"
+                }
+                $boundParams = $paramStrings -join '; '
+            } else {
+                $boundParams = $ErrorRecord.InvocationInfo.BoundParameters
+            }
+        }
+
+        # Get unbound arguments
+        $unboundArgs = $null
+        if ($ErrorRecord.InvocationInfo.UnboundArguments) {
+            if ($AsStringValues) {
+                $unboundArgs = $ErrorRecord.InvocationInfo.UnboundArguments -join '; '
+            } else {
+                $unboundArgs = $ErrorRecord.InvocationInfo.UnboundArguments
+            }
+        }
+
+        # Extract Exception Data dictionary
+        $exceptionData = $null
+        if ($ErrorRecord.Exception.Data -and $ErrorRecord.Exception.Data.Count -gt 0) {
+            if ($AsStringValues) {
+                $dataStrings = $ErrorRecord.Exception.Data.GetEnumerator() | ForEach-Object {
+                    "$($_.Key)='$($_.Value)'"
+                }
+                $exceptionData = $dataStrings -join '; '
+            } else {
+                $exceptionData = [ordered]@{}
+                foreach ($key in $ErrorRecord.Exception.Data.Keys) {
+                    $exceptionData[$key] = $ErrorRecord.Exception.Data[$key]
+                }
+            }
+        }
+
+        # Get target object
+        $targetObject = $ErrorRecord.TargetObject
+        if ($AsStringValues -and $null -ne $targetObject) {
+            $targetObject = "$($targetObject)"
+        }
+
+        # Build the error details object
+        $errorDetails = [ordered]@{
+            # Timestamp
+            Timestamp           = Get-Date -Format "o"
+
+            # Formatted error message
+            PSError             = $PSError
+
+            # Exception details
+            Message             = $ErrorRecord.Exception.Message
+            ExceptionType       = $ErrorRecord.Exception.GetType().FullName
+            ExceptionSource     = $ErrorRecord.Exception.Source
+            HResult             = $ErrorRecord.Exception.HResult
+            ErrorCode           = $errorCode
+            NativeErrorCode     = $nativeErrorCode
+
+            # Error action context
+            ErrorActionPref     = [string]$ErrorActionPreference
+
+            # Error identification
+            ErrorId             = $ErrorRecord.FullyQualifiedErrorId
+            Category            = $ErrorRecord.CategoryInfo.Category
+            Activity            = $ErrorRecord.CategoryInfo.Activity
+            Reason              = $ErrorRecord.CategoryInfo.Reason
+            TargetName          = $ErrorRecord.CategoryInfo.TargetName
+            TargetType          = $ErrorRecord.CategoryInfo.TargetType
+            CategoryInfo        = $ErrorRecord.CategoryInfo.ToString()
+
+            # Target object
+            TargetObject        = $targetObject
+
+            # Command context
+            CommandName         = $ErrorRecord.InvocationInfo.MyCommand.Name
+            CommandType         = if ($ErrorRecord.InvocationInfo.MyCommand) {
+                [string]$ErrorRecord.InvocationInfo.MyCommand.CommandType
+            } else { $null }
+            ModuleName          = $ErrorRecord.InvocationInfo.MyCommand.ModuleName
+            ModuleVersion       = if ($ErrorRecord.InvocationInfo.MyCommand.Module) {
+                $ErrorRecord.InvocationInfo.MyCommand.Module.Version.ToString()
+            } else { $null }
+            InvocationName      = $ErrorRecord.InvocationInfo.InvocationName
+
+            # Script location
+            ScriptName          = $ErrorRecord.InvocationInfo.ScriptName
+            PSScriptRoot        = $ErrorRecord.InvocationInfo.PSScriptRoot
+            PSCommandPath       = $ErrorRecord.InvocationInfo.PSCommandPath
+            LineNumber          = $ErrorRecord.InvocationInfo.ScriptLineNumber
+            CharacterPosition   = $ErrorRecord.InvocationInfo.OffsetInLine
+            Line                = if ($ErrorRecord.InvocationInfo.Line) {
+                "$($ErrorRecord.InvocationInfo.Line)".Trim()
+            } else { $null }
+            PositionMessage     = $ErrorRecord.InvocationInfo.PositionMessage
+
+            # Pipeline context
+            PipelineLength      = $ErrorRecord.InvocationInfo.PipelineLength
+            PipelinePosition    = $ErrorRecord.InvocationInfo.PipelinePosition
+            HistoryId           = $ErrorRecord.InvocationInfo.HistoryId
+
+            # Parameter binding
+            BoundParameters     = $boundParams
+            UnboundArguments    = $unboundArgs
+
+            # Exception data dictionary
+            ExceptionData       = $exceptionData
+
+            # ErrorDetails object (cmdlet-provided additional info)
+            ErrorDetailsMessage = $ErrorRecord.ErrorDetails.Message
+            RecommendedAction   = $ErrorRecord.ErrorDetails.RecommendedAction
+
+            # Stack traces
+            ScriptStackTrace    = $ErrorRecord.ScriptStackTrace
+            CallStack           = $callStack
+            ExceptionStackTrace = $ErrorRecord.Exception.StackTrace
+
+            # Inner exceptions
+            InnerExceptions     = if ($innerExceptions.Count -gt 0) {
+                $innerExceptions.ToArray()
+            } else { $null }
+        }
+
+        # Add environment context if requested
+        if ($IncludeEnvironment) {
+            $errorDetails['HostName'] = $Host.Name
+            $errorDetails['PSVersion'] = $PSVersionTable.PSVersion.ToString()
+            $errorDetails['PSEdition'] = $PSVersionTable.PSEdition
+            $errorDetails['CLRVersion'] = if ($PSVersionTable.CLRVersion) {
+                $PSVersionTable.CLRVersion.ToString()
+            } else { $null }
+            $errorDetails['ComputerName'] = $env:COMPUTERNAME
+            $errorDetails['UserName'] = "$($env:USERDOMAIN)\$($env:USERNAME)"
+            $errorDetails['ProcessId'] = $PID
+        }
+
+        if ($AsPlainText) {
+            $output = [System.Text.StringBuilder]::new()
+            [void]$output.AppendLine("")
+            [void]$output.AppendLine("=" * 80)
+            [void]$output.AppendLine("ERROR DETAILS - $($errorDetails.Timestamp)")
+            [void]$output.AppendLine("=" * 80)
+
+            foreach ($key in $errorDetails.Keys) {
+                $value = $errorDetails[$key]
+                if ($null -eq $value) {
+                    continue
+                }
+
+                if ($key -eq 'InnerExceptions') {
+                    [void]$output.AppendLine("")
+                    [void]$output.AppendLine("--- Inner Exceptions ---")
+                    $index = 0
+                    foreach ($inner in $value) {
+                        [void]$output.AppendLine("  [$($index)]: $($inner.Type)")
+                        [void]$output.AppendLine("       Message : $($inner.Message)")
+                        [void]$output.AppendLine("       Source  : $($inner.Source)")
+                        [void]$output.AppendLine("       HResult : $($inner.HResult)")
+                        $index++
+                    }
+                } elseif ($key -eq 'CallStack') {
+                    [void]$output.AppendLine("")
+                    [void]$output.AppendLine("--- Call Stack ---")
+                    foreach ($frame in $value) {
+                        [void]$output.AppendLine("  $($frame)")
+                    }
+                } elseif ($key -eq 'BoundParameters' -and $value -is [hashtable]) {
+                    [void]$output.AppendLine("")
+                    [void]$output.AppendLine("--- Bound Parameters ---")
+                    foreach ($param in $value.GetEnumerator()) {
+                        [void]$output.AppendLine("  $($param.Key): $($param.Value)")
+                    }
+                } elseif ($key -eq 'ExceptionData' -and $value -is [System.Collections.Specialized.OrderedDictionary]) {
+                    [void]$output.AppendLine("")
+                    [void]$output.AppendLine("--- Exception Data ---")
+                    foreach ($item in $value.GetEnumerator()) {
+                        [void]$output.AppendLine("  $($item.Key): $($item.Value)")
+                    }
+                } elseif ($value -is [string] -and $value.Contains("`n")) {
+                    [void]$output.AppendLine("")
+                    [void]$output.AppendLine("--- $($key) ---")
+                    [void]$output.AppendLine($value)
+                } else {
+                    [void]$output.AppendLine("$($key.PadRight(20)): $($value)")
+                }
+            }
+
+            [void]$output.AppendLine("=" * 80)
+            return $output.ToString()
+        } else {
+            return [PSCustomObject]$errorDetails
+        }
     }
-    return $ErrorLines.ToString()
 }
 
 #endregion Functions
@@ -3334,7 +3649,7 @@ try {
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
                 $PreLogLines += "E;CONFIGFILE;Error, Maybe the JSON file is invalid.`r`n$($_.Exception.Message)"
-                $PreLogLines += "I;CONFIGFILE;Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                $PreLogLines += "I;CONFIGFILE;Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
             Write-DisplayText -ForeGroundColor Green " Done"
         } else {
@@ -3518,10 +3833,18 @@ $Script:ReplaceSensitive = @($Script:ReplaceSensitive | Select-Object -Unique | 
 
 
 # Ratelimit protection https://letsencrypt.org/docs/rate-limits/#new-registrations-per-ip-address
-if ($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) {
+if (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) -and (-Not [string]::IsNullOrEmpty($($Parameters.settings.NewRegistrationsAfter.value)))) {
+    try {
+        $Parameters.settings.NewRegistrationsAfter = [datetime]$Parameters.settings.NewRegistrationsAfter.value
+        $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
+    } catch {
+        $PreLogLines += "W;PARAMETERS;NewRegistrationsAfter value `"$($Parameters.settings.NewRegistrationsAfter)`" could not be converted to DateTime, resetting to current date."
+        $Parameters.settings.NewRegistrationsAfter = [datetime]::Now
+    }
+} elseif ($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) {
     $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter already set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
 } else {
-    $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value (Get-Date)
+    $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value [datetime]::Now -Force
     $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter added and set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
 }
 
@@ -3658,7 +3981,7 @@ if ($CertificateActions) {
             } catch {
                 Write-DisplayText -ForeGroundColor Red " Failed"
                 Write-ToLogFile -E -C LoadModule -M "Error while loading and/or installing module. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                 Write-Error "Error while loading and/or installing module"
                 Write-Warning "PackageManagement is not available please install this first or manually install Posh-ACME"
                 Write-Warning "Visit `"https://docs.microsoft.com/en-us/powershell/gallery/psget/get_psget_module`" to download Package Management"
@@ -3742,7 +4065,7 @@ try {
     }
 } catch {
     Write-ToLogFile -E -C VersionInfo -M "Caught an error while retrieving version info. Exception Message: $($_.Exception.Message)"
-    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
 }
 Write-ToLogFile -I -C VersionInfo -M "Version check finished."
 #endregion VersionInfo
@@ -3757,7 +4080,7 @@ if ($ADCActionsRequired) {
         Write-DisplayText -ForegroundColor Green "Connected"
     } catch {
         Write-DisplayText -ForegroundColor Red "NOT Connected!"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         TerminateScript 1 "Could not connect, $($_.Exception.Message)"
     }
     Write-DisplayText -Line "URL"
@@ -3782,7 +4105,7 @@ if ($ADCActionsRequired) {
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the HA NOde info, $($_.Exception.message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
     Write-DisplayText -Line "Version"
     Write-DisplayText -ForeGroundColor Cyan "$($ADCSession.Version)"
@@ -3797,7 +4120,7 @@ if ($ADCActionsRequired) {
         }
     } catch {
         Write-ToLogFile -E -C ADC-Check -M "Caught an error while retrieving the version! Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
 
     if ($CreateUserPermissions -and $UseLbVip) {
@@ -3925,7 +4248,7 @@ if ($CreateUserPermissions -or $CreateApiUser) {
         } catch {
             Write-DisplayText -ForeGroundColor Red "Error"
             Write-ToLogFile -E -C ApiUserPermissions -M "Caught an error! Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         }
     }
 }
@@ -3998,7 +4321,7 @@ if ($CreateApiUser) {
                     Write-ToLogFile -D -C ApiUser -M "Posting: $($payload | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                     $response = Invoke-ADCRestApi -Session $ADCSession -Method PUT -Type systemuser -Payload $payload
                 } catch {
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-ToLogFile -D -C ApiUser -M "Could not set API Command Line Interface only (Feature not supported on this version), $($_.Exception.Message)"
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine " API Interface setting not possible."
                 }
@@ -4008,7 +4331,7 @@ if ($CreateApiUser) {
             } catch {
                 Write-DisplayText -ForeGroundColor Red " Error"
                 Write-ToLogFile -E -C ApiUser -M "Caught an error while creating user. $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
 
         }
@@ -4044,7 +4367,7 @@ if ($CreateApiUser) {
                 } catch {
                     Write-DisplayText -ForeGroundColor Red "Error"
                     Write-ToLogFile -D -C ApiUser -M "Error $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                 }
             }
             $response = Invoke-ADCRestApi -Session $ADCSession -Method GET -Type systemuser_systemcmdpolicy_binding -Resource $ApiUsername
@@ -4067,7 +4390,7 @@ if ($CreateApiUser) {
     } catch {
         Write-DisplayText -ForeGroundColor Red "Error"
         Write-ToLogFile -E -C ApiUser -M "Caught an error! Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
 }
 
@@ -4152,7 +4475,7 @@ if ($CertificateActions) {
         $LEText = "Test Certificates (Staging)"
         $Script:MailLog += "IMPORTANT: This is a test certificate!`r`n"
     }
-    Posh-ACME\Set-PAServer $BaseService 6>$null
+    Posh-ACME\Set-PAServer $BaseService -IgnoreContact 6>$null
     $PAServer = Posh-ACME\Get-PAServer -Refresh
     Write-ToLogFile -D -C Services -M "PSServer content: $($PAServer | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
     Write-ToLogFile -I -C Services -M "By running this script you agree with the terms specified by Let's Encrypt."
@@ -4212,6 +4535,15 @@ if ($CertificateActions) {
                 $currentCertificateType = "Staging (Test)"
                 $newCertificateType = "Production"
             }
+        }
+        if (-not ($CertRequest | Get-Member -Name "CleanExpiredCertsOnDisk" -ErrorAction SilentlyContinue -MemberType NoteProperty)) {
+            $CertRequest | Add-Member -Name "CleanExpiredCertsOnDisk" -MemberType NoteProperty -Value $true
+            $SaveConfig = $true
+        } elseif ($CertRequest.CleanExpiredCertsOnDisk.GetType().Name -ieq "PSCustomObject" -and `
+            ($CertRequest.CleanExpiredCertsOnDisk | Get-Member -Name IsPresent) -and `
+            $CertRequest.CleanExpiredCertsOnDisk.IsPresent.GetType().Name -ieq "Boolean") {
+            $CertRequest.CleanExpiredCertsOnDisk = $CertRequest.CleanExpiredCertsOnDisk.IsPresent
+            $SaveConfig = $true
         }
         $Script:MailData += [PSCustomObject]@{ID = $round; Code = "FAILED"; Result = ""; CN = ""; Text = ""; SAN = ""; Location = ""; CertKeyName = ""; CertExpiresDays = "NA" }
         $mailDataItem = $Script:MailData | Where-Object ID -EQ $round
@@ -4280,7 +4612,7 @@ if ($CertificateActions) {
                 }
             } catch {
                 Write-ToLogFile -E -C CheckCertRenewal -M "Caught an error while validating dates, $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
         }
         if ($SkipThisCertRequest) {
@@ -4489,7 +4821,7 @@ if ($CertificateActions) {
                         } catch {
                             $ExceptMessage = $_.Exception.Message
                             Write-ToLogFile -E -C ADC-CS-Validation -M "Error Verifying Content Switch. Details: $ExceptMessage"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         } finally {
                             Write-DisplayText -ForeGroundColor Cyan -NoNewLine "VIP"
                             if (($response.errorcode -eq "0") -and `
@@ -4628,7 +4960,7 @@ if ($CertificateActions) {
                         Write-ToLogFile -W -C Registration -M "Too many new registrations detected."
                         Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
                         $Parameters.settings.NewRegistrationsAfter = (Get-Date).AddMinutes(20)
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Invoke-RegisterError 1 "Too many new registrations detected"
                         continue
                     }
@@ -4648,12 +4980,12 @@ if ($CertificateActions) {
                             Write-ToLogFile -W -C Registration -M "Too many new registrations detected."
                             Write-DisplayText -ForeGroundColor Red "`nERROR: Too many new registrations detected! We need to wait 20 minutes before we can register a new account."
                             $Parameters.settings.NewRegistrationsAfter = (Get-Date).AddMinutes(20)
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             Invoke-RegisterError 1 "Too many new registrations detected"
                             continue
                         }
                         Write-ToLogFile -E -C Registration -M "New registration failed! Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Write-DisplayText -ForeGroundColor Red "`nERROR: New registration failed!"
                     }
                 }
@@ -4663,7 +4995,7 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C Registration -M "Account $($PARegistration.id) set as default."
                 } catch {
                     Write-ToLogFile -E -C Registration -M "Could not set default account. Exception Message: $($_.Exception.Message)."
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                 }
                 Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
 
@@ -4721,7 +5053,7 @@ if ($CertificateActions) {
                     } catch {
                         Write-DisplayText -ForeGroundColor Red "Failed"
                         Write-ToLogFile -E -C Order -M "Caught an error, $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
 
                 }
@@ -4782,7 +5114,7 @@ if ($CertificateActions) {
                         Invoke-RegisterError 1 "Could not create the order. You can retry with specifying the `"-CleanPoshACMEStorage`" parameter."
                         $mailDataItem.Text = "Could not create the order, ERROR: $($_.Exception.Message)"
                     }
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     continue
                 }
                 Write-DisplayText -ForeGroundColor Green " Ready"
@@ -4841,7 +5173,7 @@ if ($CertificateActions) {
                             } catch {
                                 $PublicIP = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not resolve the IP. $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                             $RecordType = $null
                             try {
@@ -4853,7 +5185,7 @@ if ($CertificateActions) {
                                 $RecordTypeID = $null
                                 $RecordType = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not determine the Record Type. $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                             try {
                                 $DNSCNAMEDetails = $null
@@ -4868,7 +5200,7 @@ if ($CertificateActions) {
                             } catch {
                                 $DNSCNAMEDetails = $null
                                 Write-ToLogFile -E -C DNS-Validation -M "Could not retrieve CNAME details. $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                             $DNSObject.DNSType = $RecordType
                             $DNSObject.DNSCNAMEDetails = $DNSCNAMEDetails
@@ -4898,7 +5230,7 @@ if ($CertificateActions) {
                         }
                     } catch {
                         Write-ToLogFile -E -C DNS-Validation -M "Error while retrieving IP Address. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Write-DisplayText -ForeGroundColor Red -NoNewLine "Error while retrieving IP Address,"
                         if ($DNSObject.SAN) {
                             Write-DisplayText -ForeGroundColor Red "you can try to re-run the script with the -DisableIPCheck parameter."
@@ -5086,7 +5418,7 @@ if ($CertificateActions) {
                                         Write-ToLogFile -I -C OrderValidation -M "Successfully send."
                                     } catch {
                                         Write-ToLogFile -E -C OrderValidation -M "Error while submitting the Challenge. Exception Message: $($_.Exception.Message)"
-                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                         Write-DisplayText -ForegroundColor Red "`r`nERROR: Error while submitting the Challenge."
                                         Invoke-RegisterError 1 "Error while submitting the Challenge."
                                         break
@@ -5094,7 +5426,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -ForeGroundColor Green " Ready"
                                 } catch {
                                     Write-ToLogFile -E -C OrderValidation -M "Failed to bind Responder Policy to Load Balance VIP. Exception Message: $($_.Exception.Message)"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                     Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy Binding - $RspName]"
                                     Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                     Invoke-RegisterError 1 "Failed to bind Responder Policy to Load Balance VIP"
@@ -5102,7 +5434,7 @@ if ($CertificateActions) {
                                 }
                             } catch {
                                 Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Policy. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Policy - $RspName]"
                                 Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                                 Invoke-RegisterError 1 "Failed to add Responder Policy"
@@ -5110,7 +5442,7 @@ if ($CertificateActions) {
                             }
                         } catch {
                             Write-ToLogFile -E -C OrderValidation -M "Failed to add Responder Action. Error Details: $($_.Exception.Message)"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             Write-DisplayText -ForeGroundColor Red " ERROR  [Responder Action - $RsaName]"
                             Write-DisplayText -ForegroundColor Red "`r`nERROR: $($_.Exception.Message)"
                             Invoke-RegisterError 1 "Failed to add Responder Action"
@@ -5294,11 +5626,11 @@ if ($CertificateActions) {
                         } catch {
                             try {
                                 Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
                             } catch {
                                 Write-ToLogFile -E -C DNSChallenge -M "Caught an error, $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                         }
 
@@ -5353,7 +5685,7 @@ if ($CertificateActions) {
                     }
                 } catch {
                     Write-ToLogFile -E -C DNSChallenge -M "Caught an error. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     $issues = $true
                 }
                 if ($issues) {
@@ -5392,7 +5724,7 @@ if ($CertificateActions) {
                         } catch {
                             Write-DisplayText -ForeGroundColor Red " ERROR"
                             Write-ToLogFile -E -C FinalizingOrder -M "Caught an error. Exception Message: $($_.Exception.Message)"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             Write-Error "Error while submitting the Challenge"
                             $DNSValidationError = $true
                             Invoke-RegisterError 1 "Error while submitting the Challenge"
@@ -5463,7 +5795,7 @@ if ($CertificateActions) {
                                 Write-ToLogFile -I -C FinalizingOrder -M "$($DNSObject.DNSName): $($PAOrderItem.DNS01Status)"
                             } catch {
                                 Write-ToLogFile -E -C FinalizingOrder -M "Error while Retrieving validation status. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 Write-Error "Error while Retrieving validation status"
                                 $ValidationError = $true
                                 Invoke-RegisterError 1 "Error while Retrieving validation status"
@@ -5518,14 +5850,19 @@ if ($CertificateActions) {
                     Write-ToLogFile -I -C FinalizingOrder -M "Requesting certificate."
                     try {
                         if ($CertRequest.ForceCertRenew) {
+                            Write-ToLogFile -D -C FinalizingOrder -M "Force certificate renewal is specified. BaseService:`"$BaseService`", Domain: `"$($SessionRequestObject.DNSObjects.DNSName)`", KeyLength: $($CertRequest.KeyLength), FriendlyName: `"$($CertRequest.FriendlyName)`"."
                             $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -Force -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction stop
                         } else {
+                            Write-ToLogFile -D -C FinalizingOrder -M "Force certificate renewal is not specified. BaseService:`"$BaseService`", Domain: `"$($SessionRequestObject.DNSObjects.DNSName)`", KeyLength: $($CertRequest.KeyLength), FriendlyName: `"$($CertRequest.FriendlyName)`"."
                             $NewCertificates = New-PACertificate -Domain $($SessionRequestObject.DNSObjects.DNSName) -DirectoryUrl $BaseService -PfxPass $(ConvertTo-PlainText -SecureString $PfxPassword) -CertKeyLength $CertRequest.KeyLength -FriendlyName $CertRequest.FriendlyName -ErrorAction stop
                         }
                         Write-ToLogFile -D -C FinalizingOrder -M "$($NewCertificates | Select-Object Subject,NotBefore,NotAfter,KeyLength | ConvertTo-Json -WarningAction SilentlyContinue -Depth 5 -Compress)"
                         Write-ToLogFile -I -C FinalizingOrder -M "Certificate requested successfully."
                     } catch {
+                        Write-DisplayText -ForeGroundColor Red " Error requesting certificate!"
+                        Write-DisplayText -Line "Status"
                         Write-ToLogFile -I -C FinalizingOrder -M "Failed to request certificate."
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
                     Start-Sleep -Seconds 1
@@ -5546,12 +5883,13 @@ if ($CertificateActions) {
                 if (Test-Path $CertificateDirectory) {
                     Write-ToLogFile -I -C CertFinalization -M "Retrieving certificate info."
                     $PACertificate = Posh-ACME\Get-PACertificate -MainDomain $($CertRequest.CN)
-                    Write-ToLogFile -I -C CertFinalization -M "Retrieved successfully."
                     if ([String]::IsNullOrEmpty($($PACertificate.ChainFile))) {
                         Write-DisplayText -ForeGroundColor Red " Error, certificate not found!"
                         Write-ToLogFile -E -C CertFinalization -M "No Certificate Found!"
                         Invoke-RegisterError 1 "No Certificate Found!"
                         continue
+                    } else {
+                        Write-ToLogFile -I -C CertFinalization -M "Retrieved successfully."
                     }
                     $ChainFile = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($PACertificate.ChainFile)"
                     Write-ToLogFile -D -C CertFinalization -M $($ChainFile | Select-Object DnsNameList, Subject, @{ Name = 'NotBefore'; Expression = { $_.NotBefore.ToString('yyyy-MM-dd HH:mm:ss') } }, @{ Name = 'NotAfter'; Expression = { $_.NotAfter.ToString('yyyy-MM-dd HH:mm:ss') } }, SerialNumber, Thumbprint, Issuer | ConvertTo-Json -WarningAction SilentlyContinue -Compress -Depth 8)
@@ -5701,7 +6039,7 @@ if ($CertificateActions) {
                                 Write-DisplayText -ForeGroundColor Green "Unbound (VPN Global certificate) successfully"
                             } catch {
                                 Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding-Removal" -M "Failed to unbind certificate"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
                             }
                             Write-DisplayText -Line "Status"
@@ -5715,7 +6053,7 @@ if ($CertificateActions) {
                     }
                 } catch {
                     Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding-Removal" -M "Caught an error, $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Invoke-RegisterError 1 "Caught an error, $($_.Exception.Message)"
                 }
             }
@@ -5803,7 +6141,7 @@ if ($CertificateActions) {
                         } catch {
                             Write-DisplayText -Blank
                             Write-ToLogFile -E -C ADC-CertUpload -M "Could not determine if IntermediateCA file exists on the ADC."
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             Write-Warning "Could not determine if IntermediateCA file exists on the ADC."
                             Write-DisplayText -Blank
                             Write-DisplayText -Line "Status"
@@ -5975,7 +6313,7 @@ if ($CertificateActions) {
                                                 Write-DisplayText -ForeGroundColor Green " Removed"
                                             } catch {
                                                 Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous certificate file, $($_.Exception.Message)"
-                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                                 Write-DisplayText -ForeGroundColor Red "Failed to remove"
                                             }
                                         }
@@ -5989,7 +6327,7 @@ if ($CertificateActions) {
                                                 Write-DisplayText -ForeGroundColor Green " Removed"
                                             } catch {
                                                 Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous certificate file, $($_.Exception.Message)"
-                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                                 Write-DisplayText -ForeGroundColor Red "Failed to remove"
                                             }
                                         } else {
@@ -6000,7 +6338,7 @@ if ($CertificateActions) {
                                     }
                                 } catch {
                                     Write-ToLogFile -E -C ADC-RemovePrevious -M "Could not remove previous files, $($_.Exception.Message)"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 }
                             } else {
                                 Write-ToLogFile -I -C ADC-RemovePrevious -M "-RemovePrevious parameter was NOT specified, not removing previous files."
@@ -6014,7 +6352,7 @@ if ($CertificateActions) {
                         Write-Warning "Caught an error, certificate not added to the ADC Config"
                         Write-Warning "Details: $($_.Exception.Message | Out-String)"
                         Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, certificate not added to the ADC Config. Exception Message: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Write-DisplayText -Line "Status"
                     }
                     Write-DisplayText -ForeGroundColor Yellow -NoNewLine "*"
@@ -6028,7 +6366,7 @@ if ($CertificateActions) {
                         Write-DisplayText -Blank
                         Write-Warning -Message "Could not link the certificate`"$CertificateCertKeyName`"`r`n         to Intermediate `"$intermediateCACertKeyName`""
                         Write-ToLogFile -E -C ADC-CertUpload -M "Could not link the certificate `"$CertificateCertKeyName`" to Intermediate `"$intermediateCACertKeyName`"."
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         Write-DisplayText -Blank
                         Write-DisplayText -Line "Status"
                     }
@@ -6077,13 +6415,13 @@ if ($CertificateActions) {
                         $SaveConfig = $true
                     } catch {
                         Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving expiration details, $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                     try {
                         $FinalCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 "$($CertificateFullPath)"
                     } catch {
                         Write-ToLogFile -E -C ADC-CertUpload -M "Error while retrieving certificate details, $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     }
                     try {
                         $renewAfterDays = 0
@@ -6147,7 +6485,7 @@ if ($CertificateActions) {
                         $mailDataItem.Code = "OK"
                     } catch {
                         Write-ToLogFile -D -C ADC-CertUpload-Mail -M "Error while gathering data for mail, Error: $($_.Exception.Message)"
-                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         $mailDataItem.Text += "`r`nError while gathering data for mail, Error: $($_.Exception.Message)"
                     }
 
@@ -6181,7 +6519,7 @@ if ($CertificateActions) {
                                             Write-DisplayText -ForeGroundColor Green "Successfully unbound certificate"
                                         } catch {
                                             Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to unbind certificate"
-                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                             Write-DisplayText -ForeGroundColor Red "Failed to unbind certificate"
                                         }
                                     } else {
@@ -6208,7 +6546,7 @@ if ($CertificateActions) {
                                     Write-DisplayText -ForeGroundColor Green "Successfully bound certificate"
                                 } catch {
                                     Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind certificate"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                     Write-DisplayText -ForeGroundColor Red "Failed to bind certificate"
                                 }
                                 $MailData += "SSLVPN (Global) Certificate binding updated: $($CertRequest.CertKeyNameToUpdate)"
@@ -6244,7 +6582,7 @@ if ($CertificateActions) {
                                             Write-DisplayText -ForeGroundColor Green "Successfully bound CA"
                                         } catch {
                                             Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Failed to bind CA"
-                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                             Write-DisplayText -ForeGroundColor Red "Failed to bind CA"
                                         }
                                     }
@@ -6258,7 +6596,7 @@ if ($CertificateActions) {
                             }
                         } catch {
                             Write-ToLogFile -E -C "UpdateGlobalVPNCertBinding" -M "Caught an error, $($_.Exception.Message)"
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             Invoke-RegisterError 1 "Caught an error, $($_.Exception.Message)"
                         }
                     }
@@ -6309,7 +6647,7 @@ if ($CertificateActions) {
                                     Unpublish-Challenge -Domain $Record.SanitizedFqdn -Account $PARegistration -Token $Record.Token -Plugin $DNSPlugin -PluginArgs $DNSParams
                                 } catch {
                                     Write-ToLogFile -E -C ADC-CertUpload -M "Caught an error, $($_.Exception.Message)"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 }
                             }
                         }
@@ -6356,7 +6694,7 @@ if ($CertificateActions) {
                                     } catch {
                                         Write-DisplayText -ForeGroundColor Red "Failed"
                                         Write-ToLogFile -E -C IISActions -M "Failed. Exception Message: $($_.Exception.Message)"
-                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                     }
                                 }
                                 try {
@@ -6368,12 +6706,12 @@ if ($CertificateActions) {
                                 } catch {
                                     Write-DisplayText -ForeGroundColor Red "Could not bind"
                                     Write-ToLogFile -E -C IISActions -M "Could not bind. Exception Message: $($_.Exception.Message)"
-                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                                 }
                             } catch {
                                 Write-DisplayText -ForeGroundColor Red "Caught an error while updating"
                                 Write-ToLogFile -E -C IISActions -M "Caught an error while updating. Exception Message: $($_.Exception.Message)"
-                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                             }
                         } else {
                             Write-DisplayText -Line "Module"
@@ -6390,7 +6728,7 @@ if ($CertificateActions) {
                     }
                 } catch {
                     Write-ToLogFile -E -C ADC-CertUpload -M "Certificate completion failed. Exception Message: $($_.Exception.Message)"
-                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                     Write-Error "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                     Invoke-RegisterError 1 "Certificate completion failed. Exception Message: $($_.Exception.Message)"
                     continue
@@ -6454,7 +6792,7 @@ if ($CertificateActions) {
                             }
                         } catch {
                             $postPoSHScriptResult = 1
-                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
                         }
                         switch ($postPoSHScriptResult) {
                             0 {
@@ -6506,7 +6844,7 @@ if ($CertificateActions) {
             } catch {
                 Write-DisplayText -ForeGroundColor Red "Failed, $($_.Exception.Message)"
                 Write-ToLogFile -E -C RemoveExpiredCerts -M "Error while cleaning expired certificate files. Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
         }
     } #END Loop
@@ -6544,7 +6882,7 @@ if ($CertRequest.DisableVipAfter -eq $true) {
     } catch {
         $ExceptMessage = $_.Exception.Message
         Write-ToLogFile -E -C PostCSActtion -M "Error Verifying Content Switch. Details: $ExceptMessage"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
 } else {
     Write-ToLogFile -I -C PostCSActtion -M "DisableVipAfter was not set for $($CertRequest.CsVipName)"
@@ -6583,7 +6921,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, Could not unlink `"$($LinkedCertificate.certkey)`""
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not unlink certkey `"$($LinkedCertificate.certkey)`". Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         }
     }
     $FakeCerts = $CertDetails.sslcertkey | Where-Object { $_.issuer -match $intermediateCACertKeyName }
@@ -6602,7 +6940,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not remove certkey `"$($FakeCert.certkey)`""
             Write-ToLogFile -W -C RemoveTestCerts -M "Could not remove certkey `"$($FakeCert.certkey)`" from the ADC. Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         }
         Write-ToLogFile -W -C RemoveTestCerts -M "Getting Certificate details"
         try {
@@ -6644,7 +6982,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`""
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $CertFilePath -ChildPath $CertFileName)`". Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         }
         if (-not ($(Join-Path -Path $CertFilePath -ChildPath $CertFileName) -eq $(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName))) {
             Write-DisplayText -Line "SSL Key File"
@@ -6657,7 +6995,7 @@ if ($RemoveTestCertificates) {
             } catch {
                 Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file `"$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)`""
                 Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file `"$(Join-Path -Path $KeyFilePath -ChildPath $KeyFileName)`". Exception Message: $($_.Exception.Message)"
-                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+                Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
             }
         }
     }
@@ -6677,7 +7015,7 @@ if ($RemoveTestCertificates) {
         } catch {
             Write-DisplayText -ForeGroundColor Yellow "WARNING, could not delete file [$(Join-Path -Path $CertFileToRemove.filelocation -ChildPath $CertFileToRemove.filename)]"
             Write-ToLogFile -E -C RemoveTestCerts -M "Could not delete file: `"$(Join-Path -Path $CertFileToRemove.filelocation -ChildPath $CertFileToRemove.filename)`". Exception Message: $($_.Exception.Message)"
-            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+            Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
         }
     }
 }
@@ -6701,7 +7039,7 @@ if ($CleanAllExpiredCertsOnDisk) {
     } catch {
         Write-DisplayText -ForeGroundColor Red "Failed, $($_.Exception.Message)"
         Write-ToLogFile -E -C RemoveExpiredCerts -M "Error while cleaning expired certificate files. Exception Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
 }
 
@@ -6713,7 +7051,7 @@ if ($SaveConfig -and (-not [String]::IsNullOrEmpty($ConfigFile))) {
     } catch {
         Write-ToLogFile -E -C Final-Actions -M "Saving failed! Exception Message: $($_.Exception.Message)"
         Write-DisplayText -ForegroundColor Red "Could not write the Parameters to `"$ConfigFile`"`r`nException Message: $($_.Exception.Message)"
-        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+        Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     }
 } elseif ($SaveConfig -and ([String]::IsNullOrEmpty($ConfigFile))) {
     Write-ToLogFile -D -C Final-Actions -M "There were unsaved changes, but no ConfigFile was defined."
@@ -6748,8 +7086,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBl9UpJb4UY+ool
-# 58/x4WhzIPUr6obmUdogNTtCdYVh96CCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBckU+Mbq1zCPqI
+# jmvI6BhU9CecVTq7Q/42W+sGfjb5h6CCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -6925,31 +7263,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCDf2ovgOv4rAI3IMpD0KCY8lx9mNMGqmRCLlc2DWXKq
-# zjANBgkqhkiG9w0BAQEFAASCAYBbdt6ujjlajNxZiBtoHVuhQjhsNPvSW+nFRpeK
-# 94i8VoEd5fzdWF7L0pDhkIbJ8F4pTo5s7hWiGFLHoTCmSVt4wO6ufhIvX8Uaf4C8
-# XDA55Fwazth9fZyK3CCQXxthPG3u0X7X+JHDOeK2oh841Db32ELQ62crlHweoEp7
-# raxSH7HrNu+pmbz30JkfLHjjwr38OVRAaHMwU97UW/+ny38rrqoFn3ei4aEdRkHl
-# PwqOm0LMM+vJFMCFtT1j2+9U1oZnc0FbeuEcSt34iio3cbe0NvhbpMyHrNGnc8Zo
-# QNbTlfnnKUuh1mCwuGr+M6w8yr0bROG4k2c5OaObss+RmmVvj9JbQoJOnv2nVJnU
-# NOiTFb3ejuYxwBpqDU+IxSQmG51+Wq/7BdAQhAkLvhTib/L4zQx4bo0mABGhR7VA
-# avtfIx6l1WV5sgpnNJ7gb549cWdyY3KN1vBjMGglLMytQ5XuNSW/KwCaHwW5SFiN
-# rGodjpoNvZ9Rmmy4enNfJFT+LiuhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCADGYZBHapA1Ef4JBCqfTHZXHi2wU9xYrUgU1sykamd
+# +jANBgkqhkiG9w0BAQEFAASCAYBSISjygyynScOupdtb7rIy7QJ+7+YyZKy4SEVs
+# Zzx1/0J6ZG9wdI1ZWhp3OaGtDl+NYlmWSXvZesAQGa+JbuAMvYjv2xJcAPPUp8Kh
+# 7EuIGg80AdZ5hep8xZuuxkvgO5vdVuK97Xuqv5Xy6tXbUKUkIoBPS+J1yXtkf+UB
+# 23tjSoVkX5vq0ixAmDgQ5B2JqiqAJCQvPH46X3AcxUDnTEV0J3uU9ApZd5hwkXum
+# kihUEGdM9U6epxrnM8c7eTdWf1IT1VrkZSxIZnjbz/QxjWGImdWzLrrSCPtjJ4QA
+# k37HG+xnf1rFzZ46NfjHILNrwvX0F3LHV401rPsBEufE8aoqdFaO86L374jUG08I
+# +EzPa3DQhPAqf9i9v7+Z7/KNrf2sZSECUPSrCKNFDe07P5HmWeMzDJcoAolGKiy+
+# WzvfVMVv8Ghfo4aI4iuIGuAdZRnFoyw8bk4TMR6451k5iJHmx8PAof5LYEADqMRo
+# IcJdJF31GJz+nxDQDHr/YBsXMJWhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNTA4MTgxMDE3NDRaMD8GCSqGSIb3
-# DQEJBDEyBDACXsETEj0ZzFpujh2TQy78Pd/rxYGc1ZRTR12irMwWigH4zN9CJp/4
-# BRgOmqmen/QwDQYJKoZIhvcNAQEBBQAEggIAmZ7E9ESoqDPTwAhgvGH+Hh0yfmEd
-# CmkQ//BAOaiPDCqdB5fyZXPuR/qvTRoXolChES66vlOptKMeMTPTFBTejdHa4gEb
-# +5YLoyiHA9kW+kLMFkksFzZMfrEZx7Ho6TyNLFO4hnU/rNUSUcLkbylZ9sWtqbML
-# SRkqBU/9KsXol+3nW0A2gxZEFGA5M1lLt/fd2mU3yea9XzWOQMGLHSxvHCL8M9D3
-# qTOtQX8F1hRgOQHayT7keYh1IoQgyXT7UafyKigOdArR8WsDg4xFwizy8cHP0ewj
-# 4vwIeowdAVP8U5tIeBooOs8Vy3KN1wY62SiLOzIMqmfDW+zKBI7S4P9Asbv9/8pC
-# GmJTvrmmOYA9W3iQWISRkZQQi3lf2uNXwOhrN/KqrGblzd5YqwQNv1efR6qcFT07
-# tzPyu4SjuaYfxBZ0WvGwqyxNmCdvjRQDFjHw++Ey2rSkmWSlBt3u5NhAh2AkwfYZ
-# bXyUx+t66uLUK+GPRXIj2vY8wDJeMYWoeCfOofiurSo7CsyM/YPgE3QXaVJfs+p/
-# 0yZPeRdOtHxUrjaMuf8qf6209TvzZOyfh+QkExj/84RBQPvGTBEM3wSCnpX3f0E2
-# JHiG9pTABh/QFtITLKPrmlfdDir7M8w9Knn5QN/CmKkWJMkmMeq9HkKXQSKgGyqA
-# rxNAzfjaG8TcnP8=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAxMjkwODUyMjVaMD8GCSqGSIb3
+# DQEJBDEyBDC9ea0530XTQRffM3mwi7vtVVb9Pp4n4ndw6ihTXaPsSqTOrYm6DanF
+# fpzERzjRsiswDQYJKoZIhvcNAQEBBQAEggIAQGckBab56+D6MBUpHsLfrJaH03IA
+# dASuei8u+gvQWWggBUq5P5LNHkYcnRAts56m8yTFhDuz9ANy7JLL23zLs8jIZz/k
+# vs7rfqdyQrVqdtv4DJOP34oyEqftaJAzo+CrdmgdtKSz0gFMhjQNQp/eHXl7YmEQ
+# QpZmH64ej8lWPoOjtq9sZIQI7phvCpWhUOgRmCpACRJ1/5fFOKm3RjHN9gbaXfeh
+# Nu6R7bshj9sS6nHlbRzUFF1kKFYW4oDUG2aa72ncMD9Bx4F28tMWZmrTCz4LH5AJ
+# nMPUb3ffcg71KaqFTUgYPFEX9BbAI1HOagf3IUD2tUOA97X1mi9dpzexyLfKygDp
+# /YfF4A6yffFFalCD6yInwrsH/VRO/AEDCvq7mimDH2IF5cQ1EUIyf90d9c2DGZEC
+# 19Bsa/j4nmiua3NtESSs2sHcvMrnfneHBKEUnYRYvLwWjAiat6p7EnvWtlgZuemJ
+# iH5/RsjmnMA0kVR3bumuAm1PNlKz4rW5LK0sCcLRyyhbU7fI9843048wLsfC4zQs
+# BkG38yJE9Sov5H0+nAMLG9t3n3AlyGQlIKayeUp0re4vsERxjBJqhXQUHEW1uK6E
+# VfqiJHaptnWsW1QBEiOEiINDp47XH0IGj6nv41eIZtXgTjk/eS2Ro6uZvYQFBN7Y
+# T4XbvSd82orPP10=
 # SIG # End signature block

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 <#
 .SYNOPSIS
     Update the .... certificate
@@ -25,7 +25,7 @@ param(
     [String]$Thumbprint,
 
     [String]$PFXfilename,
-    
+
     [SecureString]$PFXPassword,
 
     [parameter(ValueFromRemainingArguments, DontShow)]
@@ -42,15 +42,15 @@ try {
     #placeholder if Command Write-ToLogFile is not available
     if (-not (Get-Command -Name Write-ToLogFile)) { function Write-ToLogFile { } }
     <#
-    
+
     # You can use the following code to import the certificate to the local machine
-    
+
     $importedCertificate = Import-PfxCertificate -FilePath $PFXfilename -CertStoreLocation Cert:\LocalMachine\My -Password $PFXPassword
     if ($importedCertificate.Thumbprint -notlike $Thumbprint) {
         Write-ToLogFile -D -C $LogComponentName -M "`"$($importedCertificate.Thumbprint)`" is not equal to `"$Thumbprint`""
     }
     $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object { $_.Thumbprint -eq $Thumbprint }
-    
+
     #>
 
     <#
@@ -61,10 +61,10 @@ try {
 
     #>
 
-    
+
 } catch {
     Write-ToLogFile -E -C $LogComponentName -M "Caught an error, $($_.Exception.Message)"
-    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails $_ )"
+    Write-ToLogFile -D -B "Full Error Details    :`r`n$( Get-ExceptionDetails -AsPlainText -AsStringValues -ErrorRecord $_ )"
     $exitCode = 1
 }
 Write-ToLogFile -D -C $LogComponentName -M "Exiting with EXITCODE: $exitCode"
