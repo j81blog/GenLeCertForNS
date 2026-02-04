@@ -249,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.35.0
+    Version   : v2.35.1
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -680,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.35.0"
+$ScriptVersion = "2.35.1"
 $PoshACMEVersion = "4.31.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -4953,7 +4953,7 @@ if ($CertificateActions) {
                             Invoke-RegisterError 1 "Too many new registrations detected"
                             continue
                         }
-                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
+                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS -Force
                     }
                 } catch {
                     if ($_.Exception.Message -like "*too many new registrations*") {
@@ -4973,7 +4973,7 @@ if ($CertificateActions) {
                             Invoke-RegisterError 1 "Too many new registrations detected"
                             continue
                         }
-                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS
+                        $PARegistration = Posh-ACME\New-PAAccount -Contact $($CertRequest.EmailAddress) -KeyLength $CertRequest.KeyLength -AcceptTOS -Force
                         Write-ToLogFile -I -C Registration -M "New registration successful."
                     } catch {
                         if ($_.Exception.Message -like "*too many new registrations*") {
@@ -7086,8 +7086,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBHbQbWIdC9Lunn
-# dynmosAVV57a1zKLAeZrYrLVeIxtp6CCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCrARWS7OnppxbM
+# EKIIiXuV8cMpgXUdvDo3Tc3iw7nt8aCCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -7263,31 +7263,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCAoFr5sA6uOVcQa8Ta2D/+6ZYcM7R7PbU2rD006Fwud
-# dDANBgkqhkiG9w0BAQEFAASCAYBTqXiw+Ic7+IrNKXwxIpBBkGf2e2InpcAbq3O5
-# g2BxOQ7UMSFiw/rPhP5+ivlO1QUHOqJwVzlFMowy8MgkC/MXJeKxKLZK9dG48nTv
-# SmxgRqam2w1zy1Z51UJ72JhKVsrJi24/UYd+eRZOyRONaOF1MqoP6Ay7qLuGl/d6
-# 8+z9MHgJUuLSxxSb1eLfsJtYPwNw6LC5o+uERd0W6DbKvyNoFijPmm7nlqfhnLdA
-# LJ0N88o1hxfmaBuJJvOrBH9yEvbXJT9mB8Tss+/O/7B3BsOre3WJPKdn9a6ZxZPg
-# bGwzgJQwvWTiKnY9uMM2jmTo1EWsvzuIQpzem03C0x7l3erCAAvDYoIT6aUc8TXx
-# Aq0ZPxwauGBZwaQ1iFV1cx9Oe5MGcWCibHNoEKWDQKh8pRltu8jsX5AtWLcFqyy2
-# 1UINZvMsutQ7j0C6owsghG3AzllpHPB44jWrB6pknJqo1dVqDOHzvOgT90snpnZU
-# MFH0U2C8/HaAvPfLbJZlZer1euWhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCCgPkR7FeNmTRyHPfS2SIZ2qVxqGe/EBvl+5gLQgXJC
+# uDANBgkqhkiG9w0BAQEFAASCAYBIQyBb+OHTi311Uo3ysUr8roTiThtVdK2JJ6yI
+# VsXmuMjcK53NA7XvQAuiOfcLISrqkceWSMx7SHZ1N1frrjKymQNbGWc1uHGYx2jd
+# U0//A7n2oq9CtSD5HLVIUN5Jh4C+v2EnvW2nbj8Wb8fRH2Fw2ZD78v4QAq+Y+IY+
+# tatXeYKiFy6bLm/JFkqyGburcGQ8UvkVqVc5CsX+iBY1YecFWPxQ5MtF0HrFGi1y
+# guJ2HxH0IPmZTfxTaxifFjyCySKs0Vp+s26N6f3igtuBwEXc6flD2MB+tNcBtc7y
+# WF75g9bTffScpimwThl+g2Dy9XJK3vIXAzRTK/e2WiaBQP3gX03iU9fcoR9Ll2x4
+# 8AXQZqGCqoZUeOA+YLb6AxeHW8Aaeq7SlHeyu3DWmGtx8TGLnktzzsV+G3EjCL9E
+# gwg+JVY1vFUN85BtzFRZle/601M8ISnp0TzTUzvdi50TvW2MpMKHe2oXzdc9SknT
+# HmmMqFpyVxl3ollPGEyjyKJFNOmhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAyMDQxNDMyNDVaMD8GCSqGSIb3
-# DQEJBDEyBDD4aj+5AGwFWHZKwsxEAuXR2R8Rt9ScxjDi6GnidHuMKI1QzdFzYJ8l
-# i+fQ9smxLsIwDQYJKoZIhvcNAQEBBQAEggIAuZq5wsjAdAsJM8Oe7OvWe0s3+ob4
-# bAbAfpxN7DQuD9BVFUWokAqoV32RRt1BAVH0IVIuxQ6hm603e3gfYOhtOgRQJ3Mi
-# 9XEubTRAc8yT7KRf9IOXIpKQzOLzo8924KiV7+OSq8HNBl0KyjhxtcTfjFvrYD0x
-# VyO5Lu1ndXbC2bva7YeGeJ5sYc4o2I9pVwkNSZbTD5ATLPEdLkz7LdPeu9qMjIgC
-# zQ0y6A5Zp154OXSp5uIudW/HDdxCGQmziJGNGxroKKgOZNsX8DFx/VOu/31waBVV
-# A5p4y56q+wM7bz5VUFCpL0asOMy+Rg+Pzj0xFhO5t8262uarrFPJ3iJzh0SaReSY
-# gxEDRKMDubChaMXTIrvA93WbuUSjmUN2zYjZtwNfRcxiBT9+y1IetYom0g3sufjo
-# lOMxNG2Fh1dSmyz7WjMxtfEDNFZkO63TmYaPtXBhTo36+wMpWYqL7SffuU8/r77K
-# eu7KOUFdykYD4Fte7FmLuYfzcKySQhuu1zOnmHPe6PjR0ALB6B4OL3Erw0wjAaLp
-# hsKw+8M4a3Chmn478lyYrq+Z7ltGdUqul68C0zht13o38u1F1q+eYhkG+TNFVAs4
-# KEjjhkw2sgNOG7232ndSmE3xpUkCDNVgozSisTuNGRNFToppP+6J+YbSG0bNpqya
-# QE8Nh8GQo/KeO1M=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAyMDQxNDUxMzlaMD8GCSqGSIb3
+# DQEJBDEyBDA/l7BvsX5Aedq3KZXx1DGeat+8rE15K8JgUH3j8X4o4o2F6F9MHwfy
+# K/x2fBFHac0wDQYJKoZIhvcNAQEBBQAEggIADqqkihZbgD74pyUGmnAZyQ7r7pMH
+# b0DLcnzlWnuuTkCS79iBHpI5vBR0h8enH0dJIe59i6OJwYhcDY27Ql/Hae1sZ+XI
+# cbvMwzlgKp9u7kGQOuY8nf3In59PZglJNPi/WNBPIs3HhNFf5sAEmtbVWgRZcg96
+# CCWMeFkTVyIfqyz9aaUN5OnXbwvx6JzGYeUDohSbXQi44p7IcDOp8n5ZmrqETCKC
+# DP2mlwq7bHlLAdZyxByRUoSJ9W9My3d7gkB3TtEJ2HRr+WvwPcjuoL+FVGqfr5/R
+# tii9Oz78fgJfOtye68LsmBnm2jPOpyJyUu/7bmwPbMg4R8Pcbi3I6gnTTpVi12Ed
+# 2FaWLzLR0M64R0Q8hU1ihkjxv3j35/d1IglqgZOksiPpDQ5rHKACNQD8H+nWVA/1
+# JJrSwHq7N0GOxS1vq9nZl1GoG3uBjXd9I8OKMKuXrs0mDzOtSB4RF/oJ4MDd0uQF
+# 8laXNQp2c++ExijgEjwsFgtesVQ0YKZ2ko4YoRP07AhnqWDXTcreiucM79bukRUj
+# oJU/SiAWDD3q496DCKncoCZ7nOtD31c1FcIdML1J5U3sU1QgAt3cNsnreTQNoJ5l
+# KxGRMXj+cXZyEq6hgGbT9TWTppkkIXVVO/igcu6WvCW5qxIDN9d26GyP3XnGIlH1
+# /hgfJ9/DGXdio9E=
 # SIG # End signature block
