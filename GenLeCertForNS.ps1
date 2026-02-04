@@ -249,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.34.0
+    Version   : v2.35.0
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -680,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.34.0"
+$ScriptVersion = "2.35.0"
 $PoshACMEVersion = "4.31.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -3839,12 +3839,12 @@ if (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction 
         $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
     } catch {
         $PreLogLines += "W;PARAMETERS;NewRegistrationsAfter value `"$($Parameters.settings.NewRegistrationsAfter)`" could not be converted to DateTime, resetting to current date."
-        $Parameters.settings.NewRegistrationsAfter = [datetime]::Now
+        [datetime]$Parameters.settings.NewRegistrationsAfter = $(Get-Date)
     }
 } elseif ($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) {
     $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter already set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
 } else {
-    $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value [datetime]::Now -Force
+    $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value $(Get-Date) -Force
     $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter added and set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
 }
 
@@ -7086,8 +7086,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBckU+Mbq1zCPqI
-# jmvI6BhU9CecVTq7Q/42W+sGfjb5h6CCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBHbQbWIdC9Lunn
+# dynmosAVV57a1zKLAeZrYrLVeIxtp6CCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -7263,31 +7263,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCADGYZBHapA1Ef4JBCqfTHZXHi2wU9xYrUgU1sykamd
-# +jANBgkqhkiG9w0BAQEFAASCAYBSISjygyynScOupdtb7rIy7QJ+7+YyZKy4SEVs
-# Zzx1/0J6ZG9wdI1ZWhp3OaGtDl+NYlmWSXvZesAQGa+JbuAMvYjv2xJcAPPUp8Kh
-# 7EuIGg80AdZ5hep8xZuuxkvgO5vdVuK97Xuqv5Xy6tXbUKUkIoBPS+J1yXtkf+UB
-# 23tjSoVkX5vq0ixAmDgQ5B2JqiqAJCQvPH46X3AcxUDnTEV0J3uU9ApZd5hwkXum
-# kihUEGdM9U6epxrnM8c7eTdWf1IT1VrkZSxIZnjbz/QxjWGImdWzLrrSCPtjJ4QA
-# k37HG+xnf1rFzZ46NfjHILNrwvX0F3LHV401rPsBEufE8aoqdFaO86L374jUG08I
-# +EzPa3DQhPAqf9i9v7+Z7/KNrf2sZSECUPSrCKNFDe07P5HmWeMzDJcoAolGKiy+
-# WzvfVMVv8Ghfo4aI4iuIGuAdZRnFoyw8bk4TMR6451k5iJHmx8PAof5LYEADqMRo
-# IcJdJF31GJz+nxDQDHr/YBsXMJWhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCAoFr5sA6uOVcQa8Ta2D/+6ZYcM7R7PbU2rD006Fwud
+# dDANBgkqhkiG9w0BAQEFAASCAYBTqXiw+Ic7+IrNKXwxIpBBkGf2e2InpcAbq3O5
+# g2BxOQ7UMSFiw/rPhP5+ivlO1QUHOqJwVzlFMowy8MgkC/MXJeKxKLZK9dG48nTv
+# SmxgRqam2w1zy1Z51UJ72JhKVsrJi24/UYd+eRZOyRONaOF1MqoP6Ay7qLuGl/d6
+# 8+z9MHgJUuLSxxSb1eLfsJtYPwNw6LC5o+uERd0W6DbKvyNoFijPmm7nlqfhnLdA
+# LJ0N88o1hxfmaBuJJvOrBH9yEvbXJT9mB8Tss+/O/7B3BsOre3WJPKdn9a6ZxZPg
+# bGwzgJQwvWTiKnY9uMM2jmTo1EWsvzuIQpzem03C0x7l3erCAAvDYoIT6aUc8TXx
+# Aq0ZPxwauGBZwaQ1iFV1cx9Oe5MGcWCibHNoEKWDQKh8pRltu8jsX5AtWLcFqyy2
+# 1UINZvMsutQ7j0C6owsghG3AzllpHPB44jWrB6pknJqo1dVqDOHzvOgT90snpnZU
+# MFH0U2C8/HaAvPfLbJZlZer1euWhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAxMjkwODUyMjVaMD8GCSqGSIb3
-# DQEJBDEyBDC9ea0530XTQRffM3mwi7vtVVb9Pp4n4ndw6ihTXaPsSqTOrYm6DanF
-# fpzERzjRsiswDQYJKoZIhvcNAQEBBQAEggIAQGckBab56+D6MBUpHsLfrJaH03IA
-# dASuei8u+gvQWWggBUq5P5LNHkYcnRAts56m8yTFhDuz9ANy7JLL23zLs8jIZz/k
-# vs7rfqdyQrVqdtv4DJOP34oyEqftaJAzo+CrdmgdtKSz0gFMhjQNQp/eHXl7YmEQ
-# QpZmH64ej8lWPoOjtq9sZIQI7phvCpWhUOgRmCpACRJ1/5fFOKm3RjHN9gbaXfeh
-# Nu6R7bshj9sS6nHlbRzUFF1kKFYW4oDUG2aa72ncMD9Bx4F28tMWZmrTCz4LH5AJ
-# nMPUb3ffcg71KaqFTUgYPFEX9BbAI1HOagf3IUD2tUOA97X1mi9dpzexyLfKygDp
-# /YfF4A6yffFFalCD6yInwrsH/VRO/AEDCvq7mimDH2IF5cQ1EUIyf90d9c2DGZEC
-# 19Bsa/j4nmiua3NtESSs2sHcvMrnfneHBKEUnYRYvLwWjAiat6p7EnvWtlgZuemJ
-# iH5/RsjmnMA0kVR3bumuAm1PNlKz4rW5LK0sCcLRyyhbU7fI9843048wLsfC4zQs
-# BkG38yJE9Sov5H0+nAMLG9t3n3AlyGQlIKayeUp0re4vsERxjBJqhXQUHEW1uK6E
-# VfqiJHaptnWsW1QBEiOEiINDp47XH0IGj6nv41eIZtXgTjk/eS2Ro6uZvYQFBN7Y
-# T4XbvSd82orPP10=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAyMDQxNDMyNDVaMD8GCSqGSIb3
+# DQEJBDEyBDD4aj+5AGwFWHZKwsxEAuXR2R8Rt9ScxjDi6GnidHuMKI1QzdFzYJ8l
+# i+fQ9smxLsIwDQYJKoZIhvcNAQEBBQAEggIAuZq5wsjAdAsJM8Oe7OvWe0s3+ob4
+# bAbAfpxN7DQuD9BVFUWokAqoV32RRt1BAVH0IVIuxQ6hm603e3gfYOhtOgRQJ3Mi
+# 9XEubTRAc8yT7KRf9IOXIpKQzOLzo8924KiV7+OSq8HNBl0KyjhxtcTfjFvrYD0x
+# VyO5Lu1ndXbC2bva7YeGeJ5sYc4o2I9pVwkNSZbTD5ATLPEdLkz7LdPeu9qMjIgC
+# zQ0y6A5Zp154OXSp5uIudW/HDdxCGQmziJGNGxroKKgOZNsX8DFx/VOu/31waBVV
+# A5p4y56q+wM7bz5VUFCpL0asOMy+Rg+Pzj0xFhO5t8262uarrFPJ3iJzh0SaReSY
+# gxEDRKMDubChaMXTIrvA93WbuUSjmUN2zYjZtwNfRcxiBT9+y1IetYom0g3sufjo
+# lOMxNG2Fh1dSmyz7WjMxtfEDNFZkO63TmYaPtXBhTo36+wMpWYqL7SffuU8/r77K
+# eu7KOUFdykYD4Fte7FmLuYfzcKySQhuu1zOnmHPe6PjR0ALB6B4OL3Erw0wjAaLp
+# hsKw+8M4a3Chmn478lyYrq+Z7ltGdUqul68C0zht13o38u1F1q+eYhkG+TNFVAs4
+# KEjjhkw2sgNOG7232ndSmE3xpUkCDNVgozSisTuNGRNFToppP+6J+YbSG0bNpqya
+# QE8Nh8GQo/KeO1M=
 # SIG # End signature block
