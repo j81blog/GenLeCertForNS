@@ -249,7 +249,7 @@
     With all VIPs that can be used by the script.
 .NOTES
     File Name : GenLeCertForNS.ps1
-    Version   : v2.35.1
+    Version   : v2.35.3
     Author    : John Billekens
     Requires  : PowerShell v5.1 and up
                 ADC 12.1 and higher
@@ -680,7 +680,7 @@ param(
 
 #requires -version 5.1
 #Requires -RunAsAdministrator
-$ScriptVersion = "2.35.1"
+$ScriptVersion = "2.35.3"
 $PoshACMEVersion = "4.31.0"
 $VersionURI = "https://drive.google.com/uc?export=download&id=1WOySj40yNHEza23b7eZ7wzWKymKv64JW"
 
@@ -3833,7 +3833,7 @@ $Script:ReplaceSensitive = @($Script:ReplaceSensitive | Select-Object -Unique | 
 
 
 # Ratelimit protection https://letsencrypt.org/docs/rate-limits/#new-registrations-per-ip-address
-if (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) -and (-Not [string]::IsNullOrEmpty($($Parameters.settings.NewRegistrationsAfter.value)))) {
+if (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) -and (-not [string]::IsNullOrEmpty($($Parameters.settings.NewRegistrationsAfter.value)))) {
     try {
         $Parameters.settings.NewRegistrationsAfter = [datetime]$Parameters.settings.NewRegistrationsAfter.value
         $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
@@ -3841,7 +3841,7 @@ if (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction 
         $PreLogLines += "W;PARAMETERS;NewRegistrationsAfter value `"$($Parameters.settings.NewRegistrationsAfter)`" could not be converted to DateTime, resetting to current date."
         [datetime]$Parameters.settings.NewRegistrationsAfter = $(Get-Date)
     }
-} elseif ($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) {
+} elseif (($Parameters.settings | Get-Member -Name NewRegistrationsAfter -ErrorAction SilentlyContinue) -and ($Parameters.settings -is [datetime])) {
     $PreLogLines += "D;PARAMETERS;NewRegistrationsAfter already set to `"$($Parameters.settings.NewRegistrationsAfter)`"."
 } else {
     $Parameters.settings | Add-Member -MemberType NoteProperty -Name NewRegistrationsAfter -Value $(Get-Date) -Force
@@ -4541,7 +4541,7 @@ if ($CertificateActions) {
             $SaveConfig = $true
         } elseif ($CertRequest.CleanExpiredCertsOnDisk.GetType().Name -ieq "PSCustomObject" -and `
             ($CertRequest.CleanExpiredCertsOnDisk | Get-Member -Name IsPresent) -and `
-            $CertRequest.CleanExpiredCertsOnDisk.IsPresent.GetType().Name -ieq "Boolean") {
+                $CertRequest.CleanExpiredCertsOnDisk.IsPresent.GetType().Name -ieq "Boolean") {
             $CertRequest.CleanExpiredCertsOnDisk = $CertRequest.CleanExpiredCertsOnDisk.IsPresent
             $SaveConfig = $true
         }
@@ -5020,7 +5020,12 @@ if ($CertificateActions) {
                     Invoke-RegisterError 1 "Account status is $($Account.status)"
                     continue
                 }
-                Write-DisplayText -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
+                if ([string]::IsNullOrEmpty($($PARegistration.Contact))) {
+                    Write-DisplayText -ForeGroundColor Green " Ready [No Contact Set]"
+                } else {
+                    Write-DisplayText -ForeGroundColor Green " Ready [$($PARegistration.Contact)]"
+                }
+
             }
 
             #endregion Registration
@@ -7046,7 +7051,7 @@ if ($CleanAllExpiredCertsOnDisk) {
 if ($SaveConfig -and (-not [String]::IsNullOrEmpty($ConfigFile))) {
     try {
         Write-ToLogFile -I -C Final-Actions -M "Saving parameters to file `"$ConfigFile`""
-        $Parameters | ConvertTo-Json -Depth 7 -WarningAction SilentlyContinue | Out-File -FilePath $ConfigFile -Encoding unicode -Force -ErrorAction Stop | Out-Null
+        $Parameters | ConvertTo-Json -WarningAction SilentlyContinue -Depth 10 | Out-File -FilePath $ConfigFile -Encoding unicode -Force -ErrorAction Stop | Out-Null
         Write-ToLogFile -I -C Final-Actions -M "Saving done"
     } catch {
         Write-ToLogFile -E -C Final-Actions -M "Saving failed! Exception Message: $($_.Exception.Message)"
@@ -7086,8 +7091,8 @@ TerminateScript 0
 # SIG # Begin signature block
 # MIImdwYJKoZIhvcNAQcCoIImaDCCJmQCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCrARWS7OnppxbM
-# EKIIiXuV8cMpgXUdvDo3Tc3iw7nt8aCCIAowggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD7UqWl0EY2LXCh
+# M20FwLdpqoYDHKAiqGHH1kCiNlCkdaCCIAowggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -7263,31 +7268,31 @@ TerminateScript 0
 # cnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBDQQIQCDJPnbfakW9j5PKjPF5dUTANBglg
 # hkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3AgEMMQowCKACgAChAoAAMBkGCSqGSIb3
 # DQEJAzEMBgorBgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEV
-# MC8GCSqGSIb3DQEJBDEiBCCgPkR7FeNmTRyHPfS2SIZ2qVxqGe/EBvl+5gLQgXJC
-# uDANBgkqhkiG9w0BAQEFAASCAYBIQyBb+OHTi311Uo3ysUr8roTiThtVdK2JJ6yI
-# VsXmuMjcK53NA7XvQAuiOfcLISrqkceWSMx7SHZ1N1frrjKymQNbGWc1uHGYx2jd
-# U0//A7n2oq9CtSD5HLVIUN5Jh4C+v2EnvW2nbj8Wb8fRH2Fw2ZD78v4QAq+Y+IY+
-# tatXeYKiFy6bLm/JFkqyGburcGQ8UvkVqVc5CsX+iBY1YecFWPxQ5MtF0HrFGi1y
-# guJ2HxH0IPmZTfxTaxifFjyCySKs0Vp+s26N6f3igtuBwEXc6flD2MB+tNcBtc7y
-# WF75g9bTffScpimwThl+g2Dy9XJK3vIXAzRTK/e2WiaBQP3gX03iU9fcoR9Ll2x4
-# 8AXQZqGCqoZUeOA+YLb6AxeHW8Aaeq7SlHeyu3DWmGtx8TGLnktzzsV+G3EjCL9E
-# gwg+JVY1vFUN85BtzFRZle/601M8ISnp0TzTUzvdi50TvW2MpMKHe2oXzdc9SknT
-# HmmMqFpyVxl3ollPGEyjyKJFNOmhggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
+# MC8GCSqGSIb3DQEJBDEiBCDuz7i0dztTifPDAQ6qq63lcpT/L7g3ax5B3s3RMzkY
+# ozANBgkqhkiG9w0BAQEFAASCAYBOYWYS4i1WdpbG+Tb6Gj5ez+nbkxftmLDrkPyO
+# hNQ97GCtoi+k/v3z7lbloqoOzrere+aAZL4wgRi1Eld1jZvmCLNbvNeJKBekI5FH
+# MyvKaxBFgptLsMN1Oob2sLvrNvfE0DxikHwteC13bCGaOYB/O75Tj0KFZepB94ph
+# 9yGC6H4ni1/5FTp+5/FlNuvIywmI591ZKue3mlphCi9YviX/GD0UUbu6LuvxYaPt
+# 5MEBZhs0M++Aw+WMb/mF8GwbgZGQL2gca7goS8LlVSqNTz6W596Q9yT9Q3vCBYFx
+# 8wplDlme8YfwP+kVE/fG7dT0gtk09l7uBwkjX8IJBt5cOjaEevT7oGbcK+uFVxc2
+# 6fdJ2mhy+i4KIW4Rji1SOM8TXC92bGlP169t0NA38iIp9jABxuAkL2O4G5YXmchc
+# IimlDwJ03pRKggrop1c/nE64JDOU7UUfuK95Km41qS1yT75cH04LFDLzUNVAw0OH
+# LxE0LqA9+N/4Aa1Nw/4aGkMRzd+hggMjMIIDHwYJKoZIhvcNAQkGMYIDEDCCAwwC
 # AQEwajBVMQswCQYDVQQGEwJHQjEYMBYGA1UEChMPU2VjdGlnbyBMaW1pdGVkMSww
 # KgYDVQQDEyNTZWN0aWdvIFB1YmxpYyBUaW1lIFN0YW1waW5nIENBIFIzNgIRAKQp
 # O24e3denNAiHrXpOtyQwDQYJYIZIAWUDBAICBQCgeTAYBgkqhkiG9w0BCQMxCwYJ
-# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAyMDQxNDUxMzlaMD8GCSqGSIb3
-# DQEJBDEyBDA/l7BvsX5Aedq3KZXx1DGeat+8rE15K8JgUH3j8X4o4o2F6F9MHwfy
-# K/x2fBFHac0wDQYJKoZIhvcNAQEBBQAEggIADqqkihZbgD74pyUGmnAZyQ7r7pMH
-# b0DLcnzlWnuuTkCS79iBHpI5vBR0h8enH0dJIe59i6OJwYhcDY27Ql/Hae1sZ+XI
-# cbvMwzlgKp9u7kGQOuY8nf3In59PZglJNPi/WNBPIs3HhNFf5sAEmtbVWgRZcg96
-# CCWMeFkTVyIfqyz9aaUN5OnXbwvx6JzGYeUDohSbXQi44p7IcDOp8n5ZmrqETCKC
-# DP2mlwq7bHlLAdZyxByRUoSJ9W9My3d7gkB3TtEJ2HRr+WvwPcjuoL+FVGqfr5/R
-# tii9Oz78fgJfOtye68LsmBnm2jPOpyJyUu/7bmwPbMg4R8Pcbi3I6gnTTpVi12Ed
-# 2FaWLzLR0M64R0Q8hU1ihkjxv3j35/d1IglqgZOksiPpDQ5rHKACNQD8H+nWVA/1
-# JJrSwHq7N0GOxS1vq9nZl1GoG3uBjXd9I8OKMKuXrs0mDzOtSB4RF/oJ4MDd0uQF
-# 8laXNQp2c++ExijgEjwsFgtesVQ0YKZ2ko4YoRP07AhnqWDXTcreiucM79bukRUj
-# oJU/SiAWDD3q496DCKncoCZ7nOtD31c1FcIdML1J5U3sU1QgAt3cNsnreTQNoJ5l
-# KxGRMXj+cXZyEq6hgGbT9TWTppkkIXVVO/igcu6WvCW5qxIDN9d26GyP3XnGIlH1
-# /hgfJ9/DGXdio9E=
+# KoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0yNjAyMDQxNTA5MzFaMD8GCSqGSIb3
+# DQEJBDEyBDAZUu4aiMOE5+BI/YTSh5bFWduUSiWXU8y0kOTUOSHLxORGGQGx9LQ2
+# ykHQ6cVtdm4wDQYJKoZIhvcNAQEBBQAEggIAhEFItwlnDk1MFU5JB0Qpop8yEkZ/
+# uTGsEWrWcB/K1aJitpU5lGmvdPpaV4FC5gR95LveROr0xdyTiEHJOiuLxeG3Lodk
+# YsiWKajzdBSma8BrX81I5Q+7HyJWWjYFdfnYWDeJb0MF8V/Uvfv5skGI+7l/LdJ3
+# dcxgQvybqu8+Z4dVAAIdoCmCQ77qE0L3rvWjQpvT7okfpTHAqdRY0DLZMtWFfxVV
+# wqxHUYjJMSiE/0tmP1KCNnvXpkSoRYmN87aEtg3CzTYyCOnN39fQm0r92jh2s3XN
+# WEnA5kZcy60sjeNbK4ilLgKMg8du1HTZs1/uzglLraif1U/d+44NBtaHagxwQlRY
+# oIHqtKHbSokvdOh4HIEnhVeYYfCTNO5ybLYdFdO0+JfD7N8b3IpmpyarEe11av3O
+# k4N4FqB2y6HG1naA2DCv3LtrWJO9LRK+LnchsZHxego6K+v474KFNtKDFs/+bBMM
+# ChFar5BRHOFHeOFvMg2pogBW3GrSRXbGpdOC9Jrp+InSoU49FhKdjo8eESBVC4JE
+# jhuLK679s4aPG0f5Dmrp84b+6r4mHRZ4bptib8vdrurWLZkTXx0QpZD2QgV83iQU
+# rQIFjBe8eUChMEMmnN2n2E8zBJvfT2QrSqTA7NkruNG08K0WgcOmk7CUnKUVsAa+
+# QPAdpqwB2xYck5E=
 # SIG # End signature block
